@@ -212,8 +212,9 @@ class FitParser implements ActivityFormatParser {
     if (powerSamples.isNotEmpty) channels[Channel.power] = powerSamples;
     if (tempSamples.isNotEmpty) channels[Channel.temperature] = tempSamples;
     if (speedSamples.isNotEmpty) channels[Channel.speed] = speedSamples;
-    if (distanceSamples.isNotEmpty)
+    if (distanceSamples.isNotEmpty) {
       channels[Channel.distance] = distanceSamples;
+    }
 
     final activity = RawActivity(
       points: points,

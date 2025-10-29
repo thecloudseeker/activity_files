@@ -131,12 +131,14 @@ class FitEncoder implements ActivityFormatEncoder {
       const _FitField(number: 1, size: 4, type: _FitBaseType.sint32),
       const _FitField(number: 2, size: 2, type: _FitBaseType.uint16),
     ];
-    final extraRecordFields = <int, _FitField>{};
+    final extraRecordFields = <int, _FitField>{
+      for (final field in recordFields) field.number: field,
+    };
     void addField(int fieldNum, _FitField field) {
-      if (!recordFields.contains(field)) {
+      if (!extraRecordFields.containsKey(fieldNum)) {
         recordFields.add(field);
+        extraRecordFields[fieldNum] = field;
       }
-      extraRecordFields[fieldNum] = field;
     }
 
     if (activity.channel(Channel.heartRate).isNotEmpty) {
@@ -191,10 +193,7 @@ class FitEncoder implements ActivityFormatEncoder {
     final speedTolerance = options.maxDeltaFor(Channel.speed);
 
     final channelMap = activity.channels.map(
-      (key, value) => MapEntry(
-        key,
-        value is List<Sample> ? value : value.toList(),
-      ),
+      (key, value) => MapEntry(key, List<Sample>.from(value)),
     );
 
     for (final point in activity.points) {
@@ -241,10 +240,7 @@ class FitEncoder implements ActivityFormatEncoder {
         hr: hr,
         cadence: cadence,
         distanceMeters: channelMap.containsKey(Channel.distance)
-            ? _lookupSample(
-                channelMap[Channel.distance] as List<Sample>?,
-                point.time,
-              )
+            ? _lookupSample(channelMap[Channel.distance], point.time)
             : null,
         speed: speed,
         power: power,
@@ -420,8 +416,8 @@ class _FitMessageEncoder {
       if (rawValue == null) {
         bd.setUint32(0, 0xFFFFFFFF, Endian.little);
       } else {
-        final scaled = ((rawValue * 100).round()).clamp(0, 0xFFFFFFFF) as int;
-        bd.setUint32(0, scaled, Endian.little);
+        final scaled = (rawValue * 100).round();
+        bd.setUint32(0, _clampUint32(scaled), Endian.little);
       }
       destination.add(bd.buffer.asUint8List());
     });
@@ -430,11 +426,8 @@ class _FitMessageEncoder {
       if (speed == null) {
         bd.setUint16(0, 0xFFFF, Endian.little);
       } else {
-        bd.setUint16(
-          0,
-          (speed * 1000).round().clamp(0, 0xFFFF),
-          Endian.little,
-        );
+        final scaled = (speed * 1000).round();
+        bd.setUint16(0, _clampUint16(scaled), Endian.little);
       }
       destination.add(bd.buffer.asUint8List());
     });
@@ -443,7 +436,7 @@ class _FitMessageEncoder {
       if (power == null) {
         bd.setUint16(0, 0xFFFF, Endian.little);
       } else {
-        bd.setUint16(0, power.round().clamp(0, 0xFFFF), Endian.little);
+        bd.setUint16(0, _clampUint16(power.round()), Endian.little);
       }
       destination.add(bd.buffer.asUint8List());
     });
@@ -496,20 +489,19 @@ enum _FitBaseType {
   enumType(0x00),
   sint8(0x01),
   uint8(0x02),
-  sint16(0x83),
   uint16(0x84),
   sint32(0x85),
   uint32(0x86),
-  string(0x07),
-  float32(0x88),
-  float64(0x89),
-  uint8z(0x0A),
-  uint16z(0x8B),
   uint32z(0x8C);
 
   const _FitBaseType(this.code);
   final int code;
 }
+
+int _clampUint16(int value) =>
+    value < 0 ? 0 : (value > 0xFFFF ? 0xFFFF : value);
+int _clampUint32(int value) =>
+    value < 0 ? 0 : (value > 0xFFFFFFFF ? 0xFFFFFFFF : value);
 
 int _computeFitCrc(List<int> bytes) {
   var crc = 0;
