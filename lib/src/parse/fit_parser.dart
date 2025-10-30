@@ -1,32 +1,9 @@
-// MIT License
-//
-// Copyright (c) 2024 activity_files
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:convert';
 import 'dart:typed_data';
-
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
-
 /// Parser for FIT binary payloads (limited profile support).
 ///
 /// The decoder focuses on the subset of the FIT profile required to populate
@@ -35,7 +12,6 @@ import 'parse_result.dart';
 /// skipped with warnings rather than raising hard errors.
 class FitParser implements ActivityFormatParser {
   const FitParser();
-
   @override
   ActivityParseResult parse(String input) {
     final warnings = <String>[];
@@ -48,7 +24,6 @@ class FitParser implements ActivityFormatParser {
     if (header.dataType != '.FIT') {
       throw FormatException('Unsupported FIT file type: ${header.dataType}');
     }
-
     final definitions = <int, _FitMessageDefinition>{};
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
@@ -58,15 +33,12 @@ class FitParser implements ActivityFormatParser {
     final speedSamples = <Sample>[];
     final distanceSamples = <Sample>[];
     final laps = <Lap>[];
-
     Sport sport = Sport.unknown;
     String? creator;
-
     final dataLimit = header.headerSize + header.dataSize;
     if (dataLimit > payload.length) {
       warnings.add('FIT header advertises data larger than available payload.');
     }
-
     reader.position = header.headerSize;
     while (reader.position < payload.length && reader.position < dataLimit) {
       final recordHeader = reader.readUint8();
@@ -74,12 +46,10 @@ class FitParser implements ActivityFormatParser {
       final isCompressed = (recordHeader & 0x80) != 0;
       final hasDeveloper = (recordHeader & 0x20) != 0;
       final localType = recordHeader & 0x0F;
-
       if (isCompressed) {
         warnings.add('Compressed FIT message headers are not supported.');
         continue;
       }
-
       if (isDefinition) {
         final definition = _FitMessageDefinition.read(
           reader,
@@ -93,7 +63,6 @@ class FitParser implements ActivityFormatParser {
         }
         continue;
       }
-
       final definition = definitions[localType];
       if (definition == null) {
         warnings.add(
@@ -102,13 +71,11 @@ class FitParser implements ActivityFormatParser {
         reader.skipUnknown();
         continue;
       }
-
       final values = definition.readValues(reader);
       if (values == null) {
         warnings.add('Failed to read data message for ${definition.globalId}.');
         continue;
       }
-
       switch (definition.globalId) {
         case 0: // file_id
           final manufacturer = values[1];
@@ -150,7 +117,6 @@ class FitParser implements ActivityFormatParser {
             warnings.add('Record without timestamp skipped.');
             continue;
           }
-
           final lat = _decodeSemicircles(values[0]);
           final lon = _decodeSemicircles(values[1]);
           final altitude = _decodeAltitude(values[2]);
@@ -164,37 +130,31 @@ class FitParser implements ActivityFormatParser {
               ),
             );
           }
-
           final hr = _asNumber(values[3]);
           if (hr != null) {
             hrSamples.add(Sample(time: timestamp, value: hr.toDouble()));
           }
-
           final cadence = _asNumber(values[4]);
           if (cadence != null) {
             cadenceSamples
                 .add(Sample(time: timestamp, value: cadence.toDouble()));
           }
-
           final distance = _asNumber(values[5]);
           if (distance != null) {
             distanceSamples.add(
               Sample(time: timestamp, value: distance.toDouble() / 100.0),
             );
           }
-
           final speed = _asNumber(values[6]);
           if (speed != null) {
             speedSamples.add(
               Sample(time: timestamp, value: speed.toDouble() / 1000.0),
             );
           }
-
           final power = _asNumber(values[7]);
           if (power != null) {
             powerSamples.add(Sample(time: timestamp, value: power.toDouble()));
           }
-
           final temp = _asNumber(values[13]);
           if (temp != null) {
             tempSamples.add(Sample(time: timestamp, value: temp.toDouble()));
@@ -205,7 +165,6 @@ class FitParser implements ActivityFormatParser {
           break;
       }
     }
-
     final channels = <Channel, Iterable<Sample>>{};
     if (hrSamples.isNotEmpty) channels[Channel.heartRate] = hrSamples;
     if (cadenceSamples.isNotEmpty) channels[Channel.cadence] = cadenceSamples;
@@ -215,7 +174,6 @@ class FitParser implements ActivityFormatParser {
     if (distanceSamples.isNotEmpty) {
       channels[Channel.distance] = distanceSamples;
     }
-
     final activity = RawActivity(
       points: points,
       channels: channels,
@@ -223,11 +181,9 @@ class FitParser implements ActivityFormatParser {
       sport: sport,
       creator: creator,
     );
-
     return ActivityParseResult(activity: activity, warnings: warnings);
   }
 }
-
 Uint8List _decodeBase64(String input) {
   try {
     return Uint8List.fromList(base64Decode(input));
@@ -237,7 +193,6 @@ Uint8List _decodeBase64(String input) {
     );
   }
 }
-
 Sport _mapSport(int value) {
   switch (value) {
     case 0:
@@ -252,7 +207,6 @@ Sport _mapSport(int value) {
       return Sport.other;
   }
 }
-
 DateTime? _decodeTimestamp(Object? raw) {
   if (raw is! num) {
     return null;
@@ -263,7 +217,6 @@ DateTime? _decodeTimestamp(Object? raw) {
   }
   return DateTime.utc(1989, 12, 31).add(Duration(seconds: seconds));
 }
-
 double? _decodeSemicircles(Object? raw) {
   if (raw is! num) {
     return null;
@@ -274,7 +227,6 @@ double? _decodeSemicircles(Object? raw) {
   }
   return (value * 180.0) / 2147483648.0;
 }
-
 double? _decodeAltitude(Object? raw) {
   if (raw is! num) {
     return null;
@@ -285,7 +237,6 @@ double? _decodeAltitude(Object? raw) {
   }
   return (value / 5.0) - 500.0;
 }
-
 num? _asNumber(Object? raw) {
   if (raw is! num) {
     return null;
@@ -301,7 +252,6 @@ num? _asNumber(Object? raw) {
       return raw;
   }
 }
-
 class _FitHeader {
   _FitHeader({
     required this.headerSize,
@@ -310,13 +260,11 @@ class _FitHeader {
     required this.dataSize,
     required this.dataType,
   });
-
   final int headerSize;
   final int protocolVersion;
   final int profileVersion;
   final int dataSize;
   final String dataType;
-
   static _FitHeader? tryRead(_FitByteReader reader) {
     final start = reader.position;
     try {
@@ -345,7 +293,6 @@ class _FitHeader {
     }
   }
 }
-
 class _FitMessageDefinition {
   _FitMessageDefinition({
     required this.localId,
@@ -354,13 +301,11 @@ class _FitMessageDefinition {
     required this.fields,
     required this.developerFieldCount,
   });
-
   final int localId;
   final int globalId;
   final bool isLittleEndian;
   final List<_FitFieldDefinition> fields;
   final int developerFieldCount;
-
   static _FitMessageDefinition? read(
     _FitByteReader reader,
     int localId, {
@@ -400,7 +345,6 @@ class _FitMessageDefinition {
       return null;
     }
   }
-
   Map<int, Object?>? readValues(_FitByteReader reader) {
     final values = <int, Object?>{};
     for (final field in fields) {
@@ -419,58 +363,47 @@ class _FitMessageDefinition {
     return values;
   }
 }
-
 class _FitFieldDefinition {
   const _FitFieldDefinition({
     required this.fieldNumber,
     required this.size,
     required this.baseType,
   });
-
   final int fieldNumber;
   final int size;
   final int baseType;
 }
-
 class _FitByteReader {
   _FitByteReader(this.bytes);
-
   final Uint8List bytes;
   int position = 0;
-
   int readUint8() {
     return bytes[position++];
   }
-
   int readUint16({Endian endian = Endian.little}) {
     final value = bytes.buffer.asByteData().getUint16(position, endian);
     position += 2;
     return value;
   }
-
   int readUint32({Endian endian = Endian.little}) {
     final value = bytes.buffer.asByteData().getUint32(position, endian);
     position += 4;
     return value;
   }
-
   Uint8List readBytes(int length) {
     final slice = bytes.sublist(position, position + length);
     position += length;
     return Uint8List.fromList(slice);
   }
-
   void skip(int length) {
     position += length;
     if (position > bytes.length) {
       position = bytes.length;
     }
   }
-
   void skipUnknown() {
     // Nothing to do; caller must ensure definitions exist before reading.
   }
-
   Object? readBaseType(
     int baseType,
     int size, {
@@ -478,7 +411,6 @@ class _FitByteReader {
   }) {
     final data = bytes.buffer.asByteData();
     Object? value;
-
     switch (baseType & 0x1F) {
       case 0x00: // enum
       case 0x02: // uint8

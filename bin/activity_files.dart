@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 // MIT License
 //
 // Copyright (c) 2024 activity_files

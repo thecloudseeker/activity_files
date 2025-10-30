@@ -1,39 +1,14 @@
-// MIT License
-//
-// Copyright (c) 2024 activity_files
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:math' as math;
-
 import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
-
 import '../channel_mapper.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
-
 /// Encoder for the TCX file format.
 class TcxEncoder implements ActivityFormatEncoder {
   const TcxEncoder();
-
   @override
   String encode(RawActivity activity, EncoderOptions options) {
     final points = [...activity.points]
@@ -41,7 +16,6 @@ class TcxEncoder implements ActivityFormatEncoder {
     if (points.isEmpty) {
       return _emptyDocument();
     }
-
     final laps = activity.laps.isNotEmpty
         ? activity.laps
         : [
@@ -52,10 +26,8 @@ class TcxEncoder implements ActivityFormatEncoder {
               name: 'Lap 1',
             ),
           ];
-
     final distanceSamples = [...activity.channel(Channel.distance)]
       ..sort((a, b) => a.time.compareTo(b.time));
-
     final hrDelta = options.maxDeltaFor(Channel.heartRate);
     final cadenceDelta = options.maxDeltaFor(Channel.cadence);
     final distanceDelta = options.maxDeltaFor(Channel.distance);
@@ -68,7 +40,6 @@ class TcxEncoder implements ActivityFormatEncoder {
           options.defaultMaxDelta,
           (previous, current) => current > previous ? current : previous,
         );
-
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
@@ -105,7 +76,6 @@ class TcxEncoder implements ActivityFormatEncoder {
                       nest: (lap.distanceMeters ?? activity.approximateDistance)
                           .toStringAsFixed(1),
                     );
-
                     builder.element('Track', nest: () {
                       var cumulativeDistance = 0.0;
                       GeoPoint? previous;
@@ -124,7 +94,6 @@ class TcxEncoder implements ActivityFormatEncoder {
                           snapshot.cadenceDelta,
                           cadenceDelta,
                         );
-
                         final knownDistance = _sampleValueAt(
                           distanceSamples,
                           point.time,
@@ -139,7 +108,6 @@ class TcxEncoder implements ActivityFormatEncoder {
                           }
                         }
                         previous = point;
-
                         builder.element('Trackpoint', nest: () {
                           builder.element(
                             'Time',
@@ -184,7 +152,6 @@ class TcxEncoder implements ActivityFormatEncoder {
                   },
                 );
               }
-
               if (activity.creator != null) {
                 builder.element('Creator', nest: activity.creator!);
               }
@@ -193,10 +160,8 @@ class TcxEncoder implements ActivityFormatEncoder {
         });
       },
     );
-
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
   }
-
   String _emptyDocument() {
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
@@ -211,7 +176,6 @@ class TcxEncoder implements ActivityFormatEncoder {
     );
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
   }
-
   String _sportLabel(Sport sport) => switch (sport) {
         Sport.running => 'Running',
         Sport.cycling => 'Biking',
@@ -219,16 +183,13 @@ class TcxEncoder implements ActivityFormatEncoder {
         _ => 'Other',
       };
 }
-
 String _round(double value, int precision) => value.toStringAsFixed(precision);
-
 double? _valueWithin(double? value, Duration? delta, Duration tolerance) {
   if (value == null || delta == null) {
     return null;
   }
   return delta <= tolerance ? value : null;
 }
-
 double? _sampleValueAt(
   List<Sample> samples,
   DateTime time,
@@ -249,7 +210,6 @@ double? _sampleValueAt(
   }
   return candidate?.value;
 }
-
 double _haversine(GeoPoint a, GeoPoint b) {
   const earthRadius = 6371000.0;
   final dLat = _radians(b.latitude - a.latitude);
@@ -263,5 +223,4 @@ double _haversine(GeoPoint a, GeoPoint b) {
   final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
   return earthRadius * c;
 }
-
 double _radians(double deg) => deg * math.pi / 180.0;

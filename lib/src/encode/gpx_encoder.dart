@@ -1,42 +1,17 @@
-// MIT License
-//
-// Copyright (c) 2024 activity_files
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
+// SPDX-License-Identifier: BSD-3-Clause
 import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
-
 import '../channel_mapper.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
-
 /// Encoder for the GPX file format.
 class GpxEncoder implements ActivityFormatEncoder {
   const GpxEncoder();
-
   @override
   String encode(RawActivity activity, EncoderOptions options) {
     final points = [...activity.points]
       ..sort((a, b) => a.time.compareTo(b.time));
-
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
@@ -65,7 +40,6 @@ class GpxEncoder implements ActivityFormatEncoder {
             }
           });
         }
-
         final hrDelta = options.maxDeltaFor(Channel.heartRate);
         final cadenceDelta = options.maxDeltaFor(Channel.cadence);
         final powerDelta = options.maxDeltaFor(Channel.power);
@@ -82,7 +56,6 @@ class GpxEncoder implements ActivityFormatEncoder {
               options.defaultMaxDelta,
               (previous, current) => current > previous ? current : previous,
             );
-
         builder.element('trk', nest: () {
           builder.element('name', nest: () => builder.text('Workout'));
           builder.element('type', nest: _sportLabel(activity.sport));
@@ -93,7 +66,6 @@ class GpxEncoder implements ActivityFormatEncoder {
                 activity.channels,
                 maxDelta: searchDelta,
               );
-
               final hr = _valueWithin(
                   snapshot.heartRate, snapshot.heartRateDelta, hrDelta);
               final cadence = _valueWithin(
@@ -105,7 +77,6 @@ class GpxEncoder implements ActivityFormatEncoder {
                 snapshot.temperatureDelta,
                 tempDelta,
               );
-
               builder.element(
                 'trkpt',
                 attributes: {
@@ -121,7 +92,6 @@ class GpxEncoder implements ActivityFormatEncoder {
                   }
                   builder.element('time',
                       nest: point.time.toUtc().toIso8601String());
-
                   if (hr != null ||
                       cadence != null ||
                       power != null ||
@@ -160,10 +130,8 @@ class GpxEncoder implements ActivityFormatEncoder {
         });
       },
     );
-
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
   }
-
   String _sportLabel(Sport sport) => switch (sport) {
         Sport.running => 'Running',
         Sport.cycling => 'Cycling',
@@ -174,9 +142,7 @@ class GpxEncoder implements ActivityFormatEncoder {
         Sport.unknown => 'Unknown',
       };
 }
-
 String _round(double value, int precision) => value.toStringAsFixed(precision);
-
 double? _valueWithin(
   double? value,
   Duration? delta,

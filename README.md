@@ -1,4 +1,7 @@
 # activity_files
+Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
+
+Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
 
 A pure Dart toolkit for reading, editing, validating, and writing workout
 activity files. `activity_files` provides format-agnostic models, robust GPX and
@@ -28,7 +31,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: any
+  activity_files: 0.0.1
 ```
 
 Then install dependencies:
@@ -161,5 +164,4 @@ Binary FIT inputs/outputs are handled automatically via base64 conversion.
 
 ## Contributing
 
-Issues and pull requests are welcome, especially for FIT format support and
-additional format fixtures. The package is released under the MIT license.
+Issues and pull requests are welcome, especially for additional format fixtures. The package is released under the MIT license.

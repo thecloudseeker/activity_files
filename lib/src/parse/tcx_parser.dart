@@ -1,36 +1,12 @@
-// MIT License
-//
-// Copyright (c) 2024 activity_files
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
+// SPDX-License-Identifier: BSD-3-Clause
 import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
-
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
-
 /// Parser for the TCX file format.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
-
   @override
   ActivityParseResult parse(String input) {
     final warnings = <String>[];
@@ -39,16 +15,13 @@ class TcxParser implements ActivityFormatParser {
     if (activities.isEmpty) {
       return ActivityParseResult(activity: RawActivity(), warnings: warnings);
     }
-
     final activityElement = activities.first;
     final sport = _sportFromString(activityElement.getAttribute('Sport'));
-
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
     final cadenceSamples = <Sample>[];
     final distanceSamples = <Sample>[];
     final laps = <Lap>[];
-
     for (final lapElement in activityElement.findElements('Lap')) {
       final lapStartAttribute = lapElement.getAttribute('StartTime');
       DateTime? lapStart;
@@ -61,20 +34,16 @@ class TcxParser implements ActivityFormatParser {
           continue;
         }
       }
-
       final lapDistanceText = _firstText(lapElement, 'DistanceMeters');
       final lapDistance =
           lapDistanceText != null ? double.tryParse(lapDistanceText) : null;
-
       final track = lapElement.findElements('Track').firstOrNull;
       if (track == null) {
         warnings.add('Lap missing Track element; skipped.');
         continue;
       }
-
       DateTime? firstTime;
       DateTime? lastTime;
-
       for (final trackpoint in track.findElements('Trackpoint')) {
         final timeText = _firstText(trackpoint, 'Time');
         if (timeText == null) {
@@ -88,7 +57,6 @@ class TcxParser implements ActivityFormatParser {
           warnings.add('Invalid Time "$timeText"; trackpoint skipped.');
           continue;
         }
-
         final position = trackpoint.getElement('Position');
         final latText =
             position != null ? _firstText(position, 'LatitudeDegrees') : null;
@@ -100,14 +68,12 @@ class TcxParser implements ActivityFormatParser {
           warnings.add('Trackpoint at $time missing coordinates; skipped.');
           continue;
         }
-
         final altText = _firstText(trackpoint, 'AltitudeMeters');
         final altitude = altText != null ? double.tryParse(altText) : null;
         if (altText != null && altitude == null) {
           warnings
               .add('Invalid AltitudeMeters "$altText" at $time; using null.');
         }
-
         points.add(
           GeoPoint(
             latitude: lat,
@@ -116,7 +82,6 @@ class TcxParser implements ActivityFormatParser {
             time: time,
           ),
         );
-
         final hrValueText = trackpoint
             .getElement('HeartRateBpm')
             ?.getElement('Value')
@@ -129,7 +94,6 @@ class TcxParser implements ActivityFormatParser {
         } else if (hrValue != null) {
           hrSamples.add(Sample(time: time, value: hrValue));
         }
-
         final cadenceText = _firstText(trackpoint, 'Cadence');
         final cadenceValue =
             cadenceText != null ? double.tryParse(cadenceText) : null;
@@ -138,7 +102,6 @@ class TcxParser implements ActivityFormatParser {
         } else if (cadenceValue != null) {
           cadenceSamples.add(Sample(time: time, value: cadenceValue));
         }
-
         final distanceText = _firstText(trackpoint, 'DistanceMeters');
         final distanceValue =
             distanceText != null ? double.tryParse(distanceText) : null;
@@ -147,11 +110,9 @@ class TcxParser implements ActivityFormatParser {
         } else if (distanceValue != null) {
           distanceSamples.add(Sample(time: time, value: distanceValue));
         }
-
         firstTime ??= time;
         lastTime = time;
       }
-
       final first = firstTime;
       final last = lastTime;
       if (first != null && last != null) {
@@ -166,7 +127,6 @@ class TcxParser implements ActivityFormatParser {
         );
       }
     }
-
     final channelMap = <Channel, Iterable<Sample>>{};
     if (hrSamples.isNotEmpty) {
       channelMap[Channel.heartRate] = hrSamples;
@@ -177,7 +137,6 @@ class TcxParser implements ActivityFormatParser {
     if (distanceSamples.isNotEmpty) {
       channelMap[Channel.distance] = distanceSamples;
     }
-
     final activity = RawActivity(
       points: points,
       channels: channelMap,
@@ -185,10 +144,8 @@ class TcxParser implements ActivityFormatParser {
       sport: sport,
       creator: _extractCreator(activityElement),
     );
-
     return ActivityParseResult(activity: activity, warnings: warnings);
   }
-
   Sport _sportFromString(String? sport) {
     if (sport == null) {
       return Sport.unknown;
@@ -202,7 +159,6 @@ class TcxParser implements ActivityFormatParser {
       _ => Sport.unknown,
     };
   }
-
   String? _extractCreator(XmlElement element) {
     final creator = element.getElement('Creator');
     final name = creator?.getElement('Name');
@@ -215,7 +171,6 @@ class TcxParser implements ActivityFormatParser {
     return null;
   }
 }
-
 String? _firstText(XmlElement element, String localName) {
   for (final child in element.findElements(localName)) {
     final text = child.innerText.trim();

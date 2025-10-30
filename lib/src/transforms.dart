@@ -1,33 +1,9 @@
-// MIT License
-//
-// Copyright (c) 2024 activity_files
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:math' as math;
-
 import 'models.dart';
-
 /// Stateless helpers for generating derived activities.
 class RawTransforms {
   const RawTransforms._();
-
   /// Resamples [activity] to a fixed temporal [step] using linear interpolation
   /// for trajectory and continuous channels. Heart rate uses nearest samples.
   static RawActivity resample(
@@ -41,7 +17,6 @@ class RawTransforms {
     if (original.length < 2) {
       return activity;
     }
-
     final start = original.first.time;
     final end = original.last.time;
     final times = <DateTime>[];
@@ -53,7 +28,6 @@ class RawTransforms {
     if (!times.last.isAtSameMomentAs(end)) {
       times.add(end);
     }
-
     final resampledPoints = _resamplePoints(original, times);
     final channelMap = <Channel, List<Sample>>{};
     for (final entry in activity.channels.entries) {
@@ -67,13 +41,11 @@ class RawTransforms {
           ? _resampleNearest(entry.value, times, tolerance)
           : _resampleLinear(entry.value, times);
     }
-
     return activity.copyWith(
       points: resampledPoints,
       channels: channelMap,
     );
   }
-
   /// Computes cumulative distance (meters) using the haversine formula.
   static ({RawActivity activity, double totalDistance})
       computeCumulativeDistance(RawActivity activity) {
@@ -89,7 +61,6 @@ class RawTransforms {
         totalDistance: 0,
       );
     }
-
     final samples = <Sample>[];
     var cumulative = 0.0;
     for (var i = 0; i < activity.points.length; i++) {
@@ -102,26 +73,20 @@ class RawTransforms {
       cumulative += _haversine(prev, point);
       samples.add(Sample(time: point.time, value: cumulative));
     }
-
     final updatedChannels = {...activity.channels}..[Channel.distance] =
         samples;
-
     return (
       activity: activity.copyWith(channels: updatedChannels),
       totalDistance: cumulative,
     );
   }
 }
-
 /// Provides chained, immutable transformations over [RawActivity].
 class RawEditor {
   RawEditor(RawActivity activity) : _activity = activity;
-
   RawActivity _activity;
-
   /// Returns the current result.
   RawActivity get activity => _activity;
-
   /// Ensures samples and points are sorted by time and removes duplicates.
   RawEditor sortAndDedup() {
     final sortedPoints = [..._activity.points]
@@ -139,7 +104,6 @@ class RawEditor {
         previous = point;
       }
     }
-
     final sortedChannels = _activity.channels.map((channel, samples) {
       final sorted = [...samples]..sort((a, b) => a.time.compareTo(b.time));
       final deduped = <Sample>[];
@@ -152,10 +116,8 @@ class RawEditor {
       }
       return MapEntry(channel, deduped);
     });
-
     final sortedLaps = [..._activity.laps]
       ..sort((a, b) => a.startTime.compareTo(b.startTime));
-
     _activity = _activity.copyWith(
       points: dedupedPoints,
       channels: sortedChannels.map(
@@ -165,7 +127,6 @@ class RawEditor {
     );
     return this;
   }
-
   /// Drops invalid coordinates and trims channels outside the point range.
   RawEditor trimInvalid() {
     final validPoints = _activity.points.where((point) {
@@ -177,10 +138,8 @@ class RawEditor {
           point.longitude <= 180;
       return latOk && lonOk;
     }).toList();
-
     final start = validPoints.isNotEmpty ? validPoints.first.time : null;
     final end = validPoints.isNotEmpty ? validPoints.last.time : null;
-
     final trimmedChannels = _activity.channels.map((channel, samples) {
       if (start == null || end == null) {
         return MapEntry(channel, <Sample>[]);
@@ -191,7 +150,6 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-
     final trimmedLaps = <Lap>[];
     if (start != null && end != null) {
       final startUtc = start;
@@ -209,7 +167,6 @@ class RawEditor {
         }),
       );
     }
-
     _activity = _activity.copyWith(
       points: validPoints,
       channels: trimmedChannels.map((key, value) => MapEntry(key, value)),
@@ -217,7 +174,6 @@ class RawEditor {
     );
     return this;
   }
-
   /// Crops the activity to the inclusive [start] and [end] times.
   RawEditor crop(DateTime start, DateTime end) {
     if (end.isBefore(start)) {
@@ -225,14 +181,12 @@ class RawEditor {
     }
     final startUtc = start.toUtc();
     final endUtc = end.toUtc();
-
     final croppedPoints = _activity.points
         .where(
           (point) =>
               !point.time.isBefore(startUtc) && !point.time.isAfter(endUtc),
         )
         .toList();
-
     final croppedChannels = _activity.channels.map((channel, samples) {
       final filtered = samples
           .where((sample) =>
@@ -240,7 +194,6 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-
     final croppedLaps = _activity.laps.where((lap) {
       return !lap.endTime.isBefore(startUtc) && !lap.startTime.isAfter(endUtc);
     }).map((lap) {
@@ -249,7 +202,6 @@ class RawEditor {
       final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
       return lap.copyWith(startTime: lapStart, endTime: lapEnd);
     }).toList();
-
     _activity = _activity.copyWith(
       points: croppedPoints,
       channels: croppedChannels.map((key, value) => MapEntry(key, value)),
@@ -257,7 +209,6 @@ class RawEditor {
     );
     return this;
   }
-
   /// Offsets all timestamps by [delta].
   RawEditor shiftTime(Duration delta) {
     final shiftedPoints = _activity.points
@@ -265,7 +216,6 @@ class RawEditor {
           (point) => point.copyWith(time: point.time.add(delta)),
         )
         .toList();
-
     final shiftedChannels = _activity.channels.map((channel, samples) {
       final shifted = samples
           .map(
@@ -274,7 +224,6 @@ class RawEditor {
           .toList();
       return MapEntry(channel, shifted);
     });
-
     final shiftedLaps = _activity.laps
         .map(
           (lap) => lap.copyWith(
@@ -283,7 +232,6 @@ class RawEditor {
           ),
         )
         .toList();
-
     _activity = _activity.copyWith(
       points: shiftedPoints,
       channels: shiftedChannels.map((key, value) => MapEntry(key, value)),
@@ -291,13 +239,11 @@ class RawEditor {
     );
     return this;
   }
-
   /// Down-samples by the minimum [step] between consecutive timestamps.
   RawEditor downsampleTime(Duration step) {
     if (step.isNegative || step == Duration.zero) {
       throw ArgumentError.value(step, 'step', 'must be positive');
     }
-
     final retained = <GeoPoint>[];
     DateTime? lastKept;
     for (final point in _activity.points) {
@@ -307,11 +253,9 @@ class RawEditor {
         lastKept = point.time;
       }
     }
-
     final retainedTimes =
         retained.map((point) => point.time.microsecondsSinceEpoch).toList();
     final tolerance = math.max(1, step.inMicroseconds ~/ 2);
-
     final filteredChannels = _activity.channels.map((channel, samples) {
       final filtered = samples.where((sample) {
         final sampleMicros = sample.time.microsecondsSinceEpoch;
@@ -321,14 +265,12 @@ class RawEditor {
       }).toList();
       return MapEntry(channel, filtered);
     });
-
     _activity = _activity.copyWith(
       points: retained,
       channels: filteredChannels.map((key, value) => MapEntry(key, value)),
     );
     return this;
   }
-
   /// Down-samples by requiring at least [meters] between consecutive points.
   RawEditor downsampleDistance(double meters) {
     if (meters <= 0) {
@@ -337,7 +279,6 @@ class RawEditor {
     if (_activity.points.length < 2) {
       return this;
     }
-
     final retained = <GeoPoint>[_activity.points.first];
     var lastKept = _activity.points.first;
     for (final point in _activity.points.skip(1)) {
@@ -347,7 +288,6 @@ class RawEditor {
         lastKept = point;
       }
     }
-
     final retainedTimes =
         retained.map((point) => point.time.microsecondsSinceEpoch).toSet();
     final filteredChannels = _activity.channels.map((channel, samples) {
@@ -360,14 +300,12 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-
     _activity = _activity.copyWith(
       points: retained,
       channels: filteredChannels.map((key, value) => MapEntry(key, value)),
     );
     return this;
   }
-
   /// Applies a moving-average smoothing over the heart-rate channel.
   RawEditor smoothHR(int window) {
     if (window <= 1) {
@@ -377,10 +315,8 @@ class RawEditor {
     if (hrSamples.isEmpty) {
       return this;
     }
-
     final halfWindow = window ~/ 2;
     final smoothed = <Sample>[];
-
     for (var i = 0; i < hrSamples.length; i++) {
       final start = math.max(0, i - halfWindow);
       final end = math.min(hrSamples.length - 1, i + halfWindow);
@@ -395,7 +331,6 @@ class RawEditor {
         hrSamples[i].copyWith(value: averaged),
       );
     }
-
     final newChannels = {
       for (final entry in _activity.channels.entries) entry.key: entry.value,
     };
@@ -403,17 +338,14 @@ class RawEditor {
     _activity = _activity.copyWith(channels: newChannels);
     return this;
   }
-
   /// Recomputes distance (meters) and speed (meters per second) from the trajectory.
   RawEditor recomputeDistanceAndSpeed() {
     if (_activity.points.length < 2) {
       return this;
     }
-
     final cumulative = <Sample>[];
     final speed = <Sample>[];
     var total = 0.0;
-
     for (var i = 0; i < _activity.points.length; i++) {
       final point = _activity.points[i];
       if (i == 0) {
@@ -430,7 +362,6 @@ class RawEditor {
       cumulative.add(Sample(time: point.time, value: total));
       speed.add(Sample(time: point.time, value: currentSpeed));
     }
-
     final newChannels = {
       for (final entry in _activity.channels.entries) entry.key: entry.value,
     };
@@ -439,7 +370,6 @@ class RawEditor {
     _activity = _activity.copyWith(channels: newChannels);
     return this;
   }
-
   /// Generates laps at every [meters] boundary using the distance channel.
   RawEditor markLapsByDistance(double meters) {
     if (meters <= 0) {
@@ -449,7 +379,6 @@ class RawEditor {
     if (distanceSamples.isEmpty) {
       return this;
     }
-
     final laps = <Lap>[];
     double nextSplit = meters;
     DateTime? lapStart = distanceSamples.first.time;
@@ -467,7 +396,6 @@ class RawEditor {
         nextSplit += meters;
       }
     }
-
     if (laps.isEmpty && _activity.points.isNotEmpty) {
       laps.add(
         Lap(
@@ -478,12 +406,10 @@ class RawEditor {
         ),
       );
     }
-
     _activity = _activity.copyWith(laps: laps);
     return this;
   }
 }
-
 double _haversine(GeoPoint a, GeoPoint b) {
   const earthRadius = 6371000.0;
   final dLat = _radians(b.latitude - a.latitude);
@@ -497,32 +423,26 @@ double _haversine(GeoPoint a, GeoPoint b) {
   final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
   return earthRadius * c;
 }
-
 double _radians(double deg) => deg * math.pi / 180.0;
-
 List<GeoPoint> _resamplePoints(List<GeoPoint> points, List<DateTime> times) {
   final result = <GeoPoint>[];
   if (points.isEmpty) {
     return result;
   }
-
   var upperIndex = 1;
   for (final time in times) {
     while (
         upperIndex < points.length && points[upperIndex].time.isBefore(time)) {
       upperIndex++;
     }
-
     if (upperIndex >= points.length) {
       final last = points.last;
       result.add(last.copyWith(time: time));
       continue;
     }
-
     final lowerIndex = upperIndex == 0 ? 0 : upperIndex - 1;
     final lower = points[lowerIndex];
     final upper = points[upperIndex];
-
     if (time.isAtSameMomentAs(lower.time)) {
       result.add(lower);
       continue;
@@ -531,18 +451,14 @@ List<GeoPoint> _resamplePoints(List<GeoPoint> points, List<DateTime> times) {
       result.add(upper);
       continue;
     }
-
     result.add(_interpolatePoint(lower, upper, time));
   }
-
   return result;
 }
-
 List<Sample> _resampleLinear(List<Sample> samples, List<DateTime> times) {
   if (samples.isEmpty) {
     return const <Sample>[];
   }
-
   final result = <Sample>[];
   var upperIndex = 1;
   for (final time in times) {
@@ -550,17 +466,14 @@ List<Sample> _resampleLinear(List<Sample> samples, List<DateTime> times) {
         samples[upperIndex].time.isBefore(time)) {
       upperIndex++;
     }
-
     if (upperIndex >= samples.length) {
       final last = samples.last;
       result.add(Sample(time: time, value: last.value));
       continue;
     }
-
     final lowerIndex = upperIndex == 0 ? 0 : upperIndex - 1;
     final lower = samples[lowerIndex];
     final upper = samples[upperIndex];
-
     if (time.isAtSameMomentAs(lower.time)) {
       result.add(Sample(time: time, value: lower.value));
       continue;
@@ -569,15 +482,12 @@ List<Sample> _resampleLinear(List<Sample> samples, List<DateTime> times) {
       result.add(Sample(time: time, value: upper.value));
       continue;
     }
-
     final value = _interpolateValue(
         lower.time, upper.time, time, lower.value, upper.value);
     result.add(Sample(time: time, value: value));
   }
-
   return result;
 }
-
 List<Sample> _resampleNearest(
   List<Sample> samples,
   List<DateTime> times,
@@ -608,7 +518,6 @@ List<Sample> _resampleNearest(
   }
   return result;
 }
-
 GeoPoint _interpolatePoint(GeoPoint lower, GeoPoint upper, DateTime target) {
   final factor = _timeLerpFactor(lower.time, upper.time, target);
   final elevation =
@@ -622,7 +531,6 @@ GeoPoint _interpolatePoint(GeoPoint lower, GeoPoint upper, DateTime target) {
     time: target,
   );
 }
-
 double _interpolateValue(
   DateTime lowerTime,
   DateTime upperTime,
@@ -633,7 +541,6 @@ double _interpolateValue(
   final factor = _timeLerpFactor(lowerTime, upperTime, target);
   return lowerValue + (upperValue - lowerValue) * factor;
 }
-
 double? _interpolateOptional(double? a, double? b, double factor) {
   if (a == null && b == null) {
     return null;
@@ -646,7 +553,6 @@ double? _interpolateOptional(double? a, double? b, double factor) {
   }
   return a + (b - a) * factor;
 }
-
 double _timeLerpFactor(DateTime lower, DateTime upper, DateTime target) {
   final lowerMicros = lower.microsecondsSinceEpoch;
   final upperMicros = upper.microsecondsSinceEpoch;
