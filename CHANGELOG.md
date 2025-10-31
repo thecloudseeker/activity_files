@@ -1,3 +1,7 @@
+## 0.1.1
+
+* fix README
+
 ## 0.1.0
 
 * Handle FIT compressed timestamp headers and ensure unknown message types

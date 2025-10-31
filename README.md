@@ -6,8 +6,8 @@ activity files. `activity_files` provides format-agnostic models, robust GPX and
 TCX parsers/encoders, transformation utilities, and a CLI for quick conversions
 or validation.
 
-> FIT payloads are exchanged as base64 strings so they can flow through the
-> string-based APIs without loss.
+> FIT payloads can be handled as raw bytes or base64 strings; the library now
+> provides both string- and byte-oriented APIs.
 
 ## Highlights
 
@@ -29,7 +29,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.0.2
+  activity_files: ^0.1.1
 ```
 
 Then install dependencies:
@@ -88,8 +88,6 @@ final options = EncoderOptions(
 );
 final tcxString = ActivityEncoder.encode(activity, ActivityFileFormat.tcx, options: options);
 
-// FIT payloads are emitted as base64 strings, but you can work with the raw
-// bytes directly using ActivityParser.parseBytes.
 final fitBase64 = ActivityEncoder.encode(activity, ActivityFileFormat.fit, options: options);
 final fitBytes = base64Decode(fitBase64);
 final fitActivity =
@@ -152,8 +150,13 @@ final fitResult = ActivityConverter.convert(
   encoderOptions: options,
   warnings: fitWarnings,
 );
-final fitRoundTrip =
-    ActivityParser.parse(fitResult, ActivityFileFormat.fit).activity;
+final fitRoundTrip = ActivityParser.parseBytes(
+  base64Decode(fitResult),
+  ActivityFileFormat.fit,
+).activity;
+
+// Tip: ActivityConverter.convert also accepts raw FIT bytes (List<int>) for the
+// input when converting from binary FIT files.
 ```
 
 ## CLI usage
@@ -166,8 +169,9 @@ $ dart run bin/activity_files.dart validate --format gpx -i ride.gpx --gap-thres
 
 The CLI reports parser warnings, validation warnings, and exits with a non-zero
 status when validation errors are detected.
-Binary FIT inputs/outputs are handled automatically via base64 conversion.
+Binary FIT inputs are read directly from `.fit` files, and FIT outputs are
+written as binary files (base64 is only used when you opt into the string APIs).
 
 ## Contributing
 
-Issues and pull requests are welcome, especially for additional format fixtures. The package is released under the MIT license.
+Issues and pull requests are welcome, especially for additional format fixtures. The package is released under the BSD 3-Clause license.

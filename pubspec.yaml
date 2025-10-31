@@ -2,7 +2,7 @@ name: activity_files
 description: >
   A pure Dart toolkit for parsing, editing, and encoding workout activity files
   such as GPX, TCX, and FIT.
-version: 0.1.0
+version: 0.1.1
 repository: https://github.com/eikedreier/activity_files
 issue_tracker: https://github.com/eikedreier/activity_files/issues
 topics:
