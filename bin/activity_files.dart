@@ -141,7 +141,7 @@ void _handleConvert(ArgResults command) {
 
   final encoderOptions = _buildEncoderOptions(command);
   final content = fromFormat == ActivityFileFormat.fit
-      ? base64Encode(inputFile.readAsBytesSync())
+      ? inputFile.readAsBytesSync()
       : inputFile.readAsStringSync();
 
   final warnings = <String>[];
@@ -193,9 +193,11 @@ void _handleValidate(ArgResults command) {
   final warnings = <String>[];
   try {
     final payload = format == ActivityFileFormat.fit
-        ? base64Encode(inputFile.readAsBytesSync())
+        ? inputFile.readAsBytesSync()
         : inputFile.readAsStringSync();
-    final parseResult = ActivityParser.parse(payload, format);
+    final parseResult = payload is List<int>
+        ? ActivityParser.parseBytes(payload, format)
+        : ActivityParser.parse(payload as String, format);
     warnings.addAll(parseResult.warnings);
     final validation = validateRawActivity(
       parseResult.activity,

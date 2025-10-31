@@ -177,6 +177,25 @@ void main() {
       expect(newTimes.length, originalTimes.length);
       expect(newTimes, orderedEquals(originalTimes));
     });
+
+    test('FIT compressed headers parsed from raw bytes', () {
+      final bytes = _buildCompressedFitSample();
+      final result =
+          ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      expect(result.warnings, isEmpty);
+
+      final points = result.activity.points;
+      expect(points.length, equals(2));
+
+      final base = DateTime.utc(1989, 12, 31);
+      expect(points.first.time, equals(base.add(const Duration(seconds: 1000))));
+      expect(points.last.time,
+          equals(base.add(const Duration(seconds: 1001))));
+
+      expect(points.first.latitude, closeTo(0.0, 1e-6));
+      expect(points.last.latitude, closeTo(0.0005, 1e-6));
+    });
   });
 
   group('Transforms', () {
@@ -378,6 +397,77 @@ bool _hasMatchingSample(
     }
   }
   return false;
+}
+
+Uint8List _buildCompressedFitSample() {
+  final data = BytesBuilder();
+  data.add([
+    0x40, // definition header for local message 0
+    0x00, // reserved
+    0x00, // little-endian architecture
+    0x14,
+    0x00, // global message 20 (record)
+    0x03, // field count
+    0xFD,
+    0x04,
+    0x86, // timestamp (uint32)
+    0x00,
+    0x04,
+    0x85, // latitude (sint32)
+    0x01,
+    0x04,
+    0x85, // longitude (sint32)
+  ]);
+
+  int writeInt32(int value) => value & 0xFFFFFFFF;
+  List<int> int32LE(int value) => [
+        value & 0xFF,
+        (value >> 8) & 0xFF,
+        (value >> 16) & 0xFF,
+        (value >> 24) & 0xFF,
+      ];
+
+  const timestamp = 1000;
+  data.add([
+    0x00, // data message header (local 0)
+    ...int32LE(timestamp),
+    ...int32LE(writeInt32(_encodeSemicircles(0.0))),
+    ...int32LE(writeInt32(_encodeSemicircles(0.0))),
+  ]);
+
+  data.add([
+    0x89, // compressed header: local 0, offset 9s (~1s total delta)
+    ...int32LE(writeInt32(_encodeSemicircles(0.0005))),
+    ...int32LE(writeInt32(_encodeSemicircles(0.0005))),
+  ]);
+
+  final payload = data.toBytes();
+  final header = _buildFitHeader(payload.length);
+  final crc = _fitCrc(payload);
+
+  return Uint8List.fromList([
+    ...header,
+    ...payload,
+    crc & 0xFF,
+    (crc >> 8) & 0xFF,
+  ]);
+}
+
+Uint8List _buildFitHeader(int dataSize) {
+  final header = Uint8List(14);
+  final bd = ByteData.view(header.buffer);
+  header[0] = 14;
+  header[1] = 0x10;
+  bd.setUint16(2, 0, Endian.little);
+  bd.setUint32(4, dataSize, Endian.little);
+  header.setRange(8, 12, '.FIT'.codeUnits);
+  final crc = _fitCrc(header.sublist(0, 12));
+  bd.setUint16(12, crc, Endian.little);
+  return header;
+}
+
+int _encodeSemicircles(double degrees) {
+  return ((degrees * 2147483648.0) / 180.0).round();
 }
 
 const String _sampleGpx = '''

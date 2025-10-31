@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
+
 import '../channel_mapper.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
+
 /// Encoder for the GPX file format.
 class GpxEncoder implements ActivityFormatEncoder {
   const GpxEncoder();
@@ -52,7 +53,7 @@ class GpxEncoder implements ActivityFormatEncoder {
           tempDelta,
           speedDelta,
           options.defaultMaxDelta,
-        ].whereNotNull().fold<Duration>(
+        ].nonNulls.fold<Duration>(
               options.defaultMaxDelta,
               (previous, current) => current > previous ? current : previous,
             );

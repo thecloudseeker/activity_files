@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:math' as math;
-import 'package:collection/collection.dart';
+
 import 'package:xml/xml.dart';
+
 import '../channel_mapper.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
+
 /// Encoder for the TCX file format.
 class TcxEncoder implements ActivityFormatEncoder {
   const TcxEncoder();
@@ -36,7 +38,7 @@ class TcxEncoder implements ActivityFormatEncoder {
       cadenceDelta,
       options.maxDeltaFor(Channel.speed),
       options.defaultMaxDelta,
-    ].whereNotNull().fold<Duration>(
+    ].nonNulls.fold<Duration>(
           options.defaultMaxDelta,
           (previous, current) => current > previous ? current : previous,
         );

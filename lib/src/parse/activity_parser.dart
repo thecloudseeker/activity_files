@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../models.dart';
 import 'fit_parser.dart';
 import 'gpx_parser.dart';
@@ -14,7 +17,7 @@ class ActivityParser {
   /// Parses [input] according to [format].
   ///
   /// For FIT content the [input] should be a base64-encoded payload representing
-  /// the binary FIT stream.
+  /// the binary FIT stream. Use [parseBytes] when working with raw FIT binaries.
   static ActivityParseResult parse(String input, ActivityFileFormat format) {
     final parser = switch (format) {
       ActivityFileFormat.gpx => const GpxParser(),
@@ -26,4 +29,20 @@ class ActivityParser {
   /// Convenience helper returning only the parsed activity.
   static RawActivity parseActivity(String input, ActivityFileFormat format) =>
       parse(input, format).activity;
+
+  /// Parses [bytes] according to [format]. Use this for binary FIT payloads.
+  static ActivityParseResult parseBytes(
+    List<int> bytes,
+    ActivityFileFormat format,
+  ) {
+    final parser = switch (format) {
+      ActivityFileFormat.gpx => const GpxParser(),
+      ActivityFileFormat.tcx => const TcxParser(),
+      ActivityFileFormat.fit => const FitParser(),
+    };
+    return switch (parser) {
+      FitParser fit => fit.parseBytes(Uint8List.fromList(bytes)),
+      _ => parser.parse(utf8.decode(bytes)),
+    };
+  }
 }

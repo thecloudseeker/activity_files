@@ -1,8 +1,6 @@
 # activity_files
 Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
 
-Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
-
 A pure Dart toolkit for reading, editing, validating, and writing workout
 activity files. `activity_files` provides format-agnostic models, robust GPX and
 TCX parsers/encoders, transformation utilities, and a CLI for quick conversions
@@ -31,7 +29,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: 0.0.1
+  activity_files: ^0.0.2
 ```
 
 Then install dependencies:
@@ -39,6 +37,8 @@ Then install dependencies:
 ```shell
 dart pub get
 ```
+
+See `example/basic_usage.dart` for a minimal round-trip through the encoders.
 
 ## RawActivity model
 
@@ -88,9 +88,15 @@ final options = EncoderOptions(
 );
 final tcxString = ActivityEncoder.encode(activity, ActivityFileFormat.tcx, options: options);
 
-// FIT payloads are emitted as base64 strings so they can be handled as text.
+// FIT payloads are emitted as base64 strings, but you can work with the raw
+// bytes directly using ActivityParser.parseBytes.
 final fitBase64 = ActivityEncoder.encode(activity, ActivityFileFormat.fit, options: options);
-final fitActivity = ActivityParser.parse(fitBase64, ActivityFileFormat.fit).activity;
+final fitBytes = base64Decode(fitBase64);
+final fitActivity =
+    ActivityParser.parseBytes(fitBytes, ActivityFileFormat.fit).activity;
+
+> Tip: `ActivityParser.parseBytes` accepts binary FIT payloads directly, so you
+> can feed `File('ride.fit').readAsBytesSync()` without wrapping it in base64.
 ```
 
 ## Editing pipeline

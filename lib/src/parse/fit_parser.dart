@@ -12,10 +12,22 @@ import 'parse_result.dart';
 /// skipped with warnings rather than raising hard errors.
 class FitParser implements ActivityFormatParser {
   const FitParser();
+
   @override
   ActivityParseResult parse(String input) {
     final warnings = <String>[];
-    final payload = _decodeBase64(input.trim());
+    final payload = _decodePayload(input.trim(), warnings);
+    return _parsePayload(payload, warnings);
+  }
+
+  ActivityParseResult parseBytes(Uint8List payload) {
+    return _parsePayload(payload, <String>[]);
+  }
+
+  ActivityParseResult _parsePayload(
+    Uint8List payload,
+    List<String> warnings,
+  ) {
     final reader = _FitByteReader(payload);
     final header = _FitHeader.tryRead(reader);
     if (header == null) {
@@ -25,6 +37,7 @@ class FitParser implements ActivityFormatParser {
       throw FormatException('Unsupported FIT file type: ${header.dataType}');
     }
     final definitions = <int, _FitMessageDefinition>{};
+    final lastTimestamps = <int, int>{};
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
     final cadenceSamples = <Sample>[];
@@ -42,13 +55,29 @@ class FitParser implements ActivityFormatParser {
     reader.position = header.headerSize;
     while (reader.position < payload.length && reader.position < dataLimit) {
       final recordHeader = reader.readUint8();
-      final isDefinition = (recordHeader & 0x40) != 0;
       final isCompressed = (recordHeader & 0x80) != 0;
-      final hasDeveloper = (recordHeader & 0x20) != 0;
-      final localType = recordHeader & 0x0F;
+      final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
+      final hasDeveloper = !isCompressed && (recordHeader & 0x20) != 0;
+      var localType = recordHeader & 0x0F;
+      int? compressedTimestamp;
       if (isCompressed) {
-        warnings.add('Compressed FIT message headers are not supported.');
-        continue;
+        localType = (recordHeader >> 5) & 0x03;
+        final offset = recordHeader & 0x1F;
+        final previous = lastTimestamps[localType];
+        if (previous == null) {
+          final definition = definitions[localType];
+          warnings.add(
+            'Encountered compressed header for local message $localType without prior timestamp; skipping.',
+          );
+          if (definition != null) {
+            reader.skip(definition.dataSize(compressedTimestamp: true));
+          } else {
+            reader.skipRemaining(dataLimit - reader.position);
+            break;
+          }
+          continue;
+        }
+        compressedTimestamp = _applyCompressedTimestamp(previous, offset);
       }
       if (isDefinition) {
         final definition = _FitMessageDefinition.read(
@@ -66,15 +95,28 @@ class FitParser implements ActivityFormatParser {
       final definition = definitions[localType];
       if (definition == null) {
         warnings.add(
-          'Data message references unknown definition #$localType; skipping.',
+          'Data message references unknown definition #$localType; aborting parse.',
         );
-        reader.skipUnknown();
-        continue;
+        reader.skipRemaining(dataLimit - reader.position);
+        break;
       }
-      final values = definition.readValues(reader);
+      final values = definition.readValues(
+        reader,
+        compressedTimestamp: isCompressed,
+      );
       if (values == null) {
         warnings.add('Failed to read data message for ${definition.globalId}.');
+        reader.skip(definition.dataSize(compressedTimestamp: isCompressed));
         continue;
+      }
+      if (compressedTimestamp != null) {
+        values[253] = compressedTimestamp;
+        lastTimestamps[localType] = compressedTimestamp;
+      } else {
+        final rawTimestamp = values[253];
+        if (rawTimestamp is num) {
+          lastTimestamps[localType] = rawTimestamp.toInt();
+        }
       }
       switch (definition.globalId) {
         case 0: // file_id
@@ -184,14 +226,25 @@ class FitParser implements ActivityFormatParser {
     return ActivityParseResult(activity: activity, warnings: warnings);
   }
 }
-Uint8List _decodeBase64(String input) {
+Uint8List _decodePayload(String input, List<String> warnings) {
   try {
     return Uint8List.fromList(base64Decode(input));
   } on FormatException {
     throw FormatException(
-      'FIT payloads must be supplied as base64-encoded strings.',
+      'FIT payloads must be base64-encoded when provided as String. '
+      'Use ActivityParser.parseBytes for raw binary data.',
     );
   }
+}
+
+int _applyCompressedTimestamp(int previous, int offset) {
+  const mask = 0x1F;
+  final base = previous & ~mask;
+  var value = base | offset;
+  if (value <= previous) {
+    value += mask + 1;
+  }
+  return value & 0xFFFFFFFF;
 }
 Sport _mapSport(int value) {
   switch (value) {
@@ -300,12 +353,14 @@ class _FitMessageDefinition {
     required this.isLittleEndian,
     required this.fields,
     required this.developerFieldCount,
+    required this.developerDataSize,
   });
   final int localId;
   final int globalId;
   final bool isLittleEndian;
   final List<_FitFieldDefinition> fields;
   final int developerFieldCount;
+  final int developerDataSize;
   static _FitMessageDefinition? read(
     _FitByteReader reader,
     int localId, {
@@ -334,20 +389,40 @@ class _FitMessageDefinition {
         developerCount = reader.readUint8();
         reader.skip(developerCount * 3);
       }
+      final developerDataSize = 0; // Developer data fields are ignored.
       return _FitMessageDefinition(
         localId: localId,
         globalId: globalMessage,
         isLittleEndian: littleEndian,
         fields: fields,
         developerFieldCount: developerCount,
+        developerDataSize: developerDataSize,
       );
     } catch (_) {
       return null;
     }
   }
-  Map<int, Object?>? readValues(_FitByteReader reader) {
+  int dataSize({bool compressedTimestamp = false}) {
+    var total = developerDataSize;
+    for (final field in fields) {
+      if (compressedTimestamp && field.fieldNumber == 253) {
+        continue;
+      }
+      total += field.size;
+    }
+    return total;
+  }
+
+  Map<int, Object?>? readValues(
+    _FitByteReader reader, {
+    bool compressedTimestamp = false,
+  }) {
     final values = <int, Object?>{};
     for (final field in fields) {
+      if (compressedTimestamp && field.fieldNumber == 253) {
+        values[field.fieldNumber] = null;
+        continue;
+      }
       final value = reader.readBaseType(
         field.baseType,
         field.size,
@@ -395,14 +470,20 @@ class _FitByteReader {
     position += length;
     return Uint8List.fromList(slice);
   }
+  int get remaining => bytes.length - position;
+
   void skip(int length) {
+    if (length <= 0) {
+      return;
+    }
     position += length;
     if (position > bytes.length) {
       position = bytes.length;
     }
   }
-  void skipUnknown() {
-    // Nothing to do; caller must ensure definitions exist before reading.
+
+  void skipRemaining(int length) {
+    skip(length);
   }
   Object? readBaseType(
     int baseType,
