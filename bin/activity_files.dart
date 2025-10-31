@@ -32,16 +32,8 @@ void main(List<String> arguments) {
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show usage.');
 
   final convertParser = ArgParser()
-    ..addOption(
-      'from',
-      allowed: ['gpx', 'tcx', 'fit'],
-      help: 'Input format.',
-    )
-    ..addOption(
-      'to',
-      allowed: ['gpx', 'tcx', 'fit'],
-      help: 'Output format.',
-    )
+    ..addOption('from', allowed: ['gpx', 'tcx', 'fit'], help: 'Input format.')
+    ..addOption('to', allowed: ['gpx', 'tcx', 'fit'], help: 'Output format.')
     ..addOption('input', abbr: 'i', help: 'Input file path.')
     ..addOption('output', abbr: 'o', help: 'Output file path.')
     ..addOption(
@@ -207,7 +199,8 @@ void _handleValidate(ArgResults command) {
     _printWarnings(warnings);
     if (validation.errors.isEmpty) {
       stdout.writeln(
-          'Validation passed (${parseResult.activity.points.length} points).');
+        'Validation passed (${parseResult.activity.points.length} points).',
+      );
       if (validation.warnings.isNotEmpty) {
         stdout.writeln('Warnings:');
         for (final warning in validation.warnings) {
@@ -250,8 +243,9 @@ ActivityFileFormat? _parseFormat(String? value) {
 }
 
 EncoderOptions _buildEncoderOptions(ArgResults command) {
-  final defaultDeltaSeconds =
-      double.tryParse(command['max-delta-seconds'] as String? ?? '');
+  final defaultDeltaSeconds = double.tryParse(
+    command['max-delta-seconds'] as String? ?? '',
+  );
   final defaultDelta = defaultDeltaSeconds != null && defaultDeltaSeconds >= 0
       ? Duration(milliseconds: (defaultDeltaSeconds * 1000).round())
       : const Duration(seconds: 5);
@@ -271,8 +265,9 @@ EncoderOptions _buildEncoderOptions(ArgResults command) {
 
   final overrides = <Channel, Duration>{};
   final hrDelta = parseChannelDelta(command['hr-max-delta'] as String?);
-  final cadenceDelta =
-      parseChannelDelta(command['cadence-max-delta'] as String?);
+  final cadenceDelta = parseChannelDelta(
+    command['cadence-max-delta'] as String?,
+  );
   final powerDelta = parseChannelDelta(command['power-max-delta'] as String?);
   final tempDelta = parseChannelDelta(command['temp-max-delta'] as String?);
 

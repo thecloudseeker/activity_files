@@ -5,6 +5,7 @@ import '../channel_mapper.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
+
 /// Encoder for FIT payloads (limited profile support).
 ///
 /// The emitted binary stream contains the following message sequence:
@@ -35,7 +36,10 @@ class FitEncoder implements ActivityFormatEncoder {
       fields: const [
         _FitField(number: 0, size: 1, type: _FitBaseType.enumType), // type
         _FitField(
-            number: 1, size: 2, type: _FitBaseType.uint16), // manufacturer
+          number: 1,
+          size: 2,
+          type: _FitBaseType.uint16,
+        ), // manufacturer
         _FitField(number: 2, size: 2, type: _FitBaseType.uint16), // product
         _FitField(number: 3, size: 4, type: _FitBaseType.uint32z), // serial
       ],
@@ -73,25 +77,29 @@ class FitEncoder implements ActivityFormatEncoder {
         globalId: 19,
         fields: const [
           _FitField(
-              number: 253, size: 4, type: _FitBaseType.uint32), // timestamp
+            number: 253,
+            size: 4,
+            type: _FitBaseType.uint32,
+          ), // timestamp
           _FitField(
-              number: 2, size: 4, type: _FitBaseType.uint32), // start_time
+            number: 2,
+            size: 4,
+            type: _FitBaseType.uint32,
+          ), // start_time
           _FitField(
-              number: 7,
-              size: 4,
-              type: _FitBaseType.uint32), // total_elapsed_time (ms/1000)
+            number: 7,
+            size: 4,
+            type: _FitBaseType.uint32,
+          ), // total_elapsed_time (ms/1000)
           _FitField(
-              number: 8,
-              size: 4,
-              type: _FitBaseType.uint32), // total_distance (m)
+            number: 8,
+            size: 4,
+            type: _FitBaseType.uint32,
+          ), // total_distance (m)
         ],
       );
       for (final lap in activity.laps) {
-        encoder.writeLap(
-          dataSection,
-          localId: lapLocal,
-          lap: lap,
-        );
+        encoder.writeLap(dataSection, localId: lapLocal, lap: lap);
       }
     }
     // Record definition (lat/long/altitude + main sensors).
@@ -111,6 +119,7 @@ class FitEncoder implements ActivityFormatEncoder {
         extraRecordFields[fieldNum] = field;
       }
     }
+
     if (activity.channel(Channel.heartRate).isNotEmpty) {
       addField(
         3,
@@ -163,8 +172,10 @@ class FitEncoder implements ActivityFormatEncoder {
       (key, value) => MapEntry(key, List<Sample>.from(value)),
     );
     for (final point in activity.points) {
-      final timestampSeconds =
-          point.time.toUtc().difference(baseTime).inSeconds;
+      final timestampSeconds = point.time
+          .toUtc()
+          .difference(baseTime)
+          .inSeconds;
       final lat = (point.latitude * 2147483648.0 / 180.0).round();
       final lon = (point.longitude * 2147483648.0 / 180.0).round();
       final altitudeRaw = ((point.elevation ?? 0) + 500.0) * 5.0;
@@ -173,26 +184,29 @@ class FitEncoder implements ActivityFormatEncoder {
         channelMap,
         maxDelta: options.defaultMaxDelta,
       );
-      final hr = snapshot.heartRateDelta != null &&
+      final hr =
+          snapshot.heartRateDelta != null &&
               snapshot.heartRateDelta! <= hrTolerance
           ? snapshot.heartRate
           : null;
-      final cadence = snapshot.cadenceDelta != null &&
+      final cadence =
+          snapshot.cadenceDelta != null &&
               snapshot.cadenceDelta! <= cadenceTolerance
           ? snapshot.cadence
           : null;
       final power =
           snapshot.powerDelta != null && snapshot.powerDelta! <= powerTolerance
-              ? snapshot.power
-              : null;
-      final temp = snapshot.temperatureDelta != null &&
+          ? snapshot.power
+          : null;
+      final temp =
+          snapshot.temperatureDelta != null &&
               snapshot.temperatureDelta! <= tempTolerance
           ? snapshot.temperature
           : null;
       final speed =
           snapshot.speedDelta != null && snapshot.speedDelta! <= speedTolerance
-              ? snapshot.speed
-              : null;
+          ? snapshot.speed
+          : null;
       encoder.writeRecord(
         dataSection,
         localId: recordLocal,
@@ -229,6 +243,7 @@ class FitEncoder implements ActivityFormatEncoder {
     return base64Encode(combined.toBytes());
   }
 }
+
 double? _lookupSample(List<Sample>? samples, DateTime timestamp) {
   if (samples == null || samples.isEmpty) {
     return null;
@@ -245,6 +260,7 @@ double? _lookupSample(List<Sample>? samples, DateTime timestamp) {
   }
   return nearest?.value;
 }
+
 Uint8List _createHeader(int dataSize) {
   final header = Uint8List(14);
   final bd = header.buffer.asByteData();
@@ -257,6 +273,7 @@ Uint8List _createHeader(int dataSize) {
   bd.setUint16(12, crc, Endian.little);
   return header;
 }
+
 class _FitMessageEncoder {
   void writeDefinition(
     BytesBuilder destination, {
@@ -274,6 +291,7 @@ class _FitMessageEncoder {
       destination.add(field.encode());
     }
   }
+
   void writeFileId(
     BytesBuilder destination, {
     required int localId,
@@ -289,6 +307,7 @@ class _FitMessageEncoder {
     bd.setUint32(4, serial, Endian.little);
     destination.add(bd.buffer.asUint8List());
   }
+
   void writeSession(
     BytesBuilder destination, {
     required int localId,
@@ -303,6 +322,7 @@ class _FitMessageEncoder {
     bd.setUint8(4, _encodeSport(sport));
     destination.add(bd.buffer.asUint8List());
   }
+
   void writeLap(
     BytesBuilder destination, {
     required int localId,
@@ -321,6 +341,7 @@ class _FitMessageEncoder {
     bd.setUint32(12, distance.round(), Endian.little);
     destination.add(bd.buffer.asUint8List());
   }
+
   void writeRecord(
     BytesBuilder destination, {
     required int localId,
@@ -349,12 +370,14 @@ class _FitMessageEncoder {
         body();
       }
     }
+
     writeOptional(3, () {
       destination.addByte(hr != null ? hr.round().clamp(0, 255) : 0xFF);
     });
     writeOptional(4, () {
-      destination
-          .addByte(cadence != null ? cadence.round().clamp(0, 255) : 0xFF);
+      destination.addByte(
+        cadence != null ? cadence.round().clamp(0, 255) : 0xFF,
+      );
     });
     writeOptional(5, () {
       final rawValue = distanceMeters;
@@ -396,6 +419,7 @@ class _FitMessageEncoder {
       destination.add(bd.buffer.asUint8List());
     });
   }
+
   int _encodeSport(Sport sport) {
     switch (sport) {
       case Sport.running:
@@ -411,6 +435,7 @@ class _FitMessageEncoder {
     }
   }
 }
+
 class _FitField {
   const _FitField({
     required this.number,
@@ -421,11 +446,10 @@ class _FitField {
   final int size;
   final _FitBaseType type;
   Uint8List encode() {
-    return Uint8List.fromList(
-      [number, size, type.code],
-    );
+    return Uint8List.fromList([number, size, type.code]);
   }
 }
+
 enum _FitBaseType {
   enumType(0x00),
   sint8(0x01),
@@ -434,9 +458,11 @@ enum _FitBaseType {
   sint32(0x85),
   uint32(0x86),
   uint32z(0x8C);
+
   const _FitBaseType(this.code);
   final int code;
 }
+
 int _clampUint16(int value) =>
     value < 0 ? 0 : (value > 0xFFFF ? 0xFFFF : value);
 int _clampUint32(int value) =>
@@ -453,6 +479,7 @@ int _computeFitCrc(List<int> bytes) {
   }
   return crc & 0xFFFF;
 }
+
 const List<int> _fitCrcTable = [
   0x0000,
   0xCC01,

@@ -14,8 +14,10 @@ void main() {
 
   group('Format interop', () {
     test('GPX → Raw → TCX preserves HR and cadence', () {
-      final gpxResult =
-          ActivityParser.parse(_sampleGpx, ActivityFileFormat.gpx);
+      final gpxResult = ActivityParser.parse(
+        _sampleGpx,
+        ActivityFileFormat.gpx,
+      );
       expect(gpxResult.warnings, isEmpty);
       final activity = gpxResult.activity;
 
@@ -43,8 +45,10 @@ void main() {
     });
 
     test('TCX → Raw → GPX preserves HR and cadence extensions', () {
-      final tcxResult =
-          ActivityParser.parse(_sampleTcx, ActivityFileFormat.tcx);
+      final tcxResult = ActivityParser.parse(
+        _sampleTcx,
+        ActivityFileFormat.tcx,
+      );
       expect(tcxResult.warnings, isEmpty);
 
       final gpx = ActivityEncoder.encode(
@@ -61,10 +65,14 @@ void main() {
       final originalCad = tcxResult.activity.channel(Channel.cadence);
       final roundCad = gpxResult.activity.channel(Channel.cadence);
 
-      expect(roundHr.map((s) => s.value.round()),
-          orderedEquals(originalHr.map((s) => s.value.round())));
-      expect(roundCad.map((s) => s.value.round()),
-          orderedEquals(originalCad.map((s) => s.value.round())));
+      expect(
+        roundHr.map((s) => s.value.round()),
+        orderedEquals(originalHr.map((s) => s.value.round())),
+      );
+      expect(
+        roundCad.map((s) => s.value.round()),
+        orderedEquals(originalCad.map((s) => s.value.round())),
+      );
     });
 
     test('FIT encode → parse round trip', () {
@@ -90,10 +98,14 @@ void main() {
         parsed.activity.channel(Channel.distance).last.value,
         closeTo(activity.channel(Channel.distance).last.value, 0.05),
       );
-      final parsedSpeeds =
-          parsed.activity.channel(Channel.speed).map((s) => s.value).toList();
-      final originalSpeeds =
-          activity.channel(Channel.speed).map((s) => s.value).toList();
+      final parsedSpeeds = parsed.activity
+          .channel(Channel.speed)
+          .map((s) => s.value)
+          .toList();
+      final originalSpeeds = activity
+          .channel(Channel.speed)
+          .map((s) => s.value)
+          .toList();
       expect(parsedSpeeds.length, originalSpeeds.length);
       for (var i = 0; i < originalSpeeds.length; i++) {
         expect(parsedSpeeds[i], closeTo(originalSpeeds[i], 0.5));
@@ -144,8 +156,10 @@ void main() {
       final secondBytes = base64Decode(secondFit);
       expect(secondBytes.length, equals(firstBytes.length));
 
-      final secondParsed =
-          ActivityParser.parse(secondFit, ActivityFileFormat.fit).activity;
+      final secondParsed = ActivityParser.parse(
+        secondFit,
+        ActivityFileFormat.fit,
+      ).activity;
       expect(secondParsed.points.length, activity.points.length);
       expect(
         secondParsed.channel(Channel.power).map((s) => s.value.round()),
@@ -162,8 +176,10 @@ void main() {
     });
 
     test('GPX round-trip retains point count and timestamps', () {
-      final parseResult =
-          ActivityParser.parse(_sampleGpx, ActivityFileFormat.gpx);
+      final parseResult = ActivityParser.parse(
+        _sampleGpx,
+        ActivityFileFormat.gpx,
+      );
       final encoded = ActivityEncoder.encode(
         parseResult.activity,
         ActivityFileFormat.gpx,
@@ -171,8 +187,9 @@ void main() {
       );
       final roundTrip = ActivityParser.parse(encoded, ActivityFileFormat.gpx);
 
-      final originalTimes =
-          parseResult.activity.points.map((p) => p.time).toList();
+      final originalTimes = parseResult.activity.points
+          .map((p) => p.time)
+          .toList();
       final newTimes = roundTrip.activity.points.map((p) => p.time).toList();
       expect(newTimes.length, originalTimes.length);
       expect(newTimes, orderedEquals(originalTimes));
@@ -180,8 +197,7 @@ void main() {
 
     test('FIT compressed headers parsed from raw bytes', () {
       final bytes = _buildCompressedFitSample();
-      final result =
-          ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(result.warnings, isEmpty);
 
@@ -189,9 +205,11 @@ void main() {
       expect(points.length, equals(2));
 
       final base = DateTime.utc(1989, 12, 31);
-      expect(points.first.time, equals(base.add(const Duration(seconds: 1000))));
-      expect(points.last.time,
-          equals(base.add(const Duration(seconds: 1001))));
+      expect(
+        points.first.time,
+        equals(base.add(const Duration(seconds: 1000))),
+      );
+      expect(points.last.time, equals(base.add(const Duration(seconds: 1001))));
 
       expect(points.first.latitude, closeTo(0.0, 1e-6));
       expect(points.last.latitude, closeTo(0.0005, 1e-6));
@@ -212,10 +230,8 @@ void main() {
       );
       final hr = List.generate(
         6,
-        (index) => Sample(
-          time: points[index].time,
-          value: 140 + index.toDouble(),
-        ),
+        (index) =>
+            Sample(time: points[index].time, value: 140 + index.toDouble()),
       );
       final activity = RawActivity(
         points: points,
@@ -223,18 +239,22 @@ void main() {
       );
 
       final cropped = RawEditor(activity)
-          .crop(start.add(const Duration(seconds: 10)),
-              start.add(const Duration(seconds: 40)))
+          .crop(
+            start.add(const Duration(seconds: 10)),
+            start.add(const Duration(seconds: 40)),
+          )
           .activity;
       expect(cropped.points.length, 4);
 
-      final downsampled = RawEditor(activity)
-          .downsampleTime(const Duration(seconds: 20))
-          .activity;
+      final downsampled = RawEditor(
+        activity,
+      ).downsampleTime(const Duration(seconds: 20)).activity;
       expect(downsampled.points.length, lessThan(activity.points.length));
 
-      final resampled =
-          RawTransforms.resample(activity, step: const Duration(seconds: 5));
+      final resampled = RawTransforms.resample(
+        activity,
+        step: const Duration(seconds: 5),
+      );
       expect(resampled.points.length, greaterThan(activity.points.length));
       expect(
         resampled.channel(Channel.heartRate).length,
@@ -264,8 +284,10 @@ void main() {
         },
       );
 
-      final result =
-          validateRawActivity(invalid, gapWarningThreshold: Duration.zero);
+      final result = validateRawActivity(
+        invalid,
+        gapWarningThreshold: Duration.zero,
+      );
       expect(result.errors.length, greaterThanOrEqualTo(3));
     });
 
@@ -275,14 +297,17 @@ void main() {
         points: [
           GeoPoint(latitude: 40, longitude: -105, time: time),
           GeoPoint(
-              latitude: 40.01,
-              longitude: -105.01,
-              time: time.add(const Duration(minutes: 10))),
+            latitude: 40.01,
+            longitude: -105.01,
+            time: time.add(const Duration(minutes: 10)),
+          ),
         ],
       );
 
-      final result = validateRawActivity(activity,
-          gapWarningThreshold: const Duration(seconds: 60));
+      final result = validateRawActivity(
+        activity,
+        gapWarningThreshold: const Duration(seconds: 60),
+      );
       expect(result.errors, isEmpty);
       expect(result.warnings, isNotEmpty);
     });
@@ -293,7 +318,11 @@ RawActivity _buildSampleActivity() {
   final baseTime = DateTime.utc(2024, 4, 1, 6);
   final points = [
     GeoPoint(
-        latitude: 40.0, longitude: -105.0, elevation: 1600, time: baseTime),
+      latitude: 40.0,
+      longitude: -105.0,
+      elevation: 1600,
+      time: baseTime,
+    ),
     GeoPoint(
       latitude: 40.0005,
       longitude: -105.0005,
@@ -349,8 +378,9 @@ RawActivity _buildSampleActivity() {
 
   final result = RawTransforms.computeCumulativeDistance(baseActivity);
   final withDistance = result.activity;
-  final withSpeed =
-      RawEditor(withDistance).recomputeDistanceAndSpeed().activity;
+  final withSpeed = RawEditor(
+    withDistance,
+  ).recomputeDistanceAndSpeed().activity;
   return withSpeed;
 }
 
@@ -387,7 +417,10 @@ const List<int> _fitCrcTable = [
 ];
 
 bool _hasMatchingSample(
-    List<Sample> samples, Sample target, Duration tolerance) {
+  List<Sample> samples,
+  Sample target,
+  Duration tolerance,
+) {
   final targetMicros = target.time.microsecondsSinceEpoch;
   final limit = tolerance.inMicroseconds;
   for (final sample in samples) {
@@ -421,11 +454,11 @@ Uint8List _buildCompressedFitSample() {
 
   int writeInt32(int value) => value & 0xFFFFFFFF;
   List<int> int32LE(int value) => [
-        value & 0xFF,
-        (value >> 8) & 0xFF,
-        (value >> 16) & 0xFF,
-        (value >> 24) & 0xFF,
-      ];
+    value & 0xFF,
+    (value >> 8) & 0xFF,
+    (value >> 16) & 0xFF,
+    (value >> 24) & 0xFF,
+  ];
 
   const timestamp = 1000;
   data.add([

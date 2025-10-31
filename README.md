@@ -29,7 +29,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.1.1
+  activity_files: ^0.1.2
 ```
 
 Then install dependencies:
@@ -38,7 +38,7 @@ Then install dependencies:
 dart pub get
 ```
 
-See `example/basic_usage.dart` for a minimal round-trip through the encoders.
+See `example/main.dart` for a minimal round-trip through the encoders.
 
 ## RawActivity model
 

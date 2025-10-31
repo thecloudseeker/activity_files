@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+
 /// Parser for FIT binary payloads (limited profile support).
 ///
 /// The decoder focuses on the subset of the FIT profile required to populate
@@ -24,10 +25,7 @@ class FitParser implements ActivityFormatParser {
     return _parsePayload(payload, <String>[]);
   }
 
-  ActivityParseResult _parsePayload(
-    Uint8List payload,
-    List<String> warnings,
-  ) {
+  ActivityParseResult _parsePayload(Uint8List payload, List<String> warnings) {
     final reader = _FitByteReader(payload);
     final header = _FitHeader.tryRead(reader);
     if (header == null) {
@@ -178,8 +176,9 @@ class FitParser implements ActivityFormatParser {
           }
           final cadence = _asNumber(values[4]);
           if (cadence != null) {
-            cadenceSamples
-                .add(Sample(time: timestamp, value: cadence.toDouble()));
+            cadenceSamples.add(
+              Sample(time: timestamp, value: cadence.toDouble()),
+            );
           }
           final distance = _asNumber(values[5]);
           if (distance != null) {
@@ -226,6 +225,7 @@ class FitParser implements ActivityFormatParser {
     return ActivityParseResult(activity: activity, warnings: warnings);
   }
 }
+
 Uint8List _decodePayload(String input, List<String> warnings) {
   try {
     return Uint8List.fromList(base64Decode(input));
@@ -246,6 +246,7 @@ int _applyCompressedTimestamp(int previous, int offset) {
   }
   return value & 0xFFFFFFFF;
 }
+
 Sport _mapSport(int value) {
   switch (value) {
     case 0:
@@ -260,6 +261,7 @@ Sport _mapSport(int value) {
       return Sport.other;
   }
 }
+
 DateTime? _decodeTimestamp(Object? raw) {
   if (raw is! num) {
     return null;
@@ -270,6 +272,7 @@ DateTime? _decodeTimestamp(Object? raw) {
   }
   return DateTime.utc(1989, 12, 31).add(Duration(seconds: seconds));
 }
+
 double? _decodeSemicircles(Object? raw) {
   if (raw is! num) {
     return null;
@@ -280,6 +283,7 @@ double? _decodeSemicircles(Object? raw) {
   }
   return (value * 180.0) / 2147483648.0;
 }
+
 double? _decodeAltitude(Object? raw) {
   if (raw is! num) {
     return null;
@@ -290,6 +294,7 @@ double? _decodeAltitude(Object? raw) {
   }
   return (value / 5.0) - 500.0;
 }
+
 num? _asNumber(Object? raw) {
   if (raw is! num) {
     return null;
@@ -305,6 +310,7 @@ num? _asNumber(Object? raw) {
       return raw;
   }
 }
+
 class _FitHeader {
   _FitHeader({
     required this.headerSize,
@@ -346,6 +352,7 @@ class _FitHeader {
     }
   }
 }
+
 class _FitMessageDefinition {
   _FitMessageDefinition({
     required this.localId,
@@ -402,6 +409,7 @@ class _FitMessageDefinition {
       return null;
     }
   }
+
   int dataSize({bool compressedTimestamp = false}) {
     var total = developerDataSize;
     for (final field in fields) {
@@ -438,6 +446,7 @@ class _FitMessageDefinition {
     return values;
   }
 }
+
 class _FitFieldDefinition {
   const _FitFieldDefinition({
     required this.fieldNumber,
@@ -448,6 +457,7 @@ class _FitFieldDefinition {
   final int size;
   final int baseType;
 }
+
 class _FitByteReader {
   _FitByteReader(this.bytes);
   final Uint8List bytes;
@@ -455,21 +465,25 @@ class _FitByteReader {
   int readUint8() {
     return bytes[position++];
   }
+
   int readUint16({Endian endian = Endian.little}) {
     final value = bytes.buffer.asByteData().getUint16(position, endian);
     position += 2;
     return value;
   }
+
   int readUint32({Endian endian = Endian.little}) {
     final value = bytes.buffer.asByteData().getUint32(position, endian);
     position += 4;
     return value;
   }
+
   Uint8List readBytes(int length) {
     final slice = bytes.sublist(position, position + length);
     position += length;
     return Uint8List.fromList(slice);
   }
+
   int get remaining => bytes.length - position;
 
   void skip(int length) {
@@ -485,6 +499,7 @@ class _FitByteReader {
   void skipRemaining(int length) {
     skip(length);
   }
+
   Object? readBaseType(
     int baseType,
     int size, {

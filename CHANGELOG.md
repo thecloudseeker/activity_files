@@ -1,3 +1,7 @@
+## 0.1.2
+
+* pub.dev score fix
+
 ## 0.1.1
 
 * fix README
@@ -14,7 +18,7 @@
 ## 0.0.2
 
 * Upgrade dependencies and sdk
-* Add `example/basic_usage.dart` illustrating a minimal GPX round-trip.
+* Add `example/main.dart` illustrating a minimal GPX round-trip.
 
 ## 0.0.1
 

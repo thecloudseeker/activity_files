@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'models.dart';
+
 /// Outcome of activity validation.
 class ValidationResult {
-  ValidationResult({
-    Iterable<String>? errors,
-    Iterable<String>? warnings,
-  })  : errors = List.unmodifiable(errors ?? const <String>[]),
-        warnings = List.unmodifiable(warnings ?? const <String>[]);
+  ValidationResult({Iterable<String>? errors, Iterable<String>? warnings})
+    : errors = List.unmodifiable(errors ?? const <String>[]),
+      warnings = List.unmodifiable(warnings ?? const <String>[]);
+
   /// Fatal validation failures.
   final List<String> errors;
+
   /// Non-fatal issues that may need attention.
   final List<String> warnings;
+
   /// Whether no errors were recorded.
   bool get isValid => errors.isEmpty;
 }
+
 /// Runs a set of structural checks over [activity].
 ValidationResult validateRawActivity(
   RawActivity activity, {
@@ -52,6 +55,7 @@ ValidationResult validateRawActivity(
       previous = current;
     }
   }
+
   void checkCoordinates() {
     for (final point in activity.points) {
       final lat = point.latitude;
@@ -72,6 +76,7 @@ ValidationResult validateRawActivity(
       }
     }
   }
+
   checkSeriesOrder<GeoPoint>(activity.points, (p) => p.time, 'Points');
   for (final entry in activity.channels.entries) {
     checkSeriesOrder<Sample>(

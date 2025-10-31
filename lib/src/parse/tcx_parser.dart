@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+
 /// Parser for the TCX file format.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
@@ -29,14 +30,16 @@ class TcxParser implements ActivityFormatParser {
         try {
           lapStart = DateTime.parse(lapStartAttribute).toUtc();
         } catch (_) {
-          warnings
-              .add('Invalid Lap StartTime "$lapStartAttribute"; lap ignored.');
+          warnings.add(
+            'Invalid Lap StartTime "$lapStartAttribute"; lap ignored.',
+          );
           continue;
         }
       }
       final lapDistanceText = _firstText(lapElement, 'DistanceMeters');
-      final lapDistance =
-          lapDistanceText != null ? double.tryParse(lapDistanceText) : null;
+      final lapDistance = lapDistanceText != null
+          ? double.tryParse(lapDistanceText)
+          : null;
       final track = lapElement.findElements('Track').firstOrNull;
       if (track == null) {
         warnings.add('Lap missing Track element; skipped.');
@@ -58,10 +61,12 @@ class TcxParser implements ActivityFormatParser {
           continue;
         }
         final position = trackpoint.getElement('Position');
-        final latText =
-            position != null ? _firstText(position, 'LatitudeDegrees') : null;
-        final lonText =
-            position != null ? _firstText(position, 'LongitudeDegrees') : null;
+        final latText = position != null
+            ? _firstText(position, 'LatitudeDegrees')
+            : null;
+        final lonText = position != null
+            ? _firstText(position, 'LongitudeDegrees')
+            : null;
         final lat = latText != null ? double.tryParse(latText) : null;
         final lon = lonText != null ? double.tryParse(lonText) : null;
         if (lat == null || lon == null) {
@@ -71,8 +76,9 @@ class TcxParser implements ActivityFormatParser {
         final altText = _firstText(trackpoint, 'AltitudeMeters');
         final altitude = altText != null ? double.tryParse(altText) : null;
         if (altText != null && altitude == null) {
-          warnings
-              .add('Invalid AltitudeMeters "$altText" at $time; using null.');
+          warnings.add(
+            'Invalid AltitudeMeters "$altText" at $time; using null.',
+          );
         }
         points.add(
           GeoPoint(
@@ -87,24 +93,27 @@ class TcxParser implements ActivityFormatParser {
             ?.getElement('Value')
             ?.innerText
             .trim();
-        final hrValue =
-            hrValueText != null ? double.tryParse(hrValueText) : null;
+        final hrValue = hrValueText != null
+            ? double.tryParse(hrValueText)
+            : null;
         if (hrValueText != null && hrValue == null) {
           warnings.add('Invalid HeartRate "$hrValueText" at $time.');
         } else if (hrValue != null) {
           hrSamples.add(Sample(time: time, value: hrValue));
         }
         final cadenceText = _firstText(trackpoint, 'Cadence');
-        final cadenceValue =
-            cadenceText != null ? double.tryParse(cadenceText) : null;
+        final cadenceValue = cadenceText != null
+            ? double.tryParse(cadenceText)
+            : null;
         if (cadenceText != null && cadenceValue == null) {
           warnings.add('Invalid Cadence "$cadenceText" at $time.');
         } else if (cadenceValue != null) {
           cadenceSamples.add(Sample(time: time, value: cadenceValue));
         }
         final distanceText = _firstText(trackpoint, 'DistanceMeters');
-        final distanceValue =
-            distanceText != null ? double.tryParse(distanceText) : null;
+        final distanceValue = distanceText != null
+            ? double.tryParse(distanceText)
+            : null;
         if (distanceText != null && distanceValue == null) {
           warnings.add('Invalid DistanceMeters "$distanceText" at $time.');
         } else if (distanceValue != null) {
@@ -146,6 +155,7 @@ class TcxParser implements ActivityFormatParser {
     );
     return ActivityParseResult(activity: activity, warnings: warnings);
   }
+
   Sport _sportFromString(String? sport) {
     if (sport == null) {
       return Sport.unknown;
@@ -159,6 +169,7 @@ class TcxParser implements ActivityFormatParser {
       _ => Sport.unknown,
     };
   }
+
   String? _extractCreator(XmlElement element) {
     final creator = element.getElement('Creator');
     final name = creator?.getElement('Name');
@@ -171,6 +182,7 @@ class TcxParser implements ActivityFormatParser {
     return null;
   }
 }
+
 String? _firstText(XmlElement element, String localName) {
   for (final child in element.findElements(localName)) {
     final text = child.innerText.trim();

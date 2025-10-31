@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+
 /// Parser for the GPX file format.
 class GpxParser implements ActivityFormatParser {
   const GpxParser();
@@ -42,13 +43,15 @@ class GpxParser implements ActivityFormatParser {
           final lon = lonText != null ? double.tryParse(lonText) : null;
           if (lat == null || lon == null) {
             warnings.add(
-                'Skipping GPX trackpoint missing coordinates (index $index).');
+              'Skipping GPX trackpoint missing coordinates (index $index).',
+            );
             continue;
           }
           final timeText = _firstText(trkpt, 'time');
           if (timeText == null) {
-            warnings
-                .add('Skipping GPX trackpoint without timestamp at $lat,$lon.');
+            warnings.add(
+              'Skipping GPX trackpoint without timestamp at $lat,$lon.',
+            );
             continue;
           }
           DateTime? time;
@@ -62,7 +65,8 @@ class GpxParser implements ActivityFormatParser {
           final elevation = eleText != null ? double.tryParse(eleText) : null;
           if (eleText != null && elevation == null) {
             warnings.add(
-                'Invalid elevation "$eleText" at $time; treating as null.');
+              'Invalid elevation "$eleText" at $time; treating as null.',
+            );
           }
           final point = GeoPoint(
             latitude: lat,
@@ -81,11 +85,12 @@ class GpxParser implements ActivityFormatParser {
           final extensionElements = trkpt
               .findElements('*')
               .where((e) => e.name.local.toLowerCase() == 'extensions')
-              .expand((ext) => ext.children.whereType<XmlElement>().where(
-                    (element) =>
-                        element.name.local.toLowerCase() ==
-                        'trackpointextension',
-                  ));
+              .expand(
+                (ext) => ext.children.whereType<XmlElement>().where(
+                  (element) =>
+                      element.name.local.toLowerCase() == 'trackpointextension',
+                ),
+              );
           for (final ext in extensionElements) {
             for (final child in ext.childElements) {
               final name = child.name.local.toLowerCase();
@@ -96,7 +101,8 @@ class GpxParser implements ActivityFormatParser {
               final parsed = double.tryParse(valueText);
               if (parsed == null) {
                 warnings.add(
-                    'Unparsable extension value "$valueText" for $name at $time.');
+                  'Unparsable extension value "$valueText" for $name at $time.',
+                );
                 continue;
               }
               switch (name) {
@@ -155,6 +161,7 @@ class GpxParser implements ActivityFormatParser {
     );
     return ActivityParseResult(activity: activity, warnings: warnings);
   }
+
   Sport _sportFromString(String value) {
     final normalized = value.trim().toLowerCase();
     return switch (normalized) {
@@ -168,6 +175,7 @@ class GpxParser implements ActivityFormatParser {
     };
   }
 }
+
 String? _firstText(XmlElement element, String localName) {
   for (final child in element.childElements) {
     if (child.name.local.toLowerCase() == localName.toLowerCase()) {
@@ -176,6 +184,7 @@ String? _firstText(XmlElement element, String localName) {
   }
   return null;
 }
+
 double _haversine(GeoPoint a, GeoPoint b) {
   const earthRadius = 6371000.0;
   final dLat = _radians(b.latitude - a.latitude);
@@ -189,4 +198,5 @@ double _haversine(GeoPoint a, GeoPoint b) {
   final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
   return earthRadius * c;
 }
+
 double _radians(double deg) => deg * math.pi / 180.0;

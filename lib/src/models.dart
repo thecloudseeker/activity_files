@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:math' as math;
+
 /// Supported file formats for activities.
 enum ActivityFileFormat { gpx, tcx, fit }
+
 /// Supported sports.
-enum Sport {
-  unknown,
-  running,
-  cycling,
-  swimming,
-  hiking,
-  walking,
-  other,
-}
+enum Sport { unknown, running, cycling, swimming, hiking, walking, other }
+
 /// A strongly-typed channel identifier used for sensor samples.
 class Channel {
   /// Creates a new channel with the provided [id].
@@ -19,18 +14,25 @@ class Channel {
   /// The [id] is normalized to lowercase to ensure deterministic equality.
   factory Channel.custom(String id) => Channel._(_normalize(id));
   const Channel._(this.id);
+
   /// Primary heart-rate channel.
   static const Channel heartRate = Channel._('heart_rate');
+
   /// Primary cadence channel.
   static const Channel cadence = Channel._('cadence');
+
   /// Primary power channel.
   static const Channel power = Channel._('power');
+
   /// Primary temperature channel.
   static const Channel temperature = Channel._('temperature');
+
   /// Derived speed channel (m/s).
   static const Channel speed = Channel._('speed');
+
   /// Derived distance channel (meters).
   static const Channel distance = Channel._('distance');
+
   /// Unique identifier for the channel.
   final String id;
   static String _normalize(String value) => value.trim().toLowerCase();
@@ -41,6 +43,7 @@ class Channel {
   @override
   String toString() => 'Channel($id)';
 }
+
 /// A single geographic sample with associated timestamp.
 class GeoPoint {
   GeoPoint({
@@ -58,24 +61,23 @@ class GeoPoint {
     double? longitude,
     double? elevation,
     DateTime? time,
-  }) =>
-      GeoPoint(
-        latitude: latitude ?? this.latitude,
-        longitude: longitude ?? this.longitude,
-        elevation: elevation ?? this.elevation,
-        time: (time ?? this.time).toUtc(),
-      );
+  }) => GeoPoint(
+    latitude: latitude ?? this.latitude,
+    longitude: longitude ?? this.longitude,
+    elevation: elevation ?? this.elevation,
+    time: (time ?? this.time).toUtc(),
+  );
 }
+
 /// A generic sensor sample.
 class Sample {
   Sample({required DateTime time, required this.value}) : time = time.toUtc();
   final DateTime time;
   final double value;
-  Sample copyWith({DateTime? time, double? value}) => Sample(
-        time: (time ?? this.time).toUtc(),
-        value: value ?? this.value,
-      );
+  Sample copyWith({DateTime? time, double? value}) =>
+      Sample(time: (time ?? this.time).toUtc(), value: value ?? this.value);
 }
+
 /// Summary information for a lap or segment.
 class Lap {
   Lap({
@@ -83,8 +85,8 @@ class Lap {
     required DateTime endTime,
     this.distanceMeters,
     this.name,
-  })  : startTime = startTime.toUtc(),
-        endTime = endTime.toUtc();
+  }) : startTime = startTime.toUtc(),
+       endTime = endTime.toUtc();
   final DateTime startTime;
   final DateTime endTime;
   final double? distanceMeters;
@@ -95,14 +97,14 @@ class Lap {
     DateTime? endTime,
     double? distanceMeters,
     String? name,
-  }) =>
-      Lap(
-        startTime: (startTime ?? this.startTime).toUtc(),
-        endTime: (endTime ?? this.endTime).toUtc(),
-        distanceMeters: distanceMeters ?? this.distanceMeters,
-        name: name ?? this.name,
-      );
+  }) => Lap(
+    startTime: (startTime ?? this.startTime).toUtc(),
+    endTime: (endTime ?? this.endTime).toUtc(),
+    distanceMeters: distanceMeters ?? this.distanceMeters,
+    name: name ?? this.name,
+  );
 }
+
 /// Unified in-memory representation of an activity.
 class RawActivity {
   RawActivity({
@@ -111,28 +113,35 @@ class RawActivity {
     Iterable<Lap>? laps,
     this.sport = Sport.unknown,
     this.creator,
-  })  : points = List<GeoPoint>.unmodifiable(points ?? const <GeoPoint>[]),
-        channels = Map.unmodifiable({
-          for (final entry
-              in (channels ?? const <Channel, Iterable<Sample>>{}).entries)
-            entry.key: List<Sample>.unmodifiable(
-              entry.value.map((sample) => sample.copyWith()),
-            )
-        }),
-        laps = List<Lap>.unmodifiable(laps ?? const <Lap>[]);
+  }) : points = List<GeoPoint>.unmodifiable(points ?? const <GeoPoint>[]),
+       channels = Map.unmodifiable({
+         for (final entry
+             in (channels ?? const <Channel, Iterable<Sample>>{}).entries)
+           entry.key: List<Sample>.unmodifiable(
+             entry.value.map((sample) => sample.copyWith()),
+           ),
+       }),
+       laps = List<Lap>.unmodifiable(laps ?? const <Lap>[]);
+
   /// Sequence of geographic points.
   final List<GeoPoint> points;
+
   /// Time-aligned sensor channels.
   final Map<Channel, List<Sample>> channels;
+
   /// Declared laps or segments.
   final List<Lap> laps;
+
   /// Dominant sport classification.
   final Sport sport;
+
   /// Name of the originating software or device.
   final String? creator;
+
   /// Returns the samples for a given [channel], if present.
   List<Sample> channel(Channel channel) =>
       channels[channel] ?? const <Sample>[];
+
   /// Creates a copy with overrides.
   RawActivity copyWith({
     Iterable<GeoPoint>? points,
@@ -143,7 +152,8 @@ class RawActivity {
   }) {
     return RawActivity(
       points: points ?? this.points,
-      channels: channels ??
+      channels:
+          channels ??
           {
             for (final entry in this.channels.entries)
               entry.key: entry.value.map((sample) => sample.copyWith()),
@@ -153,10 +163,13 @@ class RawActivity {
       creator: creator ?? this.creator,
     );
   }
+
   /// Returns the timestamp of the first point, if any.
   DateTime? get startTime => points.isEmpty ? null : points.first.time;
+
   /// Returns the timestamp of the last point, if any.
   DateTime? get endTime => points.isEmpty ? null : points.last.time;
+
   /// Approximates the total distance in meters based on stored channels or
   /// planar projection of geographic points.
   double get approximateDistance {
@@ -173,6 +186,7 @@ class RawActivity {
     }
     return total;
   }
+
   static double _haversine(GeoPoint a, GeoPoint b) {
     const earthRadius = 6371000; // meters
     final dLat = _radians(b.latitude - a.latitude);
@@ -186,5 +200,6 @@ class RawActivity {
     final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
     return earthRadius * c;
   }
+
   static double _radians(double deg) => deg * math.pi / 180.0;
 }

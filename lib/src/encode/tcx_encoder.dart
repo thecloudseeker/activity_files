@@ -33,12 +33,13 @@ class TcxEncoder implements ActivityFormatEncoder {
     final hrDelta = options.maxDeltaFor(Channel.heartRate);
     final cadenceDelta = options.maxDeltaFor(Channel.cadence);
     final distanceDelta = options.maxDeltaFor(Channel.distance);
-    final searchDelta = [
-      hrDelta,
-      cadenceDelta,
-      options.maxDeltaFor(Channel.speed),
-      options.defaultMaxDelta,
-    ].nonNulls.fold<Duration>(
+    final searchDelta =
+        [
+          hrDelta,
+          cadenceDelta,
+          options.maxDeltaFor(Channel.speed),
+          options.defaultMaxDelta,
+        ].nonNulls.fold<Duration>(
           options.defaultMaxDelta,
           (previous, current) => current > previous ? current : previous,
         );
@@ -51,119 +52,154 @@ class TcxEncoder implements ActivityFormatEncoder {
         'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
         'xsi:schemaLocation':
             'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 '
-                'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd',
+            'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd',
       },
       nest: () {
-        builder.element('Activities', nest: () {
-          builder.element(
-            'Activity',
-            attributes: {'Sport': _sportLabel(activity.sport)},
-            nest: () {
-              builder.element('Id',
-                  nest: points.first.time.toUtc().toIso8601String());
-              for (final lap in laps) {
+        builder.element(
+          'Activities',
+          nest: () {
+            builder.element(
+              'Activity',
+              attributes: {'Sport': _sportLabel(activity.sport)},
+              nest: () {
                 builder.element(
-                  'Lap',
-                  attributes: {
-                    'StartTime': lap.startTime.toUtc().toIso8601String()
-                  },
-                  nest: () {
-                    final totalSeconds = lap.elapsed.inMicroseconds / 1e6;
-                    builder.element(
-                      'TotalTimeSeconds',
-                      nest: totalSeconds.toStringAsFixed(3),
-                    );
-                    builder.element(
-                      'DistanceMeters',
-                      nest: (lap.distanceMeters ?? activity.approximateDistance)
-                          .toStringAsFixed(1),
-                    );
-                    builder.element('Track', nest: () {
-                      var cumulativeDistance = 0.0;
-                      GeoPoint? previous;
-                      for (final point in points.where((p) =>
-                          !p.time.isBefore(lap.startTime) &&
-                          !p.time.isAfter(lap.endTime))) {
-                        final snapshot = ChannelMapper.mapAt(
-                          point.time,
-                          activity.channels,
-                          maxDelta: searchDelta,
-                        );
-                        final hr = _valueWithin(snapshot.heartRate,
-                            snapshot.heartRateDelta, hrDelta);
-                        final cadence = _valueWithin(
-                          snapshot.cadence,
-                          snapshot.cadenceDelta,
-                          cadenceDelta,
-                        );
-                        final knownDistance = _sampleValueAt(
-                          distanceSamples,
-                          point.time,
-                          distanceDelta,
-                        );
-                        if (knownDistance != null) {
-                          cumulativeDistance = knownDistance;
-                        } else {
-                          final prev = previous;
-                          if (prev != null) {
-                            cumulativeDistance += _haversine(prev, point);
-                          }
-                        }
-                        previous = point;
-                        builder.element('Trackpoint', nest: () {
-                          builder.element(
-                            'Time',
-                            nest: point.time.toUtc().toIso8601String(),
-                          );
-                          builder.element('Position', nest: () {
-                            builder.element(
-                              'LatitudeDegrees',
-                              nest: _round(
-                                  point.latitude, options.precisionLatLon),
-                            );
-                            builder.element(
-                              'LongitudeDegrees',
-                              nest: _round(
-                                  point.longitude, options.precisionLatLon),
-                            );
-                          });
-                          final elevation = point.elevation;
-                          if (elevation != null) {
-                            builder.element(
-                              'AltitudeMeters',
-                              nest: _round(elevation, options.precisionEle),
-                            );
-                          }
-                          builder.element(
-                            'DistanceMeters',
-                            nest: cumulativeDistance.toStringAsFixed(1),
-                          );
-                          if (hr != null) {
-                            builder.element('HeartRateBpm', nest: () {
-                              builder.element('Value',
-                                  nest: hr.round().toString());
-                            });
-                          }
-                          if (cadence != null) {
-                            builder.element('Cadence',
-                                nest: cadence.round().toString());
-                          }
-                        });
-                      }
-                    });
-                  },
+                  'Id',
+                  nest: points.first.time.toUtc().toIso8601String(),
                 );
-              }
-              if (activity.creator != null) {
-                builder.element('Creator', nest: activity.creator!);
-              }
-            },
-          );
-        });
+                for (final lap in laps) {
+                  builder.element(
+                    'Lap',
+                    attributes: {
+                      'StartTime': lap.startTime.toUtc().toIso8601String(),
+                    },
+                    nest: () {
+                      final totalSeconds = lap.elapsed.inMicroseconds / 1e6;
+                      builder.element(
+                        'TotalTimeSeconds',
+                        nest: totalSeconds.toStringAsFixed(3),
+                      );
+                      builder.element(
+                        'DistanceMeters',
+                        nest:
+                            (lap.distanceMeters ?? activity.approximateDistance)
+                                .toStringAsFixed(1),
+                      );
+                      builder.element(
+                        'Track',
+                        nest: () {
+                          var cumulativeDistance = 0.0;
+                          GeoPoint? previous;
+                          for (final point in points.where(
+                            (p) =>
+                                !p.time.isBefore(lap.startTime) &&
+                                !p.time.isAfter(lap.endTime),
+                          )) {
+                            final snapshot = ChannelMapper.mapAt(
+                              point.time,
+                              activity.channels,
+                              maxDelta: searchDelta,
+                            );
+                            final hr = _valueWithin(
+                              snapshot.heartRate,
+                              snapshot.heartRateDelta,
+                              hrDelta,
+                            );
+                            final cadence = _valueWithin(
+                              snapshot.cadence,
+                              snapshot.cadenceDelta,
+                              cadenceDelta,
+                            );
+                            final knownDistance = _sampleValueAt(
+                              distanceSamples,
+                              point.time,
+                              distanceDelta,
+                            );
+                            if (knownDistance != null) {
+                              cumulativeDistance = knownDistance;
+                            } else {
+                              final prev = previous;
+                              if (prev != null) {
+                                cumulativeDistance += _haversine(prev, point);
+                              }
+                            }
+                            previous = point;
+                            builder.element(
+                              'Trackpoint',
+                              nest: () {
+                                builder.element(
+                                  'Time',
+                                  nest: point.time.toUtc().toIso8601String(),
+                                );
+                                builder.element(
+                                  'Position',
+                                  nest: () {
+                                    builder.element(
+                                      'LatitudeDegrees',
+                                      nest: _round(
+                                        point.latitude,
+                                        options.precisionLatLon,
+                                      ),
+                                    );
+                                    builder.element(
+                                      'LongitudeDegrees',
+                                      nest: _round(
+                                        point.longitude,
+                                        options.precisionLatLon,
+                                      ),
+                                    );
+                                  },
+                                );
+                                final elevation = point.elevation;
+                                if (elevation != null) {
+                                  builder.element(
+                                    'AltitudeMeters',
+                                    nest: _round(
+                                      elevation,
+                                      options.precisionEle,
+                                    ),
+                                  );
+                                }
+                                builder.element(
+                                  'DistanceMeters',
+                                  nest: cumulativeDistance.toStringAsFixed(1),
+                                );
+                                if (hr != null) {
+                                  builder.element(
+                                    'HeartRateBpm',
+                                    nest: () {
+                                      builder.element(
+                                        'Value',
+                                        nest: hr.round().toString(),
+                                      );
+                                    },
+                                  );
+                                }
+                                if (cadence != null) {
+                                  builder.element(
+                                    'Cadence',
+                                    nest: cadence.round().toString(),
+                                  );
+                                }
+                              },
+                            );
+                          }
+                        },
+                      );
+                    },
+                  );
+                }
+                if (activity.creator != null) {
+                  builder.element('Creator', nest: activity.creator!);
+                }
+              },
+            );
+          },
+        );
       },
     );
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
   }
+
   String _emptyDocument() {
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
@@ -178,13 +214,15 @@ class TcxEncoder implements ActivityFormatEncoder {
     );
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
   }
+
   String _sportLabel(Sport sport) => switch (sport) {
-        Sport.running => 'Running',
-        Sport.cycling => 'Biking',
-        Sport.walking => 'Walking',
-        _ => 'Other',
-      };
+    Sport.running => 'Running',
+    Sport.cycling => 'Biking',
+    Sport.walking => 'Walking',
+    _ => 'Other',
+  };
 }
+
 String _round(double value, int precision) => value.toStringAsFixed(precision);
 double? _valueWithin(double? value, Duration? delta, Duration tolerance) {
   if (value == null || delta == null) {
@@ -192,6 +230,7 @@ double? _valueWithin(double? value, Duration? delta, Duration tolerance) {
   }
   return delta <= tolerance ? value : null;
 }
+
 double? _sampleValueAt(
   List<Sample> samples,
   DateTime time,
@@ -212,6 +251,7 @@ double? _sampleValueAt(
   }
   return candidate?.value;
 }
+
 double _haversine(GeoPoint a, GeoPoint b) {
   const earthRadius = 6371000.0;
   final dLat = _radians(b.latitude - a.latitude);
@@ -225,4 +265,5 @@ double _haversine(GeoPoint a, GeoPoint b) {
   final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
   return earthRadius * c;
 }
+
 double _radians(double deg) => deg * math.pi / 180.0;
