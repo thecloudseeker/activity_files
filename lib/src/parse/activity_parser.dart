@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
+import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../models.dart';
@@ -49,4 +51,76 @@ class ActivityParser {
       _ => parser.parse(utf8.decode(bytes)),
     };
   }
+
+  /// Offloads [input] parsing to a separate isolate when desired.
+  static Future<ActivityParseResult> parseAsync(
+    String input,
+    ActivityFileFormat format, {
+    bool useIsolate = true,
+  }) {
+    return _parseWithIsolation(input, format, useIsolate);
+  }
+
+  /// Asynchronous variant of [parseBytes] with optional isolate offloading.
+  static Future<ActivityParseResult> parseBytesAsync(
+    List<int> bytes,
+    ActivityFileFormat format, {
+    bool useIsolate = true,
+  }) {
+    return _parseWithIsolation(bytes, format, useIsolate);
+  }
+
+  /// Collects the [source] stream before parsing. Useful for file and network IO.
+  static Future<ActivityParseResult> parseStream(
+    Stream<List<int>> source,
+    ActivityFileFormat format, {
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+  }) async {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in source) {
+      if (chunk.isNotEmpty) {
+        builder.add(chunk);
+      }
+    }
+    final bytes = builder.takeBytes();
+    if (format == ActivityFileFormat.fit) {
+      return parseBytesAsync(bytes, format, useIsolate: useIsolate);
+    }
+    final text = encoding.decode(bytes);
+    return parseAsync(text, format, useIsolate: useIsolate);
+  }
+
+  static Future<ActivityParseResult> _parseWithIsolation(
+    Object payload,
+    ActivityFileFormat format,
+    bool useIsolate,
+  ) {
+    if (!useIsolate) {
+      return Future.value(_parseDynamic(payload, format));
+    }
+    final transferable = _clonePayload(payload);
+    return Isolate.run(() => _parseDynamic(transferable, format));
+  }
+
+  static ActivityParseResult _parseDynamic(
+    Object payload,
+    ActivityFileFormat format,
+  ) {
+    return switch (payload) {
+      String text => parse(text, format),
+      Uint8List bytes => parseBytes(bytes, format),
+      List<int> bytes => parseBytes(bytes, format),
+      _ => throw ArgumentError(
+        'Unsupported payload type ${payload.runtimeType}; expected String or List<int>.',
+      ),
+    };
+  }
+
+  static Object _clonePayload(Object payload) => switch (payload) {
+    String text => text,
+    Uint8List bytes => Uint8List.fromList(bytes),
+    List<int> bytes => Uint8List.fromList(bytes),
+    _ => payload,
+  };
 }

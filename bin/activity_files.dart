@@ -136,14 +136,14 @@ void _handleConvert(ArgResults command) {
       ? inputFile.readAsBytesSync()
       : inputFile.readAsStringSync();
 
-  final warnings = <String>[];
+  final diagnostics = <ParseDiagnostic>[];
   try {
     final output = ActivityConverter.convert(
       content,
       from: fromFormat,
       to: toFormat,
       encoderOptions: encoderOptions,
-      warnings: warnings,
+      diagnostics: diagnostics,
     );
     if (toFormat == ActivityFileFormat.fit) {
       File(outputPath).writeAsBytesSync(base64Decode(output));
@@ -151,7 +151,7 @@ void _handleConvert(ArgResults command) {
       File(outputPath).writeAsStringSync(output);
     }
     stdout.writeln('Converted $inputPath → $outputPath');
-    _printWarnings(warnings);
+    _printDiagnostics(diagnostics);
   } on UnimplementedError catch (e) {
     _printError(e.message ?? 'Conversion not implemented for selected format.');
     exitCode = 70;
@@ -182,7 +182,7 @@ void _handleValidate(ArgResults command) {
       ? Duration(milliseconds: (gapSeconds * 1000).round())
       : const Duration(minutes: 5);
 
-  final warnings = <String>[];
+  final parserDiagnostics = <ParseDiagnostic>[];
   try {
     final payload = format == ActivityFileFormat.fit
         ? inputFile.readAsBytesSync()
@@ -190,13 +190,13 @@ void _handleValidate(ArgResults command) {
     final parseResult = payload is List<int>
         ? ActivityParser.parseBytes(payload, format)
         : ActivityParser.parse(payload as String, format);
-    warnings.addAll(parseResult.warnings);
+    parserDiagnostics.addAll(parseResult.diagnostics);
     final validation = validateRawActivity(
       parseResult.activity,
       gapWarningThreshold: gapThreshold,
     );
 
-    _printWarnings(warnings);
+    _printDiagnostics(parserDiagnostics);
     if (validation.errors.isEmpty) {
       stdout.writeln(
         'Validation passed (${parseResult.activity.points.length} points).',
@@ -292,13 +292,26 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('\nUse --help with a command to see additional options.');
 }
 
-void _printWarnings(List<String> warnings) {
-  if (warnings.isEmpty) {
+void _printDiagnostics(
+  Iterable<ParseDiagnostic> diagnostics, {
+  ParseSeverity minimum = ParseSeverity.warning,
+}) {
+  final tracked = diagnostics
+      .where((diagnostic) => diagnostic.severity.index >= minimum.index)
+      .toList();
+  if (tracked.isEmpty) {
     return;
   }
-  stdout.writeln('Parser warnings:');
-  for (final warning in warnings) {
-    stdout.writeln('  - $warning');
+  stdout.writeln('Parser diagnostics:');
+  for (final diagnostic in tracked) {
+    final nodeLabel = diagnostic.node?.format();
+    final codeLabel = diagnostic.code;
+    final severityLabel = diagnostic.severity.name.toUpperCase();
+    final context = [if (nodeLabel != null) nodeLabel, codeLabel].join(' • ');
+    stdout.writeln(
+      '  - $severityLabel${context.isNotEmpty ? ' $context' : ''}',
+    );
+    stdout.writeln('      ${diagnostic.message}');
   }
 }
 

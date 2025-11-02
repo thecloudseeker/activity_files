@@ -10,11 +10,14 @@ class TcxParser implements ActivityFormatParser {
   const TcxParser();
   @override
   ActivityParseResult parse(String input) {
-    final warnings = <String>[];
+    final diagnostics = <ParseDiagnostic>[];
     final document = XmlDocument.parse(input);
     final activities = document.findAllElements('Activity');
     if (activities.isEmpty) {
-      return ActivityParseResult(activity: RawActivity(), warnings: warnings);
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
     }
     final activityElement = activities.first;
     final sport = _sportFromString(activityElement.getAttribute('Sport'));
@@ -30,8 +33,17 @@ class TcxParser implements ActivityFormatParser {
         try {
           lapStart = DateTime.parse(lapStartAttribute).toUtc();
         } catch (_) {
-          warnings.add(
-            'Invalid Lap StartTime "$lapStartAttribute"; lap ignored.',
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.lap.invalid_start_time',
+              message:
+                  'Invalid Lap StartTime "$lapStartAttribute"; lap ignored.',
+              node: ParseNodeReference(
+                path: 'tcx.activities.activity.lap',
+                description: lapStartAttribute,
+              ),
+            ),
           );
           continue;
         }
@@ -42,7 +54,14 @@ class TcxParser implements ActivityFormatParser {
           : null;
       final track = lapElement.findElements('Track').firstOrNull;
       if (track == null) {
-        warnings.add('Lap missing Track element; skipped.');
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'tcx.lap.missing_track',
+            message: 'Lap missing Track element; skipped.',
+            node: ParseNodeReference(path: 'tcx.activities.activity.lap'),
+          ),
+        );
         continue;
       }
       DateTime? firstTime;
@@ -50,14 +69,33 @@ class TcxParser implements ActivityFormatParser {
       for (final trackpoint in track.findElements('Trackpoint')) {
         final timeText = _firstText(trackpoint, 'Time');
         if (timeText == null) {
-          warnings.add('Trackpoint without Time skipped.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.missing_time',
+              message: 'Trackpoint without Time skipped.',
+              node: ParseNodeReference(
+                path: 'tcx.activities.activity.lap.track.trackpoint',
+              ),
+            ),
+          );
           continue;
         }
         DateTime time;
         try {
           time = DateTime.parse(timeText).toUtc();
         } catch (_) {
-          warnings.add('Invalid Time "$timeText"; trackpoint skipped.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.invalid_time',
+              message: 'Invalid Time "$timeText"; trackpoint skipped.',
+              node: ParseNodeReference(
+                path: 'tcx.activities.activity.lap.track.trackpoint',
+                description: timeText,
+              ),
+            ),
+          );
           continue;
         }
         final position = trackpoint.getElement('Position');
@@ -70,14 +108,33 @@ class TcxParser implements ActivityFormatParser {
         final lat = latText != null ? double.tryParse(latText) : null;
         final lon = lonText != null ? double.tryParse(lonText) : null;
         if (lat == null || lon == null) {
-          warnings.add('Trackpoint at $time missing coordinates; skipped.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.missing_coordinates',
+              message: 'Trackpoint at $time missing coordinates; skipped.',
+              node: ParseNodeReference(
+                path: 'tcx.activities.activity.lap.track.trackpoint',
+                description: time.toIso8601String(),
+              ),
+            ),
+          );
           continue;
         }
         final altText = _firstText(trackpoint, 'AltitudeMeters');
         final altitude = altText != null ? double.tryParse(altText) : null;
         if (altText != null && altitude == null) {
-          warnings.add(
-            'Invalid AltitudeMeters "$altText" at $time; using null.',
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.invalid_altitude',
+              message:
+                  'Invalid AltitudeMeters "$altText" at $time; using null.',
+              node: ParseNodeReference(
+                path: 'tcx.activities.activity.lap.track.trackpoint',
+                description: time.toIso8601String(),
+              ),
+            ),
           );
         }
         points.add(
@@ -97,7 +154,18 @@ class TcxParser implements ActivityFormatParser {
             ? double.tryParse(hrValueText)
             : null;
         if (hrValueText != null && hrValue == null) {
-          warnings.add('Invalid HeartRate "$hrValueText" at $time.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.invalid_heartrate',
+              message: 'Invalid HeartRate "$hrValueText" at $time.',
+              node: ParseNodeReference(
+                path:
+                    'tcx.activities.activity.lap.track.trackpoint.HeartRateBpm',
+                description: time.toIso8601String(),
+              ),
+            ),
+          );
         } else if (hrValue != null) {
           hrSamples.add(Sample(time: time, value: hrValue));
         }
@@ -106,7 +174,17 @@ class TcxParser implements ActivityFormatParser {
             ? double.tryParse(cadenceText)
             : null;
         if (cadenceText != null && cadenceValue == null) {
-          warnings.add('Invalid Cadence "$cadenceText" at $time.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.invalid_cadence',
+              message: 'Invalid Cadence "$cadenceText" at $time.',
+              node: ParseNodeReference(
+                path: 'tcx.activities.activity.lap.track.trackpoint.Cadence',
+                description: time.toIso8601String(),
+              ),
+            ),
+          );
         } else if (cadenceValue != null) {
           cadenceSamples.add(Sample(time: time, value: cadenceValue));
         }
@@ -115,7 +193,18 @@ class TcxParser implements ActivityFormatParser {
             ? double.tryParse(distanceText)
             : null;
         if (distanceText != null && distanceValue == null) {
-          warnings.add('Invalid DistanceMeters "$distanceText" at $time.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'tcx.trackpoint.invalid_distance',
+              message: 'Invalid DistanceMeters "$distanceText" at $time.',
+              node: ParseNodeReference(
+                path:
+                    'tcx.activities.activity.lap.track.trackpoint.DistanceMeters',
+                description: time.toIso8601String(),
+              ),
+            ),
+          );
         } else if (distanceValue != null) {
           distanceSamples.add(Sample(time: time, value: distanceValue));
         }
@@ -153,7 +242,7 @@ class TcxParser implements ActivityFormatParser {
       sport: sport,
       creator: _extractCreator(activityElement),
     );
-    return ActivityParseResult(activity: activity, warnings: warnings);
+    return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
 
   Sport _sportFromString(String? sport) {

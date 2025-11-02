@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
@@ -12,13 +13,148 @@ void main() {
     precisionEle: 2,
   );
 
+  group('Facade convenience', () {
+    test('load infers GPX format from inline content', () async {
+      final result = await ActivityFiles.load(_sampleGpx, useIsolate: false);
+      expect(result.format, equals(ActivityFileFormat.gpx));
+      expect(result.activity.points.length, equals(3));
+      expect(result.diagnostics, isEmpty);
+    });
+
+    test('convert returns binary FIT payload', () async {
+      final conversion = await ActivityFiles.convert(
+        source: _sampleGpx,
+        to: ActivityFileFormat.fit,
+        useIsolate: false,
+      );
+      expect(conversion.isBinary, isTrue);
+      final bytes = conversion.asBytes();
+      expect(bytes.length, greaterThan(0));
+      final parsed = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      expect(parsed.activity.points.length, greaterThan(0));
+    });
+
+    test('builder assembles activities and seeds existing data', () {
+      final baseTime = DateTime.utc(2024, 5, 1, 8);
+      final builder = ActivityFiles.builder()
+        ..sport = Sport.running
+        ..creator = 'builder-test'
+        ..addPoint(
+          latitude: 40.0,
+          longitude: -105.0,
+          elevation: 1600,
+          time: baseTime,
+        )
+        ..addSample(channel: Channel.heartRate, time: baseTime, value: 140)
+        ..addLap(
+          startTime: baseTime,
+          endTime: baseTime.add(const Duration(minutes: 1)),
+          distanceMeters: 200,
+          name: 'Warmup',
+        );
+
+      final activity = builder.build();
+      expect(activity.points.length, equals(1));
+      expect(activity.channel(Channel.heartRate).length, equals(1));
+      expect(activity.laps.length, equals(1));
+      expect(activity.sport, equals(Sport.running));
+      expect(activity.creator, equals('builder-test'));
+
+      final reseeded = ActivityFiles.builder(activity).build();
+      expect(reseeded.points.length, equals(activity.points.length));
+      expect(reseeded.channel(Channel.heartRate).length, equals(1));
+    });
+  });
+
+  group('Fixture assets', () {
+    const assets = {
+      'sample.gpx': ActivityFileFormat.gpx,
+      'sample.tcx': ActivityFileFormat.tcx,
+      'sample.fit': ActivityFileFormat.fit,
+    };
+
+    Future<String> assetPath(String name) async {
+      final directory = Directory('example/assets');
+      if (!await directory.exists()) {
+        throw StateError('example/assets directory not found');
+      }
+      return '${directory.path}${Platform.pathSeparator}$name';
+    }
+
+    test('detectFormat identifies fixture formats', () async {
+      for (final entry in assets.entries) {
+        final path = await assetPath(entry.key);
+        final detected = ActivityFiles.detectFormat(path);
+        expect(detected, equals(entry.value));
+
+        final loaded = await ActivityFiles.load(path, useIsolate: false);
+        expect(loaded.format, equals(entry.value));
+        if (entry.value != ActivityFileFormat.fit) {
+          expect(
+            loaded.activity.points,
+            isNotEmpty,
+            reason: 'Expected points for ${entry.key}',
+          );
+        }
+        final errors = loaded.diagnostics
+            .where((d) => d.severity == ParseSeverity.error)
+            .toList();
+        expect(errors, isEmpty, reason: 'Unexpected errors for ${entry.key}');
+      }
+    });
+
+    test('load handles FIT bytes and base64 payload', () async {
+      final fitPath = await assetPath('sample.fit');
+      final fitBytes = await File(fitPath).readAsBytes();
+
+      final detectedBytes = ActivityFiles.detectFormat(fitBytes);
+      expect(detectedBytes, equals(ActivityFileFormat.fit));
+
+      final bytesResult = await ActivityFiles.load(fitBytes, useIsolate: false);
+      expect(bytesResult.format, equals(ActivityFileFormat.fit));
+
+      final base64Payload = base64Encode(fitBytes);
+      final base64Result = await ActivityFiles.load(
+        base64Payload,
+        useIsolate: false,
+      );
+      expect(base64Result.format, equals(ActivityFileFormat.fit));
+      expect(
+        base64Result.activity.points.length,
+        equals(bytesResult.activity.points.length),
+      );
+    });
+
+    test('convert can round-trip GPX fixture to FIT', () async {
+      final gpxPath = await assetPath('sample.gpx');
+      final loaded = await ActivityFiles.load(gpxPath, useIsolate: false);
+
+      final conversion = await ActivityFiles.convert(
+        source: gpxPath,
+        to: ActivityFileFormat.fit,
+        useIsolate: false,
+      );
+      expect(conversion.isBinary, isTrue);
+
+      final roundTrip = await ActivityFiles.load(
+        conversion.asBytes(),
+        useIsolate: false,
+      );
+      expect(roundTrip.format, equals(ActivityFileFormat.fit));
+      expect(
+        roundTrip.activity.points.length,
+        equals(loaded.activity.points.length),
+      );
+    });
+  });
+
   group('Format interop', () {
     test('GPX → Raw → TCX preserves HR and cadence', () {
       final gpxResult = ActivityParser.parse(
         _sampleGpx,
         ActivityFileFormat.gpx,
       );
-      expect(gpxResult.warnings, isEmpty);
+      expect(gpxResult.warningDiagnostics, isEmpty);
       final activity = gpxResult.activity;
 
       final tcxString = ActivityEncoder.encode(
@@ -28,7 +164,7 @@ void main() {
       );
 
       final tcxResult = ActivityParser.parse(tcxString, ActivityFileFormat.tcx);
-      expect(tcxResult.warnings, isEmpty);
+      expect(tcxResult.warningDiagnostics, isEmpty);
 
       final tolerance = encoderOptions.defaultMaxDelta;
       final targetHr = activity.channel(Channel.heartRate);
@@ -49,7 +185,7 @@ void main() {
         _sampleTcx,
         ActivityFileFormat.tcx,
       );
-      expect(tcxResult.warnings, isEmpty);
+      expect(tcxResult.warningDiagnostics, isEmpty);
 
       final gpx = ActivityEncoder.encode(
         tcxResult.activity,
@@ -58,7 +194,7 @@ void main() {
       );
 
       final gpxResult = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
-      expect(gpxResult.warnings, isEmpty);
+      expect(gpxResult.warningDiagnostics, isEmpty);
 
       final originalHr = tcxResult.activity.channel(Channel.heartRate);
       final roundHr = gpxResult.activity.channel(Channel.heartRate);
@@ -86,7 +222,7 @@ void main() {
       expect(fitString, isNotEmpty);
 
       final parsed = ActivityParser.parse(fitString, ActivityFileFormat.fit);
-      expect(parsed.warnings, isEmpty);
+      expect(parsed.warningDiagnostics, isEmpty);
       expect(parsed.activity.points.length, activity.points.length);
       expect(
         parsed.activity.channel(Channel.heartRate).map((s) => s.value.round()),
@@ -144,7 +280,7 @@ void main() {
         options: encoderOptions,
       );
       final parsed = ActivityParser.parse(firstFit, ActivityFileFormat.fit);
-      expect(parsed.warnings, isEmpty);
+      expect(parsed.warningDiagnostics, isEmpty);
 
       final secondFit = ActivityEncoder.encode(
         parsed.activity,
@@ -199,7 +335,7 @@ void main() {
       final bytes = _buildCompressedFitSample();
       final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
 
-      expect(result.warnings, isEmpty);
+      expect(result.warningDiagnostics, isEmpty);
 
       final points = result.activity.points;
       expect(points.length, equals(2));
@@ -213,6 +349,56 @@ void main() {
 
       expect(points.first.latitude, closeTo(0.0, 1e-6));
       expect(points.last.latitude, closeTo(0.0005, 1e-6));
+    });
+  });
+
+  group('Async parsing', () {
+    test('parseAsync mirrors synchronous GPX parser', () async {
+      final sync = ActivityParser.parse(_sampleGpx, ActivityFileFormat.gpx);
+      final asyncResult = await ActivityParser.parseAsync(
+        _sampleGpx,
+        ActivityFileFormat.gpx,
+        useIsolate: false,
+      );
+      expect(asyncResult.activity.points.length, sync.activity.points.length);
+      expect(asyncResult.diagnostics, isEmpty);
+    });
+
+    test('parseBytesAsync offloads FIT parsing', () async {
+      final activity = _buildSampleActivity();
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+        options: encoderOptions,
+      );
+      final bytes = base64Decode(fitPayload);
+      final result = await ActivityParser.parseBytesAsync(
+        bytes,
+        ActivityFileFormat.fit,
+      );
+      expect(result.activity.points.length, activity.points.length);
+      expect(result.diagnostics, isEmpty);
+    });
+
+    test('parseStream parses chunked FIT binary', () async {
+      final activity = _buildSampleActivity();
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+        options: encoderOptions,
+      );
+      final bytes = base64Decode(fitPayload);
+      final stream = Stream<List<int>>.fromIterable([
+        bytes.sublist(0, bytes.length ~/ 2),
+        bytes.sublist(bytes.length ~/ 2),
+      ]);
+      final result = await ActivityParser.parseStream(
+        stream,
+        ActivityFileFormat.fit,
+        useIsolate: false,
+      );
+      expect(result.activity.points.length, activity.points.length);
+      expect(result.diagnostics, isEmpty);
     });
   });
 

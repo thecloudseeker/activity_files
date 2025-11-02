@@ -16,16 +16,19 @@ class FitParser implements ActivityFormatParser {
 
   @override
   ActivityParseResult parse(String input) {
-    final warnings = <String>[];
-    final payload = _decodePayload(input.trim(), warnings);
-    return _parsePayload(payload, warnings);
+    final diagnostics = <ParseDiagnostic>[];
+    final payload = _decodePayload(input.trim(), diagnostics);
+    return _parsePayload(payload, diagnostics);
   }
 
   ActivityParseResult parseBytes(Uint8List payload) {
-    return _parsePayload(payload, <String>[]);
+    return _parsePayload(payload, <ParseDiagnostic>[]);
   }
 
-  ActivityParseResult _parsePayload(Uint8List payload, List<String> warnings) {
+  ActivityParseResult _parsePayload(
+    Uint8List payload,
+    List<ParseDiagnostic> diagnostics,
+  ) {
     final reader = _FitByteReader(payload);
     final header = _FitHeader.tryRead(reader);
     if (header == null) {
@@ -48,7 +51,14 @@ class FitParser implements ActivityFormatParser {
     String? creator;
     final dataLimit = header.headerSize + header.dataSize;
     if (dataLimit > payload.length) {
-      warnings.add('FIT header advertises data larger than available payload.');
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.header.size_mismatch',
+          message: 'FIT header advertises data larger than available payload.',
+          node: const ParseNodeReference(path: 'fit.header'),
+        ),
+      );
     }
     reader.position = header.headerSize;
     while (reader.position < payload.length && reader.position < dataLimit) {
@@ -64,8 +74,17 @@ class FitParser implements ActivityFormatParser {
         final previous = lastTimestamps[localType];
         if (previous == null) {
           final definition = definitions[localType];
-          warnings.add(
-            'Encountered compressed header for local message $localType without prior timestamp; skipping.',
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'fit.compressed_header.missing_timestamp',
+              message:
+                  'Encountered compressed header for local message $localType without prior timestamp; skipping.',
+              node: ParseNodeReference(
+                path: 'fit.message',
+                description: 'localType=$localType',
+              ),
+            ),
           );
           if (definition != null) {
             reader.skip(definition.dataSize(compressedTimestamp: true));
@@ -86,14 +105,33 @@ class FitParser implements ActivityFormatParser {
         if (definition != null) {
           definitions[localType] = definition;
         } else {
-          warnings.add('Malformed FIT definition message skipped.');
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'fit.definition.malformed',
+              message: 'Malformed FIT definition message skipped.',
+              node: ParseNodeReference(
+                path: 'fit.definition',
+                description: 'localType=$localType',
+              ),
+            ),
+          );
         }
         continue;
       }
       final definition = definitions[localType];
       if (definition == null) {
-        warnings.add(
-          'Data message references unknown definition #$localType; aborting parse.',
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'fit.definition.missing',
+            message:
+                'Data message references unknown definition #$localType; aborting parse.',
+            node: ParseNodeReference(
+              path: 'fit.message',
+              description: 'localType=$localType',
+            ),
+          ),
         );
         reader.skipRemaining(dataLimit - reader.position);
         break;
@@ -103,7 +141,17 @@ class FitParser implements ActivityFormatParser {
         compressedTimestamp: isCompressed,
       );
       if (values == null) {
-        warnings.add('Failed to read data message for ${definition.globalId}.');
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'fit.data.read_failed',
+            message: 'Failed to read data message for ${definition.globalId}.',
+            node: ParseNodeReference(
+              path: 'fit.message',
+              description: 'globalId=${definition.globalId}',
+            ),
+          ),
+        );
         reader.skip(definition.dataSize(compressedTimestamp: isCompressed));
         continue;
       }
@@ -154,7 +202,17 @@ class FitParser implements ActivityFormatParser {
         case 20: // record
           final timestamp = _decodeTimestamp(values[253]);
           if (timestamp == null) {
-            warnings.add('Record without timestamp skipped.');
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'fit.record.missing_timestamp',
+                message: 'Record without timestamp skipped.',
+                node: ParseNodeReference(
+                  path: 'fit.record',
+                  description: 'localType=$localType',
+                ),
+              ),
+            );
             continue;
           }
           final lat = _decodeSemicircles(values[0]);
@@ -222,11 +280,11 @@ class FitParser implements ActivityFormatParser {
       sport: sport,
       creator: creator,
     );
-    return ActivityParseResult(activity: activity, warnings: warnings);
+    return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
 }
 
-Uint8List _decodePayload(String input, List<String> warnings) {
+Uint8List _decodePayload(String input, List<ParseDiagnostic> diagnostics) {
   try {
     return Uint8List.fromList(base64Decode(input));
   } on FormatException {

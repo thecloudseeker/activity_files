@@ -1,39 +1,54 @@
 import 'package:activity_files/activity_files.dart';
 
 Future<void> main() async {
-  // Construct a minimal activity and round-trip through GPX encoding.
-  final activity = RawActivity(
-    points: [
-      GeoPoint(
-        latitude: 40.0,
-        longitude: -105.0,
-        elevation: 1601,
-        time: DateTime.utc(2024, 1, 1, 12),
-      ),
-      GeoPoint(
-        latitude: 40.0005,
-        longitude: -105.0005,
-        elevation: 1604,
-        time: DateTime.utc(2024, 1, 1, 12, 0, 5),
-      ),
-    ],
-    channels: {
-      Channel.heartRate: [
-        Sample(time: DateTime.utc(2024, 1, 1, 12), value: 140),
-        Sample(time: DateTime.utc(2024, 1, 1, 12, 0, 5), value: 143),
-      ],
-    },
-    sport: Sport.running,
+  final baseTime = DateTime.utc(2024, 1, 1, 12);
+
+  final activity = ActivityFiles.builder()
+    ..sport = Sport.running
+    ..creator = 'Example Watch'
+    ..addPoint(
+      latitude: 40.0,
+      longitude: -105.0,
+      elevation: 1601,
+      time: baseTime,
+    )
+    ..addPoint(
+      latitude: 40.0005,
+      longitude: -105.0005,
+      elevation: 1604,
+      time: baseTime.add(const Duration(seconds: 5)),
+    )
+    ..addSample(channel: Channel.heartRate, time: baseTime, value: 140)
+    ..addSample(
+      channel: Channel.heartRate,
+      time: baseTime.add(const Duration(seconds: 5)),
+      value: 143,
+    )
+    ..addLap(
+      startTime: baseTime,
+      endTime: baseTime.add(const Duration(seconds: 5)),
+      distanceMeters: 70,
+    );
+
+  final cleaned = ActivityFiles.edit(
+    activity.build(),
+  ).recomputeDistanceAndSpeed().activity;
+
+  final gpx = ActivityEncoder.encode(cleaned, ActivityFileFormat.gpx);
+
+  final conversion = await ActivityFiles.convert(
+    source: gpx,
+    to: ActivityFileFormat.fit,
+    useIsolate: false,
   );
 
-  final gpx = ActivityEncoder.encode(
-    activity,
-    ActivityFileFormat.gpx,
-    options: const EncoderOptions(),
+  final fitLoad = await ActivityFiles.load(
+    conversion.asBytes(),
+    format: ActivityFileFormat.fit,
+    useIsolate: false,
   );
 
-  final parsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
-
-  print('Warnings: ${parsed.warnings.length}');
-  print('Points after round-trip: ${parsed.activity.points.length}');
+  print('GPX points: ${cleaned.points.length}');
+  print('FIT bytes: ${conversion.asBytes().length}');
+  print('Round-trip points: ${fitLoad.activity.points.length}');
 }

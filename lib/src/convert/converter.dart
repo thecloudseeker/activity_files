@@ -3,6 +3,7 @@ import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';
 import '../models.dart';
 import '../parse/activity_parser.dart';
+import '../parse/parse_result.dart';
 import '../transforms.dart';
 
 /// High-level facade for converting between activity file formats.
@@ -20,7 +21,8 @@ class ActivityConverter {
     required ActivityFileFormat to,
     bool normalize = true,
     EncoderOptions encoderOptions = const EncoderOptions(),
-    List<String>? warnings,
+    List<ParseDiagnostic>? diagnostics,
+    @Deprecated('Use diagnostics instead.') List<String>? warnings,
   }) {
     final parseResult = switch (input) {
       String text => ActivityParser.parse(text, from),
@@ -29,7 +31,12 @@ class ActivityConverter {
         'Unsupported input type ${input.runtimeType}; expected String or List<int>.',
       ),
     };
-    warnings?.addAll(parseResult.warnings);
+    diagnostics?.addAll(parseResult.diagnostics);
+    if (warnings != null) {
+      warnings.addAll(
+        parseResult.warningDiagnostics.map((diagnostic) => diagnostic.message),
+      );
+    }
     var activity = parseResult.activity;
     if (normalize) {
       activity = RawEditor(activity).sortAndDedup().trimInvalid().activity;

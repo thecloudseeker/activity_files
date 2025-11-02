@@ -10,7 +10,7 @@ class GpxParser implements ActivityFormatParser {
   const GpxParser();
   @override
   ActivityParseResult parse(String input) {
-    final warnings = <String>[];
+    final diagnostics = <ParseDiagnostic>[];
     final document = XmlDocument.parse(input);
     final root = document.rootElement;
     final creator = root.getAttribute('creator');
@@ -42,15 +42,34 @@ class GpxParser implements ActivityFormatParser {
           final lat = latText != null ? double.tryParse(latText) : null;
           final lon = lonText != null ? double.tryParse(lonText) : null;
           if (lat == null || lon == null) {
-            warnings.add(
-              'Skipping GPX trackpoint missing coordinates (index $index).',
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'gpx.trackpoint.missing_coordinates',
+                message:
+                    'Skipping GPX trackpoint missing coordinates (index $index).',
+                node: ParseNodeReference(
+                  path: 'gpx.trk.trkseg.trkpt',
+                  index: index - 1,
+                ),
+              ),
             );
             continue;
           }
           final timeText = _firstText(trkpt, 'time');
           if (timeText == null) {
-            warnings.add(
-              'Skipping GPX trackpoint without timestamp at $lat,$lon.',
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'gpx.trackpoint.missing_timestamp',
+                message:
+                    'Skipping GPX trackpoint without timestamp at $lat,$lon.',
+                node: ParseNodeReference(
+                  path: 'gpx.trk.trkseg.trkpt',
+                  index: index - 1,
+                  description: 'lat=$lat,lon=$lon',
+                ),
+              ),
             );
             continue;
           }
@@ -58,14 +77,34 @@ class GpxParser implements ActivityFormatParser {
           try {
             time = DateTime.parse(timeText).toUtc();
           } catch (_) {
-            warnings.add('Invalid timestamp "$timeText"; trackpoint ignored.');
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'gpx.trackpoint.invalid_timestamp',
+                message: 'Invalid timestamp "$timeText"; trackpoint ignored.',
+                node: ParseNodeReference(
+                  path: 'gpx.trk.trkseg.trkpt',
+                  index: index - 1,
+                ),
+              ),
+            );
             continue;
           }
           final eleText = _firstText(trkpt, 'ele');
           final elevation = eleText != null ? double.tryParse(eleText) : null;
           if (eleText != null && elevation == null) {
-            warnings.add(
-              'Invalid elevation "$eleText" at $time; treating as null.',
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'gpx.trackpoint.invalid_elevation',
+                message:
+                    'Invalid elevation "$eleText" at $time; treating as null.',
+                node: ParseNodeReference(
+                  path: 'gpx.trk.trkseg.trkpt',
+                  index: index - 1,
+                  description: time.toIso8601String(),
+                ),
+              ),
             );
           }
           final point = GeoPoint(
@@ -100,8 +139,17 @@ class GpxParser implements ActivityFormatParser {
               }
               final parsed = double.tryParse(valueText);
               if (parsed == null) {
-                warnings.add(
-                  'Unparsable extension value "$valueText" for $name at $time.',
+                diagnostics.add(
+                  ParseDiagnostic(
+                    severity: ParseSeverity.warning,
+                    code: 'gpx.extension.invalid_number',
+                    message:
+                        'Unparsable extension value "$valueText" for $name at $time.',
+                    node: ParseNodeReference(
+                      path: 'gpx.trk.trkseg.trkpt.extensions.$name',
+                      index: index - 1,
+                    ),
+                  ),
                 );
                 continue;
               }
@@ -159,7 +207,7 @@ class GpxParser implements ActivityFormatParser {
       sport: sport,
       creator: creator,
     );
-    return ActivityParseResult(activity: activity, warnings: warnings);
+    return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
 
   Sport _sportFromString(String value) {

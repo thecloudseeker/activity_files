@@ -13,6 +13,8 @@ or validation.
 
 - Unified `RawActivity` model with geographic samples, sensor channels, laps,
   and sport metadata.
+- High-level `ActivityFiles` facade for loading, converting, and building
+  activities with minimal setup.
 - Namespace-tolerant GPX/TCX parsers that surface non-fatal schema issues as
   warnings instead of throwing.
 - Channel-aware encoders with configurable matching tolerances and numeric
@@ -29,7 +31,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.1.2
+  activity_files: ^0.2.0
 ```
 
 Then install dependencies:
@@ -39,6 +41,42 @@ dart pub get
 ```
 
 See `example/main.dart` for a minimal round-trip through the encoders.
+
+## Quick start
+
+```dart
+import 'dart:io';
+import 'package:activity_files/activity_files.dart';
+
+Future<void> bootstrap() async {
+  // Load and inspect an existing GPX file.
+  final ride = await ActivityFiles.load('assets/ride.gpx');
+  print('Detected format: ${ride.format}, points: ${ride.activity.points.length}');
+
+  // Convert to FIT and persist the binary payload.
+  final fit = await ActivityFiles.convert(
+    source: 'assets/ride.gpx',
+    to: ActivityFileFormat.fit,
+  );
+  await File('ride.fit').writeAsBytes(fit.asBytes());
+
+  // Build a new activity incrementally.
+  final builder = ActivityFiles.builder()
+    ..sport = Sport.running
+    ..addPoint(
+      latitude: 40.0,
+      longitude: -105.0,
+      time: DateTime.utc(2024, 5, 1, 7, 30),
+    )
+    ..addSample(
+      channel: Channel.heartRate,
+      time: DateTime.utc(2024, 5, 1, 7, 30),
+      value: 142,
+    );
+  final activity = builder.build();
+  print('New activity: ${activity.points.length} point(s)');
+}
+```
 
 ## RawActivity model
 
@@ -69,10 +107,12 @@ final activity = RawActivity(
 ## Parsing and encoding
 
 ```dart
-// Parse GPX to RawActivity (plus non-fatal warnings).
+// Parse GPX to RawActivity (plus non-fatal diagnostics).
 final result = ActivityParser.parse(gpxString, ActivityFileFormat.gpx);
-for (final warning in result.warnings) {
-  print('Warning: $warning');
+for (final warning in result.warningDiagnostics) {
+  final node = warning.node?.format();
+  final context = node != null ? ' @ $node' : '';
+  print('Warning ${warning.code}$context: ${warning.message}');
 }
 final activity = result.activity;
 
@@ -93,14 +133,15 @@ final fitBytes = base64Decode(fitBase64);
 final fitActivity =
     ActivityParser.parseBytes(fitBytes, ActivityFileFormat.fit).activity;
 
-> Tip: `ActivityParser.parseBytes` accepts binary FIT payloads directly, so you
-> can feed `File('ride.fit').readAsBytesSync()` without wrapping it in base64.
+> Tip: use `ActivityParser.parseStream` for large files (e.g. `File(...).openRead()`)
+> and `ActivityParser.parseBytes` when you already have the payload in memory. Call
+> `ActivityParser.parseAsync(..., useIsolate: true)` to offload heavy parses from the UI thread.
 ```
 
 ## Editing pipeline
 
 ```dart
-final editor = RawEditor(activity)
+final editor = ActivityFiles.edit(activity)
     .sortAndDedup()
     .trimInvalid()
     .crop(activity.startTime!, activity.endTime!.subtract(const Duration(minutes: 1)))
@@ -129,34 +170,41 @@ if (validation.errors.isEmpty) {
 ## Converter facade
 
 ```dart
-final warnings = <String>[];
-final converted = ActivityConverter.convert(
-  gpxString,
-  from: ActivityFileFormat.gpx,
-  to: ActivityFileFormat.tcx,
-  encoderOptions: options,
-  warnings: warnings,
-);
-if (warnings.isNotEmpty) {
-  warnings.forEach(print);
+Future<void> convertGpxToTcx() async {
+  final conversion = await ActivityFiles.convert(
+    source: gpxString,
+    to: ActivityFileFormat.tcx,
+    options: options,
+    useIsolate: false,
+  );
+  for (final diagnostic in conversion.diagnostics) {
+    print('${diagnostic.severity.name}: ${diagnostic.message}');
+  }
+
+  final tcxString = conversion.asString();
+  final normalized = conversion.activity;
+  print(
+    'Loaded ${conversion.sourceFormat.name} → '
+    '${conversion.targetFormat.name}, points: ${normalized.points.length}',
+  );
 }
 
-// FIT conversions yield base64 strings containing the binary payload.
-final fitWarnings = <String>[];
-final fitResult = ActivityConverter.convert(
-  gpxString,
-  from: ActivityFileFormat.gpx,
-  to: ActivityFileFormat.fit,
-  encoderOptions: options,
-  warnings: fitWarnings,
-);
-final fitRoundTrip = ActivityParser.parseBytes(
-  base64Decode(fitResult),
-  ActivityFileFormat.fit,
-).activity;
-
-// Tip: ActivityConverter.convert also accepts raw FIT bytes (List<int>) for the
-// input when converting from binary FIT files.
+Future<void> convertGpxToFit() async {
+  final conversion = await ActivityFiles.convert(
+    source: gpxString,
+    to: ActivityFileFormat.fit,
+    options: options,
+    useIsolate: false,
+  );
+  final fitBytes = conversion.asBytes();
+  final roundTrip = await ActivityFiles.load(
+    fitBytes,
+    format: ActivityFileFormat.fit,
+    useIsolate: false,
+  );
+  print('FIT diagnostics: ${conversion.diagnostics.length}');
+  print('Round-trip points: ${roundTrip.activity.points.length}');
+}
 ```
 
 ## CLI usage
@@ -167,7 +215,7 @@ $ dart run bin/activity_files.dart convert --from gpx --to tcx -i ride.gpx -o ri
 $ dart run bin/activity_files.dart validate --format gpx -i ride.gpx --gap-threshold 180
 ```
 
-The CLI reports parser warnings, validation warnings, and exits with a non-zero
+The CLI reports parser diagnostics, validation warnings, and exits with a non-zero
 status when validation errors are detected.
 Binary FIT inputs are read directly from `.fit` files, and FIT outputs are
 written as binary files (base64 is only used when you opt into the string APIs).
