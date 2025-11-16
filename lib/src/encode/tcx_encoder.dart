@@ -18,6 +18,15 @@ class TcxEncoder implements ActivityFormatEncoder {
     if (points.isEmpty) {
       return _emptyDocument();
     }
+    final metadataExtensions = activity.gpxMetadataExtensions;
+    final trackExtensions = activity.gpxTrackExtensions;
+    final namespaceRegistry = <String, String>{};
+    for (final extension in metadataExtensions) {
+      _collectExtensionNamespaces(extension, namespaceRegistry);
+    }
+    for (final extension in trackExtensions) {
+      _collectExtensionNamespaces(extension, namespaceRegistry);
+    }
     final laps = activity.laps.isNotEmpty
         ? activity.laps
         : [
@@ -43,17 +52,22 @@ class TcxEncoder implements ActivityFormatEncoder {
           options.defaultMaxDelta,
           (previous, current) => current > previous ? current : previous,
         );
+    final rootAttributes = <String, String>{
+      'xmlns': 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
+      'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+      'xsi:schemaLocation':
+          'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 '
+          'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd',
+    };
+    namespaceRegistry.forEach((prefix, uri) {
+      final key = 'xmlns:$prefix';
+      rootAttributes.putIfAbsent(key, () => uri);
+    });
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
       'TrainingCenterDatabase',
-      attributes: const {
-        'xmlns': 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
-        'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-        'xsi:schemaLocation':
-            'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 '
-            'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd',
-      },
+      attributes: rootAttributes,
       nest: () {
         builder.element(
           'Activities',
@@ -66,6 +80,7 @@ class TcxEncoder implements ActivityFormatEncoder {
                   'Id',
                   nest: points.first.time.toUtc().toIso8601String(),
                 );
+                var wroteTrackExtensions = false;
                 for (final lap in laps) {
                   builder.element(
                     'Lap',
@@ -87,6 +102,18 @@ class TcxEncoder implements ActivityFormatEncoder {
                       builder.element(
                         'Track',
                         nest: () {
+                          if (trackExtensions.isNotEmpty &&
+                              !wroteTrackExtensions) {
+                            builder.element(
+                              'Extensions',
+                              nest: () {
+                                for (final extension in trackExtensions) {
+                                  _writeExtensionNode(builder, extension);
+                                }
+                              },
+                            );
+                            wroteTrackExtensions = true;
+                          }
                           var cumulativeDistance = 0.0;
                           GeoPoint? previous;
                           for (final point in points.where(
@@ -94,6 +121,9 @@ class TcxEncoder implements ActivityFormatEncoder {
                                 !p.time.isBefore(lap.startTime) &&
                                 !p.time.isAfter(lap.endTime),
                           )) {
+                            // TODO(perf-channel-scan): Maintain rolling channel
+                            // iterators so lap exports do not trigger a fresh
+                            // ChannelMapper.mapAt lookup for every trackpoint.
                             final snapshot = ChannelMapper.mapAt(
                               point.time,
                               activity.channels,
@@ -188,8 +218,34 @@ class TcxEncoder implements ActivityFormatEncoder {
                     },
                   );
                 }
-                if (activity.creator != null) {
-                  builder.element('Creator', nest: activity.creator!);
+                if (metadataExtensions.isNotEmpty) {
+                  builder.element(
+                    'Extensions',
+                    nest: () {
+                      for (final extension in metadataExtensions) {
+                        _writeExtensionNode(builder, extension);
+                      }
+                    },
+                  );
+                }
+                final device = activity.device;
+                final creatorLabel = activity.creator;
+                if (device != null && device.isNotEmpty) {
+                  builder.element(
+                    'Creator',
+                    attributes: const {'xsi:type': 'Device_t'},
+                    nest: () {
+                      final name = device.model ?? creatorLabel;
+                      if (name != null && name.trim().isNotEmpty) {
+                        builder.element('Name', nest: name);
+                      } else if (creatorLabel != null) {
+                        builder.text(creatorLabel);
+                      }
+                      _writeTcxDeviceMetadata(builder, device);
+                    },
+                  );
+                } else if (creatorLabel != null) {
+                  builder.element('Creator', nest: creatorLabel);
                 }
               },
             );
@@ -239,6 +295,8 @@ double? _sampleValueAt(
   if (samples.isEmpty) {
     return null;
   }
+  // TODO(perf-distance-lookup): Replace this O(n) scan with a binary search or
+  // pointer walk since distance samples are already sorted by time.
   final target = time.toUtc().microsecondsSinceEpoch;
   Sample? candidate;
   var best = tolerance.inMicroseconds + 1;
@@ -267,3 +325,80 @@ double _haversine(GeoPoint a, GeoPoint b) {
 }
 
 double _radians(double deg) => deg * math.pi / 180.0;
+
+void _collectExtensionNamespaces(
+  GpxExtensionNode node,
+  Map<String, String> registry,
+) {
+  final prefix = node.namespacePrefix;
+  final uri = node.namespaceUri;
+  if (prefix != null && uri != null && !registry.containsKey(prefix)) {
+    registry[prefix] = uri;
+  }
+  for (final child in node.children) {
+    _collectExtensionNamespaces(child, registry);
+  }
+}
+
+void _writeExtensionNode(XmlBuilder builder, GpxExtensionNode node) {
+  final qualified = node.namespacePrefix != null
+      ? '${node.namespacePrefix}:${node.name}'
+      : node.name;
+  builder.element(
+    qualified,
+    attributes: node.attributes,
+    nest: () {
+      if (node.value != null) {
+        builder.text(node.value!);
+      }
+      for (final child in node.children) {
+        _writeExtensionNode(builder, child);
+      }
+    },
+  );
+}
+
+void _writeTcxDeviceMetadata(
+  XmlBuilder builder,
+  ActivityDeviceMetadata device,
+) {
+  void writeTag(String tag, String? value) {
+    if (value == null) {
+      return;
+    }
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    builder.element(tag, nest: trimmed);
+  }
+
+  writeTag('Manufacturer', device.manufacturer);
+  writeTag('ProductID', device.product);
+  writeTag('UnitId', device.serialNumber);
+
+  if (device.softwareVersion != null &&
+      device.softwareVersion!.trim().isNotEmpty) {
+    final version = device.softwareVersion!.trim();
+    final parts = version.split('+');
+    final core = parts.first.split('.');
+    final build = parts.length > 1 ? parts[1].split('.') : const <String>[];
+    builder.element(
+      'Version',
+      nest: () {
+        if (core.isNotEmpty && core[0].isNotEmpty) {
+          builder.element('VersionMajor', nest: core[0]);
+        }
+        if (core.length > 1 && core[1].isNotEmpty) {
+          builder.element('VersionMinor', nest: core[1]);
+        }
+        if (build.isNotEmpty && build[0].isNotEmpty) {
+          builder.element('BuildMajor', nest: build[0]);
+        }
+        if (build.length > 1 && build[1].isNotEmpty) {
+          builder.element('BuildMinor', nest: build[1]);
+        }
+      },
+    );
+  }
+}

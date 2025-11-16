@@ -44,12 +44,22 @@ class FitEncoder implements ActivityFormatEncoder {
         _FitField(number: 3, size: 4, type: _FitBaseType.uint32z), // serial
       ],
     );
+    final deviceMetadata = activity.device;
+    final manufacturerId =
+        deviceMetadata?.fitManufacturerId ??
+        _fitManufacturerId(deviceMetadata?.manufacturer) ??
+        1;
+    final productId =
+        deviceMetadata?.fitProductId ??
+        _parseFitUint(deviceMetadata?.product) ??
+        1;
+    final serialNumber = _parseFitUint(deviceMetadata?.serialNumber) ?? 0;
     encoder.writeFileId(
       dataSection,
       localId: fileIdLocal,
-      manufacturer: 1,
-      product: 1,
-      serial: 0,
+      manufacturer: manufacturerId,
+      product: productId,
+      serial: serialNumber,
     );
     // Session message for sport metadata when available.
     const sessionLocal = 1;
@@ -168,17 +178,21 @@ class FitEncoder implements ActivityFormatEncoder {
     final powerTolerance = options.maxDeltaFor(Channel.power);
     final tempTolerance = options.maxDeltaFor(Channel.temperature);
     final speedTolerance = options.maxDeltaFor(Channel.speed);
+    final distanceTolerance = options.maxDeltaFor(Channel.distance);
     final channelMap = activity.channels.map(
       (key, value) => MapEntry(key, List<Sample>.from(value)),
     );
     for (final point in activity.points) {
+      // TODO(perf-channel-scan): Track per-channel indices while streaming
+      // points so ChannelMapper.mapAt does not binary-search every sensor list
+      // for each emitted record.
       final timestampSeconds = point.time
           .toUtc()
           .difference(baseTime)
           .inSeconds;
       final lat = (point.latitude * 2147483648.0 / 180.0).round();
       final lon = (point.longitude * 2147483648.0 / 180.0).round();
-      final altitudeRaw = ((point.elevation ?? 0) + 500.0) * 5.0;
+      final altitudeRaw = _encodeAltitude(point.elevation);
       final snapshot = ChannelMapper.mapAt(
         point.time,
         channelMap,
@@ -217,7 +231,11 @@ class FitEncoder implements ActivityFormatEncoder {
         hr: hr,
         cadence: cadence,
         distanceMeters: channelMap.containsKey(Channel.distance)
-            ? _lookupSample(channelMap[Channel.distance], point.time)
+            ? _lookupSample(
+                channelMap[Channel.distance],
+                point.time,
+                distanceTolerance,
+              )
             : null,
         speed: speed,
         power: power,
@@ -244,21 +262,59 @@ class FitEncoder implements ActivityFormatEncoder {
   }
 }
 
-double? _lookupSample(List<Sample>? samples, DateTime timestamp) {
+double? _lookupSample(
+  List<Sample>? samples,
+  DateTime timestamp,
+  Duration tolerance,
+) {
   if (samples == null || samples.isEmpty) {
     return null;
   }
-  final target = timestamp.toUtc();
-  Sample? nearest;
-  int best = 1 << 62;
-  for (final sample in samples) {
-    final delta = sample.time.toUtc().difference(target).inMicroseconds.abs();
-    if (delta < best) {
-      best = delta;
-      nearest = sample;
+  final targetMicros = timestamp.toUtc().microsecondsSinceEpoch;
+  var low = 0;
+  var high = samples.length - 1;
+  while (low <= high) {
+    final mid = (low + high) >> 1;
+    final sampleMicros = samples[mid].time.microsecondsSinceEpoch;
+    if (sampleMicros < targetMicros) {
+      low = mid + 1;
+    } else if (sampleMicros > targetMicros) {
+      high = mid - 1;
+    } else {
+      return samples[mid].value;
     }
   }
-  return nearest?.value;
+  Sample? bestSample;
+  var bestDelta = tolerance.inMicroseconds + 1;
+  void consider(int index) {
+    if (index < 0 || index >= samples.length) {
+      return;
+    }
+    final sample = samples[index];
+    final delta = (sample.time.microsecondsSinceEpoch - targetMicros).abs();
+    if (delta <= tolerance.inMicroseconds && delta < bestDelta) {
+      bestDelta = delta;
+      bestSample = sample;
+    }
+  }
+
+  consider(low);
+  consider(low - 1);
+  return bestSample?.value;
+}
+
+int _encodeAltitude(double? elevation) {
+  if (elevation == null || elevation.isNaN) {
+    return 0xFFFF;
+  }
+  final scaled = ((elevation + 500.0) * 5.0).round();
+  if (scaled < 0) {
+    return 0;
+  }
+  if (scaled > 0xFFFF) {
+    return 0xFFFF;
+  }
+  return scaled;
 }
 
 Uint8List _createHeader(int dataSize) {
@@ -272,6 +328,29 @@ Uint8List _createHeader(int dataSize) {
   final crc = _computeFitCrc(header.sublist(0, 12));
   bd.setUint16(12, crc, Endian.little);
   return header;
+}
+
+int? _fitManufacturerId(String? name) {
+  if (name == null) {
+    return null;
+  }
+  final normalized = name.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return null;
+  }
+  for (final entry in fitManufacturerNames.entries) {
+    if (entry.value.toLowerCase() == normalized) {
+      return entry.key;
+    }
+  }
+  return int.tryParse(normalized);
+}
+
+int? _parseFitUint(String? value) {
+  if (value == null) {
+    return null;
+  }
+  return int.tryParse(value.trim());
 }
 
 class _FitMessageEncoder {

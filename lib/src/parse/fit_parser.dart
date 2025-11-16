@@ -49,6 +49,7 @@ class FitParser implements ActivityFormatParser {
     final laps = <Lap>[];
     Sport sport = Sport.unknown;
     String? creator;
+    ActivityDeviceMetadata? deviceMetadata;
     final dataLimit = header.headerSize + header.dataSize;
     if (dataLimit > payload.length) {
       diagnostics.add(
@@ -169,10 +170,34 @@ class FitParser implements ActivityFormatParser {
           final manufacturer = values[1];
           final product = values[2];
           final serial = values[3];
+          final manufacturerId = manufacturer is num
+              ? manufacturer.toInt()
+              : null;
+          final productId = product is num ? product.toInt() : null;
+          final serialId = serial is num ? serial.toInt() : null;
+          final manufacturerName = manufacturerId != null
+              ? fitManufacturerNames[manufacturerId] ??
+                    'manufacturer_$manufacturerId'
+              : null;
+          deviceMetadata = ActivityDeviceMetadata(
+            manufacturer: manufacturerName,
+            product: productId?.toString(),
+            serialNumber: serialId?.toString(),
+            fitManufacturerId: manufacturerId,
+            fitProductId: productId,
+          );
           final parts = <String>['FIT Device'];
-          if (manufacturer is int) parts.add('m$manufacturer');
-          if (product is int) parts.add('p$product');
-          if (serial is int) parts.add('s$serial');
+          if (manufacturerName != null) {
+            parts.add(manufacturerName);
+          } else if (manufacturerId != null) {
+            parts.add('m$manufacturerId');
+          }
+          if (productId != null) {
+            parts.add('p$productId');
+          }
+          if (serialId != null) {
+            parts.add('s$serialId');
+          }
           creator = parts.join(' ');
           break;
         case 18: // session
@@ -279,6 +304,9 @@ class FitParser implements ActivityFormatParser {
       laps: laps,
       sport: sport,
       creator: creator,
+      device: deviceMetadata != null && deviceMetadata.isNotEmpty
+          ? deviceMetadata
+          : null,
     );
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
@@ -417,15 +445,15 @@ class _FitMessageDefinition {
     required this.globalId,
     required this.isLittleEndian,
     required this.fields,
-    required this.developerFieldCount,
-    required this.developerDataSize,
+    required this.developerFields,
   });
   final int localId;
   final int globalId;
   final bool isLittleEndian;
   final List<_FitFieldDefinition> fields;
-  final int developerFieldCount;
-  final int developerDataSize;
+  final List<_FitDeveloperFieldDefinition> developerFields;
+  int get _developerDataSize =>
+      developerFields.fold(0, (total, field) => total + field.size);
   static _FitMessageDefinition? read(
     _FitByteReader reader,
     int localId, {
@@ -449,19 +477,25 @@ class _FitMessageDefinition {
           ),
         );
       }
-      var developerCount = 0;
+      final developerFields = <_FitDeveloperFieldDefinition>[];
       if (hasDeveloper) {
-        developerCount = reader.readUint8();
-        reader.skip(developerCount * 3);
+        final developerCount = reader.readUint8();
+        for (var i = 0; i < developerCount; i++) {
+          developerFields.add(
+            _FitDeveloperFieldDefinition(
+              fieldNumber: reader.readUint8(),
+              size: reader.readUint8(),
+              developerIndex: reader.readUint8(),
+            ),
+          );
+        }
       }
-      final developerDataSize = 0; // Developer data fields are ignored.
       return _FitMessageDefinition(
         localId: localId,
         globalId: globalMessage,
         isLittleEndian: littleEndian,
         fields: fields,
-        developerFieldCount: developerCount,
-        developerDataSize: developerDataSize,
+        developerFields: developerFields,
       );
     } catch (_) {
       return null;
@@ -469,7 +503,7 @@ class _FitMessageDefinition {
   }
 
   int dataSize({bool compressedTimestamp = false}) {
-    var total = developerDataSize;
+    var total = _developerDataSize;
     for (final field in fields) {
       if (compressedTimestamp && field.fieldNumber == 253) {
         continue;
@@ -498,11 +532,24 @@ class _FitMessageDefinition {
         values[field.fieldNumber] = value;
       }
     }
-    if (developerFieldCount > 0) {
-      reader.skip(developerFieldCount * 3);
+    for (final developerField in developerFields) {
+      if (developerField.size > 0) {
+        reader.skip(developerField.size);
+      }
     }
     return values;
   }
+}
+
+class _FitDeveloperFieldDefinition {
+  const _FitDeveloperFieldDefinition({
+    required this.fieldNumber,
+    required this.size,
+    required this.developerIndex,
+  });
+  final int fieldNumber;
+  final int size;
+  final int developerIndex;
 }
 
 class _FitFieldDefinition {

@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
+// TODO(0.4.0): Consider splitting this module into (a) stateless transform
+// utilities (resampling, haversine, derived metrics) and (b) the mutable
+// RawEditor pipeline to reduce coupling, enable focused tests, and make it
+// easier to address the outstanding TODOs before the next release.
 import 'dart:math' as math;
 import 'models.dart';
 
@@ -19,6 +23,8 @@ class RawTransforms {
     final start = original.first.time;
     final end = original.last.time;
     final times = <DateTime>[];
+    // TODO(perf): Use a pre-sized list or typed buffer (microseconds) to avoid
+    // repeated DateTime allocations when resampling long recordings.
     var current = start;
     while (!current.isAfter(end)) {
       times.add(current);
@@ -87,33 +93,41 @@ class RawEditor {
   /// Returns the current result.
   RawActivity get activity => _activity;
 
+  // TODO(analysis): Provide helpers (e.g. histogram, HR zones) that operate on
+  // the edited activity so callers don’t need a separate pass over the data.
+
   /// Ensures samples and points are sorted by time and removes duplicates.
   RawEditor sortAndDedup() {
+    // TODO(perf): Detect already-sorted inputs to skip cloning/sorting
+    // activities that entered the editor in chronological order.
     final sortedPoints = [..._activity.points]
       ..sort((a, b) => a.time.compareTo(b.time));
     final dedupedPoints = <GeoPoint>[];
     GeoPoint? previous;
     for (final point in sortedPoints) {
       final prev = previous;
-      final isDuplicate =
-          prev != null &&
-          prev.time == point.time &&
-          prev.latitude == point.latitude &&
-          prev.longitude == point.longitude;
-      if (!isDuplicate) {
-        dedupedPoints.add(point);
+      final sameTimestamp =
+          prev != null && prev.time.isAtSameMomentAs(point.time);
+      if (sameTimestamp && dedupedPoints.isNotEmpty) {
+        dedupedPoints[dedupedPoints.length - 1] = point;
         previous = point;
+        continue;
       }
+      dedupedPoints.add(point);
+      previous = point;
     }
     final sortedChannels = _activity.channels.map((channel, samples) {
       final sorted = [...samples]..sort((a, b) => a.time.compareTo(b.time));
       final deduped = <Sample>[];
       Sample? last;
       for (final sample in sorted) {
-        if (last == null || last.time != sample.time) {
-          deduped.add(sample);
+        if (last != null && last.time == sample.time) {
+          deduped[deduped.length - 1] = sample;
           last = sample;
+          continue;
         }
+        deduped.add(sample);
+        last = sample;
       }
       return MapEntry(channel, deduped);
     });
@@ -129,6 +143,8 @@ class RawEditor {
 
   /// Drops invalid coordinates and trims channels outside the point range.
   RawEditor trimInvalid() {
+    // TODO(perf): Detect early if all coordinates are already valid to skip
+    // rebuilding the entire channel/lap collections.
     final validPoints = _activity.points.where((point) {
       final latOk =
           point.latitude.isFinite &&
@@ -144,7 +160,9 @@ class RawEditor {
     final end = validPoints.isNotEmpty ? validPoints.last.time : null;
     final trimmedChannels = _activity.channels.map((channel, samples) {
       if (start == null || end == null) {
-        return MapEntry(channel, <Sample>[]);
+        // Preserve sensor-only activities by retaining their history when no
+        // valid GPS fixes survive the trim.
+        return MapEntry(channel, List<Sample>.from(samples));
       }
       final filtered = samples
           .where(
@@ -189,6 +207,8 @@ class RawEditor {
     }
     final startUtc = start.toUtc();
     final endUtc = end.toUtc();
+    // TODO(validation): Provide a helper that re-validates lap boundaries after
+    // compound edits so downstream code can detect mismatches early.
     final croppedPoints = _activity.points
         .where(
           (point) =>
@@ -257,26 +277,67 @@ class RawEditor {
     if (step.isNegative || step == Duration.zero) {
       throw ArgumentError.value(step, 'step', 'must be positive');
     }
+    if (_activity.points.length <= 1) {
+      return this;
+    }
     final retained = <GeoPoint>[];
-    DateTime? lastKept;
     for (final point in _activity.points) {
-      final previous = lastKept;
-      if (previous == null || point.time.difference(previous) >= step) {
+      if (retained.isEmpty ||
+          point.time.difference(retained.last.time) >= step) {
         retained.add(point);
-        lastKept = point.time;
       }
     }
+    final lastPoint = _activity.points.last;
+    if (retained.isEmpty ||
+        !retained.last.time.isAtSameMomentAs(lastPoint.time)) {
+      retained.add(lastPoint);
+    }
     final retainedTimes = retained
-        .map((point) => point.time.microsecondsSinceEpoch)
-        .toList();
+        .map((point) => point.time.toUtc().microsecondsSinceEpoch)
+        .toList(growable: false);
     final tolerance = math.max(1, step.inMicroseconds ~/ 2);
+
+    // TODO(perf): Reuse the previous closest index for monotonic timestamps
+    // instead of running a new binary search for every sample.
+    int closestIndex(int target) {
+      var low = 0;
+      var high = retainedTimes.length - 1;
+      while (low <= high) {
+        final mid = (low + high) >> 1;
+        final value = retainedTimes[mid];
+        if (value == target) {
+          return mid;
+        }
+        if (value < target) {
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+      if (low >= retainedTimes.length) {
+        return retainedTimes.length - 1;
+      }
+      if (low == 0) {
+        return 0;
+      }
+      final lower = retainedTimes[low - 1];
+      final upper = retainedTimes[low];
+      return (target - lower).abs() <= (upper - target).abs() ? low - 1 : low;
+    }
+
     final filteredChannels = _activity.channels.map((channel, samples) {
-      final filtered = samples.where((sample) {
-        final sampleMicros = sample.time.microsecondsSinceEpoch;
-        return retainedTimes.any(
-          (kept) => (kept - sampleMicros).abs() <= tolerance,
-        );
-      }).toList();
+      if (samples.isEmpty) {
+        return MapEntry(channel, samples);
+      }
+      final filtered = <Sample>[];
+      for (final sample in samples) {
+        final sampleMicros = sample.time.toUtc().microsecondsSinceEpoch;
+        final index = closestIndex(sampleMicros);
+        final delta = (retainedTimes[index] - sampleMicros).abs();
+        if (delta <= tolerance) {
+          filtered.add(sample);
+        }
+      }
       return MapEntry(channel, filtered);
     });
     _activity = _activity.copyWith(
@@ -303,17 +364,27 @@ class RawEditor {
         lastKept = point;
       }
     }
+    // TODO(0.3.0): Always retain the terminal point when the last hop is under
+    // the threshold; otherwise downsampled tracks finish early and distances
+    // shrink compared to the source recording.
+    final lastPoint = _activity.points.last;
+    if (!retained.last.time.isAtSameMomentAs(lastPoint.time)) {
+      retained.add(lastPoint);
+    }
     final retainedTimes = retained
-        .map((point) => point.time.microsecondsSinceEpoch)
-        .toSet();
+        .map((point) => point.time)
+        .toList(growable: false);
+    final channelTolerance = _channelSnapTolerance(retained);
     final filteredChannels = _activity.channels.map((channel, samples) {
-      final filtered = samples
-          .where(
-            (sample) =>
-                retainedTimes.contains(sample.time.microsecondsSinceEpoch),
-          )
-          .toList();
-      return MapEntry(channel, filtered);
+      if (samples.isEmpty) {
+        return MapEntry(channel, samples);
+      }
+      final resampled = _resampleNearest(
+        samples,
+        retainedTimes,
+        channelTolerance,
+      );
+      return MapEntry(channel, resampled);
     });
     _activity = _activity.copyWith(
       points: retained,
@@ -333,6 +404,8 @@ class RawEditor {
     }
     final halfWindow = window ~/ 2;
     final smoothed = <Sample>[];
+    // TODO(perf): Use a running sum / sliding window to avoid O(n * window)
+    // work when smoothing long heart-rate channels.
     for (var i = 0; i < hrSamples.length; i++) {
       final start = math.max(0, i - halfWindow);
       final end = math.min(hrSamples.length - 1, i + halfWindow);
@@ -388,6 +461,8 @@ class RawEditor {
 
   /// Generates laps at every [meters] boundary using the distance channel.
   RawEditor markLapsByDistance(double meters) {
+    // TODO(feature): Support time- or elevation-based lap generation so
+    // consumers can ask for split summaries beyond fixed distance segments.
     if (meters <= 0) {
       throw ArgumentError.value(meters, 'meters', 'must be positive');
     }
@@ -396,28 +471,44 @@ class RawEditor {
       return this;
     }
     final laps = <Lap>[];
-    double nextSplit = meters;
     DateTime? lapStart = distanceSamples.first.time;
+    var lapStartDistance = distanceSamples.first.value;
+    var nextSplit = lapStartDistance + meters;
     for (final sample in distanceSamples) {
-      if (sample.value >= nextSplit) {
+      while (sample.value >= nextSplit) {
+        final lapDistance = nextSplit - lapStartDistance;
         laps.add(
           Lap(
             startTime: lapStart ?? sample.time,
             endTime: sample.time,
-            distanceMeters: sample.value,
+            distanceMeters: lapDistance > 0 ? lapDistance : null,
             name: 'Split ${laps.length + 1}',
           ),
         );
         lapStart = sample.time;
+        lapStartDistance = nextSplit;
         nextSplit += meters;
       }
+    }
+    final lastSample = distanceSamples.last;
+    final remainingDistance = lastSample.value - lapStartDistance;
+    if (remainingDistance > 0 && lapStart != null) {
+      laps.add(
+        Lap(
+          startTime: lapStart,
+          endTime: lastSample.time,
+          distanceMeters: remainingDistance,
+          name: 'Split ${laps.length + 1}',
+        ),
+      );
     }
     if (laps.isEmpty && _activity.points.isNotEmpty) {
       laps.add(
         Lap(
           startTime: _activity.points.first.time,
           endTime: _activity.points.last.time,
-          distanceMeters: distanceSamples.last.value,
+          distanceMeters:
+              distanceSamples.last.value - distanceSamples.first.value,
           name: 'Split 1',
         ),
       );
@@ -513,6 +604,27 @@ List<Sample> _resampleLinear(List<Sample> samples, List<DateTime> times) {
   return result;
 }
 
+Duration _channelSnapTolerance(List<GeoPoint> points) {
+  if (points.length < 2) {
+    return const Duration(seconds: 1);
+  }
+  final totalMicros =
+      points.last.time.microsecondsSinceEpoch -
+      points.first.time.microsecondsSinceEpoch;
+  if (totalMicros <= 0) {
+    return const Duration(milliseconds: 500);
+  }
+  final averageMicros = totalMicros ~/ (points.length - 1);
+  final half = math.max(1, averageMicros ~/ 2);
+  const minTolerance = Duration(milliseconds: 200);
+  const maxTolerance = Duration(seconds: 10);
+  final clamped = half.clamp(
+    minTolerance.inMicroseconds,
+    maxTolerance.inMicroseconds,
+  );
+  return Duration(microseconds: clamped.toInt());
+}
+
 List<Sample> _resampleNearest(
   List<Sample> samples,
   List<DateTime> times,
@@ -521,6 +633,8 @@ List<Sample> _resampleNearest(
   if (samples.isEmpty) {
     return const <Sample>[];
   }
+  // TODO(perf): Replace the nested scan with a binary search / sliding window
+  // to keep resampling near-linear even for very dense sensor data.
   final toleranceMicros = tolerance.inMicroseconds.abs();
   final result = <Sample>[];
   for (final time in times) {

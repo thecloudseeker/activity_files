@@ -52,6 +52,85 @@ class ParseDiagnostic {
   final ParseNodeReference? node;
 }
 
+/// Utility for formatting and aggregating diagnostics.
+class DiagnosticsFormatter {
+  DiagnosticsFormatter(Iterable<ParseDiagnostic> diagnostics)
+    : diagnostics = diagnostics.toList(growable: false);
+
+  /// Diagnostics being formatted.
+  final List<ParseDiagnostic> diagnostics;
+
+  /// Whether any diagnostics were recorded.
+  bool get hasDiagnostics => diagnostics.isNotEmpty;
+
+  /// Number of diagnostics with [ParseSeverity.info].
+  int get infoCount => count(ParseSeverity.info);
+
+  /// Number of diagnostics with [ParseSeverity.warning].
+  int get warningCount => count(ParseSeverity.warning);
+
+  /// Number of diagnostics with [ParseSeverity.error].
+  int get errorCount => count(ParseSeverity.error);
+
+  /// Whether any warning-level diagnostics were recorded.
+  bool get hasWarnings => warningCount > 0;
+
+  /// Whether any error-level diagnostics were recorded.
+  bool get hasErrors => errorCount > 0;
+
+  /// Counts diagnostics that match [severity].
+  int count(ParseSeverity severity) {
+    var total = 0;
+    for (final diagnostic in diagnostics) {
+      if (diagnostic.severity == severity) {
+        total++;
+      }
+    }
+    return total;
+  }
+
+  /// Returns a filtered iterable containing only diagnostics of [severity].
+  Iterable<ParseDiagnostic> whereSeverity(ParseSeverity severity) sync* {
+    for (final diagnostic in diagnostics) {
+      if (diagnostic.severity == severity) {
+        yield diagnostic;
+      }
+    }
+  }
+
+  /// Formats diagnostics into a readable string for logging or UI badges.
+  String summary({
+    ParseSeverity minSeverity = ParseSeverity.warning,
+    bool includeSeverity = true,
+    bool includeCodes = true,
+    bool includeNode = false,
+    String separator = '\n',
+  }) {
+    final buffer = StringBuffer();
+    var first = true;
+    for (final diagnostic in diagnostics) {
+      if (diagnostic.severity.index < minSeverity.index) {
+        continue;
+      }
+      if (!first) {
+        buffer.write(separator);
+      }
+      first = false;
+      if (includeSeverity) {
+        buffer.write('${diagnostic.severity.name.toUpperCase()}: ');
+      }
+      if (includeCodes && diagnostic.code.isNotEmpty) {
+        buffer.write('[${diagnostic.code}] ');
+      }
+      buffer.write(diagnostic.message);
+      if (includeNode && diagnostic.node != null) {
+        buffer.write(' (${diagnostic.node!.format()})');
+      }
+    }
+    return buffer.toString();
+  }
+}
+
 const String _legacyWarningCode = 'legacy.warning';
 
 /// Result of parsing an activity file, including structured diagnostics.

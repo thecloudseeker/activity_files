@@ -26,7 +26,15 @@ class TcxParser implements ActivityFormatParser {
     final cadenceSamples = <Sample>[];
     final distanceSamples = <Sample>[];
     final laps = <Lap>[];
-    for (final lapElement in activityElement.findElements('Lap')) {
+    final metadataExtensions = <GpxExtensionNode>[];
+    final trackExtensions = <GpxExtensionNode>[];
+    for (final extensions
+        in activityElement.children.whereType<XmlElement>().where(
+          (e) => e.name.local == 'Extensions',
+        )) {
+      metadataExtensions.addAll(_parseExtensionChildren(extensions));
+    }
+    for (final lapElement in _childElements(activityElement, 'Lap')) {
       final lapStartAttribute = lapElement.getAttribute('StartTime');
       DateTime? lapStart;
       if (lapStartAttribute != null) {
@@ -52,7 +60,7 @@ class TcxParser implements ActivityFormatParser {
       final lapDistance = lapDistanceText != null
           ? double.tryParse(lapDistanceText)
           : null;
-      final track = lapElement.findElements('Track').firstOrNull;
+      final track = _childElements(lapElement, 'Track').firstOrNull;
       if (track == null) {
         diagnostics.add(
           ParseDiagnostic(
@@ -66,7 +74,12 @@ class TcxParser implements ActivityFormatParser {
       }
       DateTime? firstTime;
       DateTime? lastTime;
-      for (final trackpoint in track.findElements('Trackpoint')) {
+      for (final extensions in track.children.whereType<XmlElement>().where(
+        (e) => e.name.local == 'Extensions',
+      )) {
+        trackExtensions.addAll(_parseExtensionChildren(extensions));
+      }
+      for (final trackpoint in _childElements(track, 'Trackpoint')) {
         final timeText = _firstText(trackpoint, 'Time');
         if (timeText == null) {
           diagnostics.add(
@@ -98,7 +111,7 @@ class TcxParser implements ActivityFormatParser {
           );
           continue;
         }
-        final position = trackpoint.getElement('Position');
+        final position = _firstChild(trackpoint, 'Position');
         final latText = position != null
             ? _firstText(position, 'LatitudeDegrees')
             : null;
@@ -145,11 +158,8 @@ class TcxParser implements ActivityFormatParser {
             time: time,
           ),
         );
-        final hrValueText = trackpoint
-            .getElement('HeartRateBpm')
-            ?.getElement('Value')
-            ?.innerText
-            .trim();
+        final hrNode = _firstChild(trackpoint, 'HeartRateBpm');
+        final hrValueText = hrNode != null ? _firstText(hrNode, 'Value') : null;
         final hrValue = hrValueText != null
             ? double.tryParse(hrValueText)
             : null;
@@ -225,6 +235,7 @@ class TcxParser implements ActivityFormatParser {
         );
       }
     }
+    final creatorInfo = _extractCreatorInfo(activityElement);
     final channelMap = <Channel, Iterable<Sample>>{};
     if (hrSamples.isNotEmpty) {
       channelMap[Channel.heartRate] = hrSamples;
@@ -240,7 +251,10 @@ class TcxParser implements ActivityFormatParser {
       channels: channelMap,
       laps: laps,
       sport: sport,
-      creator: _extractCreator(activityElement),
+      creator: creatorInfo.creator,
+      device: creatorInfo.device,
+      gpxMetadataExtensions: metadataExtensions,
+      gpxTrackExtensions: trackExtensions,
     );
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
@@ -259,25 +273,111 @@ class TcxParser implements ActivityFormatParser {
     };
   }
 
-  String? _extractCreator(XmlElement element) {
-    final creator = element.getElement('Creator');
-    final name = creator?.getElement('Name');
-    if (name != null && name.innerText.trim().isNotEmpty) {
-      return name.innerText.trim();
+  ({String? creator, ActivityDeviceMetadata? device}) _extractCreatorInfo(
+    XmlElement element,
+  ) {
+    final creatorElement = _firstChild(element, 'Creator');
+    if (creatorElement == null) {
+      return (creator: null, device: null);
     }
-    if (creator != null && creator.innerText.trim().isNotEmpty) {
-      return creator.innerText.trim();
+    final name = _firstText(creatorElement, 'Name');
+    final manufacturer = _firstText(creatorElement, 'Manufacturer');
+    final product =
+        _firstText(creatorElement, 'ProductID') ??
+        _firstText(creatorElement, 'Product');
+    final serial =
+        _firstText(creatorElement, 'UnitId') ??
+        _firstText(creatorElement, 'SerialNumber');
+    String? version;
+    final versionElement = _firstChild(creatorElement, 'Version');
+    if (versionElement != null) {
+      final major = _firstText(versionElement, 'VersionMajor');
+      final minor = _firstText(versionElement, 'VersionMinor');
+      final buildMajor = _firstText(versionElement, 'BuildMajor');
+      final buildMinor = _firstText(versionElement, 'BuildMinor');
+      final coreParts = [
+        if (major != null && major.isNotEmpty) major,
+        if (minor != null && minor.isNotEmpty) minor,
+      ];
+      final buildParts = [
+        if (buildMajor != null && buildMajor.isNotEmpty) buildMajor,
+        if (buildMinor != null && buildMinor.isNotEmpty) buildMinor,
+      ];
+      if (coreParts.isNotEmpty) {
+        version = coreParts.join('.');
+      }
+      if (buildParts.isNotEmpty) {
+        final build = buildParts.join('.');
+        version = version == null ? build : '$version+$build';
+      }
     }
-    return null;
+    final device = ActivityDeviceMetadata(
+      manufacturer: manufacturer,
+      model: name,
+      product: product,
+      serialNumber: serial,
+      softwareVersion: version,
+    );
+    var creatorLabel = name?.trim();
+    if (creatorLabel == null || creatorLabel.isEmpty) {
+      final raw = (creatorElement.value ?? "").trim().trim();
+      if (raw.isNotEmpty) {
+        creatorLabel = raw;
+      } else {
+        creatorLabel = null;
+      }
+    }
+    return (creator: creatorLabel, device: device.isNotEmpty ? device : null);
   }
 }
 
+Iterable<XmlElement> _childElements(XmlElement element, String localName) =>
+    element.children.whereType<XmlElement>().where(
+      (child) => child.name.local == localName,
+    );
+
+XmlElement? _firstChild(XmlElement element, String localName) =>
+    _childElements(element, localName).firstOrNull;
+
 String? _firstText(XmlElement element, String localName) {
-  for (final child in element.findElements(localName)) {
+  for (final child in _childElements(element, localName)) {
     final text = child.innerText.trim();
     if (text.isNotEmpty) {
       return text;
     }
   }
   return null;
+}
+
+List<GpxExtensionNode> _parseExtensionChildren(XmlElement extensionsElement) {
+  final nodes = <GpxExtensionNode>[];
+  for (final child in extensionsElement.children.whereType<XmlElement>()) {
+    nodes.add(_extensionNodeFromXml(child));
+  }
+  return nodes;
+}
+
+GpxExtensionNode _extensionNodeFromXml(XmlElement element) {
+  final attributes = <String, String>{
+    for (final attribute in element.attributes)
+      attribute.name.prefix != null && attribute.name.prefix!.isNotEmpty
+              ? '${attribute.name.prefix}:${attribute.name.local}'
+              : attribute.name.local:
+          attribute.value,
+  };
+  final textContent = element.children
+      .whereType<XmlText>()
+      .map((node) => node.value.trim())
+      .where((value) => value.isNotEmpty)
+      .join();
+  return GpxExtensionNode(
+    name: element.name.local,
+    namespacePrefix: element.name.prefix,
+    namespaceUri: element.name.namespaceUri,
+    value: textContent.isEmpty ? null : textContent,
+    attributes: attributes,
+    children: element.children.whereType<XmlElement>().map(
+      _extensionNodeFromXml,
+    ),
+  );
 }

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:async';
 import 'dart:convert';
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import '../models.dart';
+import '../platform/isolate_runner.dart' as isolate_runner;
 import 'fit_parser.dart';
 import 'gpx_parser.dart';
 import 'parse_result.dart';
@@ -100,7 +100,10 @@ class ActivityParser {
       return Future.value(_parseDynamic(payload, format));
     }
     final transferable = _clonePayload(payload);
-    return Isolate.run(() => _parseDynamic(transferable, format));
+    return isolate_runner.runWithIsolation(
+      () => _parseDynamic(transferable, format),
+      useIsolate: useIsolate,
+    );
   }
 
   static ActivityParseResult _parseDynamic(
