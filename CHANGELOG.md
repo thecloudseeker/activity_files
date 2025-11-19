@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.2
+- wrong version in pubspec.yaml
+
 ## 0.3.1
 
 ### Fixed

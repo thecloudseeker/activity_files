@@ -364,7 +364,7 @@ class RawEditor {
         lastKept = point;
       }
     }
-    // TODO(0.3.0): Always retain the terminal point when the last hop is under
+    // TODO(0.4.0): Always retain the terminal point when the last hop is under
     // the threshold; otherwise downsampled tracks finish early and distances
     // shrink compared to the source recording.
     final lastPoint = _activity.points.last;

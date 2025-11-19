@@ -1,7 +1,7 @@
 name: activity_files
 description: >
   A pure Dart toolkit for loading, editing, validating, and exporting workout activity files—covering GPX, TCX, and FIT — with diagnostics, normalization, and CLI tooling.
-version: 0.3.0
+version: 0.3.2
 repository: https://github.com/thecloudseeker/activity_files
 issue_tracker: https://github.com/thecloudseeker/activity_files/issues
 topics:
