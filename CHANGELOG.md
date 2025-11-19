@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+- `ActivityFiles.load`/`convert` now honor the `encoding` parameter for GPX/TCX
+  byte payloads (without BOMs), so Latin-1 and other single-byte exports no
+  longer throw `FormatException`.
+- `ActivityParser.parseBytes` exposes an `encoding` argument for callers that
+  read non-UTF-8 text files directly into byte buffers.
+
 ## 0.3.0
 
 ### Added

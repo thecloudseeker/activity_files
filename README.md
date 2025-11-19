@@ -347,6 +347,8 @@ final fitActivity =
 > Tip: use `ActivityParser.parseStream` for large files (e.g. `File(...).openRead()`)
 > and `ActivityParser.parseBytes` when you already have the payload in memory. Call
 > `ActivityParser.parseAsync(..., useIsolate: true)` to offload heavy parses from the UI thread.
+> Encoding hint: Pass the appropriate `encoding` when loading byte-backed GPX/TCX
+> exports (e.g. ISO-8859-1 or Shift-JIS) so text is decoded correctly.
 ```
 
 ## Editing pipeline

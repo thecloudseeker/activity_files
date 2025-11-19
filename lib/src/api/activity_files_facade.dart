@@ -1057,11 +1057,13 @@ class ActivityFiles {
   static ActivityParseResult _parseSync(
     Object payload,
     ActivityFileFormat format,
+    Encoding encoding,
   ) {
     return switch (payload) {
       String text => ActivityParser.parse(text, format),
-      Uint8List bytes => _parseBytesWithBom(bytes, format),
-      List<int> bytes => ActivityParser.parseBytes(bytes, format),
+      Uint8List bytes => _parseBytesWithBom(bytes, format, encoding),
+      List<int> bytes =>
+          ActivityParser.parseBytes(bytes, format, encoding: encoding),
       _ => throw ArgumentError(
         'Unsupported payload type ${payload.runtimeType}; expected String or List<int>.',
       ),
@@ -1083,7 +1085,7 @@ class ActivityFiles {
       );
     }
     return isolate_runner.runWithIsolation(
-      () => _parseSync(payload, format),
+      () => _parseSync(payload, format, encoding),
       useIsolate: useIsolate,
     );
   }
@@ -1290,6 +1292,7 @@ class ActivityFiles {
   static ActivityParseResult _parseBytesWithBom(
     Uint8List bytes,
     ActivityFileFormat format,
+    Encoding encoding,
   ) {
     if (format != ActivityFileFormat.fit) {
       final bomDecoder = _decoderForBom(bytes);
@@ -1298,7 +1301,7 @@ class ActivityFiles {
         return ActivityParser.parse(decoded, format);
       }
     }
-    return ActivityParser.parseBytes(bytes, format);
+    return ActivityParser.parseBytes(bytes, format, encoding: encoding);
   }
 
   static int _totalSamples(RawActivity activity) {

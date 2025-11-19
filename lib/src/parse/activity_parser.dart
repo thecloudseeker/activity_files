@@ -39,8 +39,9 @@ class ActivityParser {
   /// Parses [bytes] according to [format]. Use this for binary FIT payloads.
   static ActivityParseResult parseBytes(
     List<int> bytes,
-    ActivityFileFormat format,
-  ) {
+    ActivityFileFormat format, {
+    Encoding encoding = utf8,
+  }) {
     final parser = switch (format) {
       ActivityFileFormat.gpx => const GpxParser(),
       ActivityFileFormat.tcx => const TcxParser(),
@@ -48,7 +49,7 @@ class ActivityParser {
     };
     return switch (parser) {
       FitParser fit => fit.parseBytes(Uint8List.fromList(bytes)),
-      _ => parser.parse(utf8.decode(bytes)),
+      _ => parser.parse(encoding.decode(bytes)),
     };
   }
 
@@ -66,8 +67,14 @@ class ActivityParser {
     List<int> bytes,
     ActivityFileFormat format, {
     bool useIsolate = true,
+    Encoding encoding = utf8,
   }) {
-    return _parseWithIsolation(bytes, format, useIsolate);
+    return _parseWithIsolation(
+      bytes,
+      format,
+      useIsolate,
+      encoding: encoding,
+    );
   }
 
   /// Collects the [source] stream before parsing. Useful for file and network IO.
@@ -85,7 +92,12 @@ class ActivityParser {
     }
     final bytes = builder.takeBytes();
     if (format == ActivityFileFormat.fit) {
-      return parseBytesAsync(bytes, format, useIsolate: useIsolate);
+      return parseBytesAsync(
+        bytes,
+        format,
+        useIsolate: useIsolate,
+        encoding: encoding,
+      );
     }
     final text = encoding.decode(bytes);
     return parseAsync(text, format, useIsolate: useIsolate);
@@ -94,26 +106,30 @@ class ActivityParser {
   static Future<ActivityParseResult> _parseWithIsolation(
     Object payload,
     ActivityFileFormat format,
-    bool useIsolate,
-  ) {
+    bool useIsolate, {
+    Encoding encoding = utf8,
+  }) {
     if (!useIsolate) {
-      return Future.value(_parseDynamic(payload, format));
+      return Future.value(
+        _parseDynamic(payload, format, encoding: encoding),
+      );
     }
     final transferable = _clonePayload(payload);
     return isolate_runner.runWithIsolation(
-      () => _parseDynamic(transferable, format),
+      () => _parseDynamic(transferable, format, encoding: encoding),
       useIsolate: useIsolate,
     );
   }
 
   static ActivityParseResult _parseDynamic(
     Object payload,
-    ActivityFileFormat format,
-  ) {
+    ActivityFileFormat format, {
+    Encoding encoding = utf8,
+  }) {
     return switch (payload) {
       String text => parse(text, format),
-      Uint8List bytes => parseBytes(bytes, format),
-      List<int> bytes => parseBytes(bytes, format),
+      Uint8List bytes => parseBytes(bytes, format, encoding: encoding),
+      List<int> bytes => parseBytes(bytes, format, encoding: encoding),
       _ => throw ArgumentError(
         'Unsupported payload type ${payload.runtimeType}; expected String or List<int>.',
       ),

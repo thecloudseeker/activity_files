@@ -86,6 +86,32 @@ void main() {
       },
     );
 
+    test('load decodes Latin-1 byte payloads when encoding provided', () async {
+      const gpxWithAccents = '''
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Latiné Device" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Sortie Résumé</name>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0">
+        <time>2024-01-01T00:00:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
+''';
+      final bytes = Uint8List.fromList(latin1.encode(gpxWithAccents));
+
+      final result = await ActivityFiles.load(
+        bytes,
+        useIsolate: false,
+        encoding: latin1,
+      );
+
+      expect(result.activity.points, isNotEmpty);
+      expect(result.activity.creator, equals('Latiné Device'));
+    });
+
     test('convert supports export isolation', () async {
       final conversion = await ActivityFiles.convert(
         source: _sampleGpx,
