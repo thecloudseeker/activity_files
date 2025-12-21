@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:convert';
 import 'dart:typed_data';
+import '../fit/fit_crc.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
 
 /// Parser for FIT binary payloads (limited profile support).
+// TODO(0.7.0)(feature): Handle developer fields and broader Garmin SDK profile coverage.
 ///
 /// The decoder focuses on the subset of the FIT profile required to populate
 /// the unified [RawActivity] model: geographic points, heart-rate/cadence/power
@@ -34,6 +36,29 @@ class FitParser implements ActivityFormatParser {
     if (header == null) {
       throw FormatException('Invalid FIT header.');
     }
+    if (header.headerSize > payload.length) {
+      throw FormatException('FIT header size exceeds available payload.');
+    }
+    if (header.hasHeaderCrc) {
+      final storedHeaderCrc =
+          payload[header.headerSize - 2] |
+          (payload[header.headerSize - 1] << 8);
+      final computedHeaderCrc = computeFitCrc(
+        payload,
+        length: header.headerSize - 2,
+      );
+      if (storedHeaderCrc != computedHeaderCrc) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.error,
+            code: 'fit.header.crc_mismatch',
+            message:
+                "FIT header CRC 0x${storedHeaderCrc.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computedHeaderCrc.toRadixString(16).padLeft(4, '0')}.",
+            node: const ParseNodeReference(path: 'fit.header'),
+          ),
+        );
+      }
+    }
     if (header.dataType != '.FIT') {
       throw FormatException('Unsupported FIT file type: ${header.dataType}');
     }
@@ -54,12 +79,44 @@ class FitParser implements ActivityFormatParser {
     if (dataLimit > payload.length) {
       diagnostics.add(
         ParseDiagnostic(
-          severity: ParseSeverity.warning,
+          severity: ParseSeverity.error,
           code: 'fit.header.size_mismatch',
           message: 'FIT header advertises data larger than available payload.',
           node: const ParseNodeReference(path: 'fit.header'),
         ),
       );
+    }
+    final trailerOffset = dataLimit;
+    final hasTrailer = payload.length >= trailerOffset + 2;
+    if (!hasTrailer) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'fit.trailer.truncated',
+          message:
+              'FIT trailer is missing or truncated; CRC validation skipped.',
+          node: const ParseNodeReference(path: 'fit.trailer'),
+        ),
+      );
+    } else {
+      final storedCrc =
+          payload[trailerOffset] | (payload[trailerOffset + 1] << 8);
+      final computedCrc = computeFitCrc(
+        payload,
+        offset: header.headerSize,
+        length: header.dataSize,
+      );
+      if (storedCrc != computedCrc) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.error,
+            code: 'fit.trailer.crc_mismatch',
+            message:
+                "FIT trailer CRC 0x${storedCrc.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computedCrc.toRadixString(16).padLeft(4, '0')}.",
+            node: const ParseNodeReference(path: 'fit.trailer'),
+          ),
+        );
+      }
     }
     reader.position = header.headerSize;
     while (reader.position < payload.length && reader.position < dataLimit) {
@@ -404,12 +461,14 @@ class _FitHeader {
     required this.profileVersion,
     required this.dataSize,
     required this.dataType,
+    required this.hasHeaderCrc,
   });
   final int headerSize;
   final int protocolVersion;
   final int profileVersion;
   final int dataSize;
   final String dataType;
+  final bool hasHeaderCrc;
   static _FitHeader? tryRead(_FitByteReader reader) {
     final start = reader.position;
     try {
@@ -421,6 +480,7 @@ class _FitHeader {
       final profile = reader.readUint16();
       final dataSize = reader.readUint32();
       final dataType = utf8.decode(reader.readBytes(4));
+      final hasHeaderCrc = size > 12;
       final remaining = size - 12;
       if (remaining > 0) {
         reader.skip(remaining);
@@ -431,6 +491,7 @@ class _FitHeader {
         profileVersion: profile,
         dataSize: dataSize,
         dataType: dataType,
+        hasHeaderCrc: hasHeaderCrc,
       );
     } catch (_) {
       reader.position = start;
@@ -534,6 +595,9 @@ class _FitMessageDefinition {
     }
     for (final developerField in developerFields) {
       if (developerField.size > 0) {
+        // TODO(0.7.0)(feature): Decode developer fields for known metrics
+        // instead of blindly discarding bytes so additional sensors (running
+        // power, cycling dynamics, etc.) survive parsing.
         reader.skip(developerField.size);
       }
     }

@@ -86,6 +86,29 @@ void main() {
       expect(downsampled.points.last.time, equals(points.last.time));
     });
 
+    test('retains the final point even when timestamps are identical', () {
+      final base = DateTime.utc(2024, 1, 2, 7);
+      final points = [
+        GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+        GeoPoint(
+          latitude: 40.0006, // ~66 m north
+          longitude: -105.0,
+          time: base.add(const Duration(seconds: 10)),
+        ),
+        GeoPoint(
+          latitude: 40.00065, // ~5 m hop but sharing the previous timestamp
+          longitude: -105.0,
+          time: base.add(const Duration(seconds: 10)),
+        ),
+      ];
+      final activity = RawActivity(points: points);
+
+      final downsampled = RawEditor(activity).downsampleDistance(50).activity;
+
+      expect(downsampled.points, hasLength(3));
+      expect(downsampled.points.last, same(points.last));
+    });
+
     test('avoids duplicating the last point when already retained', () {
       final base = DateTime.utc(2024, 1, 2, 7);
       final points = [
@@ -166,6 +189,61 @@ void main() {
       final downsampled = RawEditor(activity).downsampleDistance(50).activity;
 
       expect(downsampled.channel(Channel.heartRate), isEmpty);
+    });
+  });
+
+  group('RawEditor.smoothHR', () {
+    test('applies a sliding window average', () {
+      final base = DateTime.utc(2024, 1, 4, 6);
+      final hrSamples = [
+        Sample(time: base, value: 100),
+        Sample(time: base.add(const Duration(seconds: 30)), value: 110),
+        Sample(time: base.add(const Duration(seconds: 60)), value: 120),
+        Sample(time: base.add(const Duration(seconds: 90)), value: 130),
+      ];
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.0002,
+            longitude: -105.0002,
+            time: base.add(const Duration(seconds: 90)),
+          ),
+        ],
+        channels: {Channel.heartRate: hrSamples},
+      );
+
+      final smoothed = RawEditor(activity).smoothHR(3).activity;
+      final values =
+          smoothed.channel(Channel.heartRate).map((sample) => sample.value);
+
+      expect(values, orderedEquals([105, 110, 120, 125]));
+    });
+  });
+
+  group('RawActivity.copyWith', () {
+    test('reuses immutable collections when unchanged', () {
+      final base = DateTime.utc(2024, 1, 5, 7);
+      final point = GeoPoint(latitude: 40.0, longitude: -105.0, time: base);
+      final hr = [Sample(time: base, value: 140)];
+      final activity = RawActivity(
+        points: [point],
+        channels: {Channel.heartRate: hr},
+      );
+      // Populate the distance cache once to ensure it can be reused.
+      expect(activity.approximateDistance, closeTo(0, 1e-9));
+
+      final copy = activity.copyWith();
+
+      expect(
+        identical(copy.channels[Channel.heartRate], activity.channels[Channel.heartRate]),
+        isTrue,
+      );
+      expect(
+        identical(copy.points, activity.points),
+        isTrue,
+      );
+      expect(copy.approximateDistance, equals(activity.approximateDistance));
     });
   });
 }

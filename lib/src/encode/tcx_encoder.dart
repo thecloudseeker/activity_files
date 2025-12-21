@@ -13,10 +13,16 @@ class TcxEncoder implements ActivityFormatEncoder {
   const TcxEncoder();
   @override
   String encode(RawActivity activity, EncoderOptions options) {
+    final tcxVersion = options.tcxVersion;
+    final emitV1 = tcxVersion == TcxVersion.v1;
     final points = [...activity.points]
       ..sort((a, b) => a.time.compareTo(b.time));
     if (points.isEmpty) {
-      return _emptyDocument();
+      return _emptyDocument(
+        emitV1
+            ? 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v1'
+            : 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
+      );
     }
     final metadataExtensions = activity.gpxMetadataExtensions;
     final trackExtensions = activity.gpxTrackExtensions;
@@ -37,8 +43,6 @@ class TcxEncoder implements ActivityFormatEncoder {
               name: 'Lap 1',
             ),
           ];
-    final distanceSamples = [...activity.channel(Channel.distance)]
-      ..sort((a, b) => a.time.compareTo(b.time));
     final hrDelta = options.maxDeltaFor(Channel.heartRate);
     final cadenceDelta = options.maxDeltaFor(Channel.cadence);
     final distanceDelta = options.maxDeltaFor(Channel.distance);
@@ -52,12 +56,16 @@ class TcxEncoder implements ActivityFormatEncoder {
           options.defaultMaxDelta,
           (previous, current) => current > previous ? current : previous,
         );
+    final tcxNamespace = emitV1
+        ? 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v1'
+        : 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2';
+    final tcxSchema = emitV1
+        ? 'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev1.xsd'
+        : 'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd';
     final rootAttributes = <String, String>{
-      'xmlns': 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
+      'xmlns': tcxNamespace,
       'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-      'xsi:schemaLocation':
-          'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 '
-          'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd',
+      'xsi:schemaLocation': '$tcxNamespace $tcxSchema',
     };
     namespaceRegistry.forEach((prefix, uri) {
       final key = 'xmlns:$prefix';
@@ -81,6 +89,10 @@ class TcxEncoder implements ActivityFormatEncoder {
                   nest: points.first.time.toUtc().toIso8601String(),
                 );
                 var wroteTrackExtensions = false;
+                final channelCursor = ChannelMapper.cursor(
+                  activity.channels,
+                  maxDelta: searchDelta,
+                );
                 for (final lap in laps) {
                   builder.element(
                     'Lap',
@@ -121,14 +133,7 @@ class TcxEncoder implements ActivityFormatEncoder {
                                 !p.time.isBefore(lap.startTime) &&
                                 !p.time.isAfter(lap.endTime),
                           )) {
-                            // TODO(perf-channel-scan): Maintain rolling channel
-                            // iterators so lap exports do not trigger a fresh
-                            // ChannelMapper.mapAt lookup for every trackpoint.
-                            final snapshot = ChannelMapper.mapAt(
-                              point.time,
-                              activity.channels,
-                              maxDelta: searchDelta,
-                            );
+                            final snapshot = channelCursor.snapshot(point.time);
                             final hr = _valueWithin(
                               snapshot.heartRate,
                               snapshot.heartRateDelta,
@@ -139,9 +144,9 @@ class TcxEncoder implements ActivityFormatEncoder {
                               snapshot.cadenceDelta,
                               cadenceDelta,
                             );
-                            final knownDistance = _sampleValueAt(
-                              distanceSamples,
-                              point.time,
+                            final knownDistance = _valueWithin(
+                              snapshot.valueFor(Channel.distance),
+                              snapshot.deltaFor(Channel.distance),
                               distanceDelta,
                             );
                             if (knownDistance != null) {
@@ -256,13 +261,18 @@ class TcxEncoder implements ActivityFormatEncoder {
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
   }
 
-  String _emptyDocument() {
+  String _emptyDocument(String tcxNamespace) {
+    final schemaSuffix = tcxNamespace.endsWith('/v1')
+        ? 'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev1.xsd'
+        : 'http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd';
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
     builder.element(
       'TrainingCenterDatabase',
-      attributes: const {
-        'xmlns': 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
+      attributes: {
+        'xmlns': tcxNamespace,
+        'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+        'xsi:schemaLocation': '$tcxNamespace $schemaSuffix',
       },
       nest: () {
         builder.element('Activities');
@@ -285,29 +295,6 @@ double? _valueWithin(double? value, Duration? delta, Duration tolerance) {
     return null;
   }
   return delta <= tolerance ? value : null;
-}
-
-double? _sampleValueAt(
-  List<Sample> samples,
-  DateTime time,
-  Duration tolerance,
-) {
-  if (samples.isEmpty) {
-    return null;
-  }
-  // TODO(perf-distance-lookup): Replace this O(n) scan with a binary search or
-  // pointer walk since distance samples are already sorted by time.
-  final target = time.toUtc().microsecondsSinceEpoch;
-  Sample? candidate;
-  var best = tolerance.inMicroseconds + 1;
-  for (final sample in samples) {
-    final delta = (sample.time.microsecondsSinceEpoch - target).abs();
-    if (delta <= tolerance.inMicroseconds && delta < best) {
-      candidate = sample;
-      best = delta;
-    }
-  }
-  return candidate?.value;
 }
 
 double _haversine(GeoPoint a, GeoPoint b) {

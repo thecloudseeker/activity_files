@@ -4,61 +4,69 @@ import 'models.dart';
 
 /// Snapshot of sensor values at a specific timestamp.
 class ChannelSnapshot {
-  const ChannelSnapshot({
-    this.heartRate,
-    this.heartRateDelta,
-    this.cadence,
-    this.cadenceDelta,
-    this.power,
-    this.powerDelta,
-    this.temperature,
-    this.temperatureDelta,
-    this.speed,
-    this.speedDelta,
-    this.pace,
-  });
+  ChannelSnapshot._(Map<Channel, ChannelReading> readings, {this.pace})
+    : _readings = Map.unmodifiable(readings);
 
-  /// Heart rate in beats per minute.
-  final double? heartRate;
+  final Map<Channel, ChannelReading> _readings;
 
-  /// Time delta between request and heart-rate sample.
-  final Duration? heartRateDelta;
+  /// All resolved channel readings keyed by channel.
+  Map<Channel, ChannelReading> get readings => _readings;
 
-  /// Cadence in revolutions per minute.
-  final double? cadence;
+  /// Returns the reading for [channel], if present.
+  ChannelReading? reading(Channel channel) => _readings[channel];
 
-  /// Time delta for cadence sample.
-  final Duration? cadenceDelta;
+  /// Convenience accessor returning the value for [channel].
+  double? valueFor(Channel channel) => reading(channel)?.value;
 
-  /// Power in watts.
-  final double? power;
+  /// Convenience accessor returning the sample delta for [channel].
+  Duration? deltaFor(Channel channel) => reading(channel)?.delta;
 
-  /// Time delta for power sample.
-  final Duration? powerDelta;
-
-  /// Temperature in degrees Celsius.
-  final double? temperature;
-
-  /// Time delta for temperature sample.
-  final Duration? temperatureDelta;
-
-  /// Speed in meters per second.
-  final double? speed;
-
-  /// Time delta for speed sample.
-  final Duration? speedDelta;
-
-  /// Pace as seconds per kilometer.
+  /// Pace as seconds per kilometer when derived from speed.
   final double? pace;
 
+  /// Heart rate in beats per minute.
+  double? get heartRate => valueFor(Channel.heartRate);
+
+  /// Time delta between request and heart-rate sample.
+  Duration? get heartRateDelta => deltaFor(Channel.heartRate);
+
+  /// Cadence in revolutions per minute.
+  double? get cadence => valueFor(Channel.cadence);
+
+  /// Time delta for cadence sample.
+  Duration? get cadenceDelta => deltaFor(Channel.cadence);
+
+  /// Power in watts.
+  double? get power => valueFor(Channel.power);
+
+  /// Time delta for power sample.
+  Duration? get powerDelta => deltaFor(Channel.power);
+
+  /// Temperature in degrees Celsius.
+  double? get temperature => valueFor(Channel.temperature);
+
+  /// Time delta for temperature sample.
+  Duration? get temperatureDelta => deltaFor(Channel.temperature);
+
+  /// Speed in meters per second.
+  double? get speed => valueFor(Channel.speed);
+
+  /// Time delta for speed sample.
+  Duration? get speedDelta => deltaFor(Channel.speed);
+
   /// Whether no channel was resolved.
-  bool get isEmpty =>
-      heartRate == null &&
-      cadence == null &&
-      power == null &&
-      temperature == null &&
-      speed == null &&
-      pace == null;
+  bool get isEmpty => _readings.isEmpty;
+}
+
+/// Reading for a single channel.
+class ChannelReading {
+  const ChannelReading({required this.value, required this.delta});
+
+  /// Sample value.
+  final double value;
+
+  /// Absolute time delta between the request timestamp and the sample.
+  final Duration delta;
 }
 
 /// Utility for extracting channel values at arbitrary timestamps.
@@ -72,107 +80,121 @@ class ChannelMapper {
     DateTime timestamp,
     Map<Channel, List<Sample>> channels, {
     Duration maxDelta = const Duration(seconds: 5),
-  }) {
-    // TODO(extensibility): Consider exposing a channel-agnostic snapshot map so
-    // new Channel enum entries become available without updating this helper.
-    final target = timestamp.toUtc();
-    final maxDeltaMicros = maxDelta.inMicroseconds;
-    // TODO(perf-fancy-sweep): Explore a sweep-line cursor or segment tree that
-    // advances all channels in lockstep (the fancy shmancy algo cool kids use)
-    // so repeated scrubs avoid fresh binary searches for every lookup.
+  }) => cursor(channels, maxDelta: maxDelta).snapshot(timestamp);
 
-    ({double? value, Duration? delta}) resolve(Channel channel) {
-      final samples = channels[channel];
-      if (samples == null || samples.isEmpty) {
-        return (value: null, delta: null);
+  /// Returns a reusable cursor that keeps per-channel indices hot while
+  /// iterating over chronological timestamps.
+  static ChannelCursor cursor(
+    Map<Channel, List<Sample>> channels, {
+    Duration maxDelta = const Duration(seconds: 5),
+  }) => ChannelCursor._(channels, maxDelta: maxDelta);
+}
+
+/// Maintains per-channel cursors and cached timestamps for repeated lookups.
+class ChannelCursor {
+  ChannelCursor._(
+    Map<Channel, List<Sample>> channels, {
+    Duration maxDelta = const Duration(seconds: 5),
+  }) : _maxDeltaMicros = maxDelta.inMicroseconds.abs(),
+       _series = {
+         for (final entry in channels.entries)
+           if (entry.value.isNotEmpty) entry.key: _ChannelSeries(entry.value),
+       };
+
+  final int _maxDeltaMicros;
+  final Map<Channel, _ChannelSeries> _series;
+
+  /// Resolves channel readings at [timestamp].
+  ChannelSnapshot snapshot(DateTime timestamp) {
+    final targetMicros = timestamp.toUtc().microsecondsSinceEpoch;
+    final readings = <Channel, ChannelReading>{};
+    for (final entry in _series.entries) {
+      final sample = entry.value.nearest(targetMicros, _maxDeltaMicros);
+      if (sample == null) {
+        continue;
       }
-      final targetMicros = target.microsecondsSinceEpoch;
-      // TODO(perf): Cache per-sample timestamps (e.g. alongside Sample or in a
-      // parallel Int32List) so repeated lookups avoid DateTime conversions.
-      final nearest = _nearestSampleWithin(
-        samples,
-        targetMicros: targetMicros,
-        maxDeltaMicros: maxDeltaMicros,
+      final deltaMicros =
+          (sample.time.toUtc().microsecondsSinceEpoch - targetMicros).abs();
+      readings[entry.key] = ChannelReading(
+        value: sample.value,
+        delta: Duration(microseconds: deltaMicros),
       );
-      if (nearest == null) {
-        return (value: null, delta: null);
-      }
-      final deltaMicros = (nearest.time.microsecondsSinceEpoch - targetMicros)
-          .abs();
-      return (value: nearest.value, delta: Duration(microseconds: deltaMicros));
     }
-
-    final hr = resolve(Channel.heartRate);
-    final cadence = resolve(Channel.cadence);
-    final power = resolve(Channel.power);
-    final temperature = resolve(Channel.temperature);
-    final speed = resolve(Channel.speed);
-    final hasFreshSpeed =
-        speed.value != null &&
-        speed.value! > 0 &&
-        speed.delta != null &&
-        speed.delta!.inMicroseconds <= maxDeltaMicros;
-    final pace = hasFreshSpeed ? 1000.0 / speed.value! : null; // s/km from m/s
-
-    return ChannelSnapshot(
-      heartRate: hr.value,
-      heartRateDelta: hr.delta,
-      cadence: cadence.value,
-      cadenceDelta: cadence.delta,
-      power: power.value,
-      powerDelta: power.delta,
-      temperature: temperature.value,
-      temperatureDelta: temperature.delta,
-      speed: speed.value,
-      speedDelta: speed.delta,
-      pace: pace,
-    );
+    final speedReading = readings[Channel.speed];
+    double? pace;
+    if (speedReading != null &&
+        speedReading.value > 0 &&
+        speedReading.delta.inMicroseconds <= _maxDeltaMicros) {
+      pace = 1000.0 / speedReading.value;
+    }
+    return ChannelSnapshot._(readings, pace: pace);
   }
+}
 
-  /// Returns the nearest sample to [targetMicros] within [maxDeltaMicros]
-  /// using binary search (assuming samples sorted by time).
-  // TODO(perf): Provide a cursor API that reuses per-channel indices for
-  // sequential timeline scrubs instead of re-running binary search.
-  static Sample? _nearestSampleWithin(
-    List<Sample> samples, {
-    required int targetMicros,
-    required int maxDeltaMicros,
-  }) {
-    if (samples.length == 1) {
-      final single = samples.first;
-      final delta = (single.time.microsecondsSinceEpoch - targetMicros).abs();
-      return delta <= maxDeltaMicros ? single : null;
+class _ChannelSeries {
+  _ChannelSeries(List<Sample> samples)
+    : _samples = samples,
+      _timestamps = samples
+          .map((sample) => sample.time.toUtc().microsecondsSinceEpoch)
+          .toList(growable: false);
+
+  final List<Sample> _samples;
+  final List<int> _timestamps;
+  int _cursor = 0;
+  int? _lastTarget;
+
+  Sample? nearest(int targetMicros, int toleranceMicros) {
+    if (_samples.isEmpty) {
+      return null;
     }
-    var low = 0;
-    var high = samples.length - 1;
-    while (low <= high) {
-      final mid = (low + high) >> 1;
-      final sampleTime = samples[mid].time.microsecondsSinceEpoch;
-      if (sampleTime < targetMicros) {
-        low = mid + 1;
-      } else if (sampleTime > targetMicros) {
-        high = mid - 1;
-      } else {
-        return samples[mid];
+    if (_samples.length == 1) {
+      final delta = (_timestamps.first - targetMicros).abs();
+      return delta <= toleranceMicros ? _samples.first : null;
+    }
+    if (_lastTarget != null && targetMicros >= _lastTarget!) {
+      while (_cursor < _timestamps.length &&
+          _timestamps[_cursor] < targetMicros) {
+        _cursor++;
       }
+    } else {
+      _cursor = _lowerBound(targetMicros);
     }
-
-    Sample? best;
-    var bestDelta = maxDeltaMicros + 1;
+    _lastTarget = targetMicros;
+    if (_cursor >= _timestamps.length) {
+      _cursor = _timestamps.length - 1;
+    }
+    Sample? candidate;
+    var bestDelta = toleranceMicros + 1;
     void consider(int index) {
-      if (index < 0 || index >= samples.length) {
+      if (index < 0 || index >= _timestamps.length) {
         return;
       }
-      final sample = samples[index];
-      final delta = (sample.time.microsecondsSinceEpoch - targetMicros).abs();
-      if (delta <= maxDeltaMicros && delta < bestDelta) {
-        best = sample;
+      final delta = (_timestamps[index] - targetMicros).abs();
+      if (delta <= toleranceMicros && delta < bestDelta) {
+        candidate = _samples[index];
         bestDelta = delta;
       }
     }
 
-    consider(low);
-    consider(low - 1);
-    return best;
+    consider(_cursor);
+    consider(_cursor - 1);
+    return candidate;
+  }
+
+  int _lowerBound(int target) {
+    var low = 0;
+    var high = _timestamps.length;
+    while (low < high) {
+      final mid = (low + high) >> 1;
+      if (_timestamps[mid] < target) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    if (low >= _timestamps.length) {
+      return _timestamps.length - 1;
+    }
+    return low;
   }
 }

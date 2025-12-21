@@ -7,10 +7,14 @@ import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
 /// Encoder for the GPX file format.
+// TODO(0.7.0)(feature): Encode waypoints/routes and richer metadata (author/email/link/copyright/keywords/bounds).
+// TODO(0.7.0)(feature): Support exporting multiple tracks/segments without flattening.
 class GpxEncoder implements ActivityFormatEncoder {
   const GpxEncoder();
   @override
   String encode(RawActivity activity, EncoderOptions options) {
+    final gpxVersion = options.gpxVersion;
+    final emitGpx10 = gpxVersion == GpxVersion.v1_0;
     final points = [...activity.points]
       ..sort((a, b) => a.time.compareTo(b.time));
     String? normalizeText(String? value) {
@@ -32,17 +36,25 @@ class GpxEncoder implements ActivityFormatEncoder {
     }
     final builder = XmlBuilder();
     builder.processing('xml', 'version="1.0" encoding="UTF-8"');
+    final gpxNamespace = emitGpx10
+        ? 'http://www.topografix.com/GPX/1/0'
+        : 'http://www.topografix.com/GPX/1/1';
+    final gpxSchemaLocation = emitGpx10
+        ? 'http://www.topografix.com/GPX/1/0 '
+              'http://www.topografix.com/GPX/1/0/gpx.xsd '
+              'http://www.garmin.com/xmlschemas/TrackPointExtension/v1 '
+              'http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd'
+        : 'http://www.topografix.com/GPX/1/1 '
+              'http://www.topografix.com/GPX/1/1/gpx.xsd '
+              'http://www.garmin.com/xmlschemas/TrackPointExtension/v1 '
+              'http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd';
     final rootAttributes = <String, String>{
       'creator': activity.creator ?? 'activity_files',
-      'version': '1.1',
-      'xmlns': 'http://www.topografix.com/GPX/1/1',
+      'version': emitGpx10 ? '1.0' : '1.1',
+      'xmlns': gpxNamespace,
       'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
       'xmlns:gpxtpx': 'http://www.garmin.com/xmlschemas/TrackPointExtension/v1',
-      'xsi:schemaLocation':
-          'http://www.topografix.com/GPX/1/1 '
-          'http://www.topografix.com/GPX/1/1/gpx.xsd '
-          'http://www.garmin.com/xmlschemas/TrackPointExtension/v1 '
-          'http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd',
+      'xsi:schemaLocation': gpxSchemaLocation,
     };
     namespaceRegistry.forEach((prefix, uri) {
       final key = 'xmlns:$prefix';
@@ -60,42 +72,67 @@ class GpxEncoder implements ActivityFormatEncoder {
             (activity.device?.isNotEmpty ?? false) ||
             metadataExtensions.isNotEmpty;
         if (includeMetadata) {
-          builder.element(
-            'metadata',
-            nest: () {
-              final start = points.isNotEmpty
-                  ? points.first.time.toUtc()
-                  : DateTime.now().toUtc();
-              builder.element('time', nest: start.toIso8601String());
-              final metadataName = normalizeText(activity.gpxMetadataName);
-              if (metadataName != null) {
-                builder.element('name', nest: metadataName);
-              }
-              final metadataDescription = normalizeText(
-                activity.gpxMetadataDescription ??
-                    (activity.gpxIncludeCreatorMetadataDescription
-                        ? activity.creator
-                        : null),
-              );
-              if (metadataDescription != null) {
-                builder.element('desc', nest: metadataDescription);
-              }
-              final hasDevice = activity.device?.isNotEmpty ?? false;
-              if (hasDevice || metadataExtensions.isNotEmpty) {
-                builder.element(
-                  'extensions',
-                  nest: () {
-                    if (hasDevice && activity.device != null) {
-                      _writeDeviceExtension(builder, activity.device!);
-                    }
-                    for (final extension in metadataExtensions) {
-                      _writeExtensionNode(builder, extension);
-                    }
-                  },
-                );
-              }
-            },
+          // TODO(0.6.0)(feature): Derive metadata time from channels/laps when
+          // no points exist instead of falling back to `DateTime.now()`.
+          final start = points.isNotEmpty
+              ? points.first.time.toUtc()
+              : DateTime.now().toUtc();
+          final metadataName = normalizeText(activity.gpxMetadataName);
+          final metadataDescription = normalizeText(
+            activity.gpxMetadataDescription ??
+                (activity.gpxIncludeCreatorMetadataDescription
+                    ? activity.creator
+                    : null),
           );
+          final hasDevice = activity.device?.isNotEmpty ?? false;
+          if (emitGpx10) {
+            if (metadataName != null) {
+              builder.element('name', nest: metadataName);
+            }
+            if (metadataDescription != null) {
+              builder.element('desc', nest: metadataDescription);
+            }
+            builder.element('time', nest: start.toIso8601String());
+            if (hasDevice || metadataExtensions.isNotEmpty) {
+              builder.element(
+                'extensions',
+                nest: () {
+                  if (hasDevice && activity.device != null) {
+                    _writeDeviceExtension(builder, activity.device!);
+                  }
+                  for (final extension in metadataExtensions) {
+                    _writeExtensionNode(builder, extension);
+                  }
+                },
+              );
+            }
+          } else {
+            builder.element(
+              'metadata',
+              nest: () {
+                builder.element('time', nest: start.toIso8601String());
+                if (metadataName != null) {
+                  builder.element('name', nest: metadataName);
+                }
+                if (metadataDescription != null) {
+                  builder.element('desc', nest: metadataDescription);
+                }
+                if (hasDevice || metadataExtensions.isNotEmpty) {
+                  builder.element(
+                    'extensions',
+                    nest: () {
+                      if (hasDevice && activity.device != null) {
+                        _writeDeviceExtension(builder, activity.device!);
+                      }
+                      for (final extension in metadataExtensions) {
+                        _writeExtensionNode(builder, extension);
+                      }
+                    },
+                  );
+                }
+              },
+            );
+          }
         }
         final hrDelta = options.maxDeltaFor(Channel.heartRate);
         final cadenceDelta = options.maxDeltaFor(Channel.cadence);
@@ -114,6 +151,10 @@ class GpxEncoder implements ActivityFormatEncoder {
               options.defaultMaxDelta,
               (previous, current) => current > previous ? current : previous,
             );
+        final channelCursor = ChannelMapper.cursor(
+          activity.channels,
+          maxDelta: searchDelta,
+        );
         builder.element(
           'trk',
           nest: () {
@@ -147,14 +188,7 @@ class GpxEncoder implements ActivityFormatEncoder {
               'trkseg',
               nest: () {
                 for (final point in points) {
-                  // TODO(perf-channel-scan): Reuse per-channel cursors instead
-                  // of calling ChannelMapper.mapAt for every point which
-                  // re-runs binary searches across all sensor streams.
-                  final snapshot = ChannelMapper.mapAt(
-                    point.time,
-                    activity.channels,
-                    maxDelta: searchDelta,
-                  );
+                  final snapshot = channelCursor.snapshot(point.time);
                   final hr = _valueWithin(
                     snapshot.heartRate,
                     snapshot.heartRateDelta,

@@ -10,6 +10,8 @@ import 'gpx_parser.dart';
 import 'parse_result.dart';
 import 'tcx_parser.dart';
 
+const int _defaultStreamParseLimitBytes = 64 * 1024 * 1024;
+
 /// Common interface for format-specific parsers.
 abstract class ActivityFormatParser {
   ActivityParseResult parse(String input);
@@ -69,12 +71,7 @@ class ActivityParser {
     bool useIsolate = true,
     Encoding encoding = utf8,
   }) {
-    return _parseWithIsolation(
-      bytes,
-      format,
-      useIsolate,
-      encoding: encoding,
-    );
+    return _parseWithIsolation(bytes, format, useIsolate, encoding: encoding);
   }
 
   /// Collects the [source] stream before parsing. Useful for file and network IO.
@@ -83,24 +80,34 @@ class ActivityParser {
     ActivityFileFormat format, {
     bool useIsolate = true,
     Encoding encoding = utf8,
+    int? maxBytes = _defaultStreamParseLimitBytes,
   }) async {
     final builder = BytesBuilder(copy: false);
-    await for (final chunk in source) {
-      if (chunk.isNotEmpty) {
-        builder.add(chunk);
+    var totalBytes = 0;
+    try {
+      await for (final chunk in source) {
+        if (chunk.isNotEmpty) {
+          totalBytes += chunk.length;
+          if (maxBytes != null && totalBytes > maxBytes) {
+            throw FormatException('Stream payload exceeds $maxBytes bytes.');
+          }
+          builder.add(chunk);
+        }
       }
+      final bytes = builder.takeBytes();
+      if (format == ActivityFileFormat.fit) {
+        return parseBytesAsync(
+          bytes,
+          format,
+          useIsolate: useIsolate,
+          encoding: encoding,
+        );
+      }
+      final text = encoding.decode(bytes);
+      return parseAsync(text, format, useIsolate: useIsolate);
+    } on FormatException catch (error) {
+      return _formatExceptionResult(format, error);
     }
-    final bytes = builder.takeBytes();
-    if (format == ActivityFileFormat.fit) {
-      return parseBytesAsync(
-        bytes,
-        format,
-        useIsolate: useIsolate,
-        encoding: encoding,
-      );
-    }
-    final text = encoding.decode(bytes);
-    return parseAsync(text, format, useIsolate: useIsolate);
   }
 
   static Future<ActivityParseResult> _parseWithIsolation(
@@ -110,9 +117,7 @@ class ActivityParser {
     Encoding encoding = utf8,
   }) {
     if (!useIsolate) {
-      return Future.value(
-        _parseDynamic(payload, format, encoding: encoding),
-      );
+      return Future.value(_parseDynamic(payload, format, encoding: encoding));
     }
     final transferable = _clonePayload(payload);
     return isolate_runner.runWithIsolation(
@@ -142,4 +147,24 @@ class ActivityParser {
     List<int> bytes => Uint8List.fromList(bytes),
     _ => payload,
   };
+
+  static ActivityParseResult _formatExceptionResult(
+    ActivityFileFormat format,
+    FormatException error,
+  ) {
+    final formatName = format.name.toUpperCase();
+    final trimmed = error.message.trim();
+    final message = trimmed.isEmpty ? error.toString() : trimmed;
+    return ActivityParseResult(
+      activity: RawActivity(),
+      diagnostics: <ParseDiagnostic>[
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'parser.format_exception',
+          message: 'Failed to parse $formatName payload: $message',
+          node: ParseNodeReference(path: '${format.name}.document'),
+        ),
+      ],
+    );
+  }
 }

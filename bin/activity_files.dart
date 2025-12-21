@@ -34,7 +34,7 @@ import 'dart:io';
 import 'package:activity_files/activity_files.dart';
 import 'package:args/args.dart';
 
-void main(List<String> arguments) {
+Future<void> main(List<String> arguments) async {
   final parser = ArgParser()
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show usage.');
 
@@ -43,6 +43,11 @@ void main(List<String> arguments) {
     ..addOption('to', allowed: ['gpx', 'tcx', 'fit'], help: 'Output format.')
     ..addOption('input', abbr: 'i', help: 'Input file path.')
     ..addOption('output', abbr: 'o', help: 'Output file path.')
+    ..addOption(
+      'encoding',
+      help: 'Text encoding for GPX/TCX inputs (default utf8).',
+      defaultsTo: 'utf8',
+    )
     ..addOption(
       'max-delta-seconds',
       help: 'Default channel matching tolerance in seconds.',
@@ -70,6 +75,18 @@ void main(List<String> arguments) {
     ..addOption(
       'temp-max-delta',
       help: 'Override temperature matching tolerance (seconds).',
+    )
+    ..addOption(
+      'gpx-version',
+      allowed: ['1.1', '1.0'],
+      defaultsTo: '1.1',
+      help: 'GPX version to emit when exporting to GPX.',
+    )
+    ..addOption(
+      'tcx-version',
+      allowed: ['2', '1'],
+      defaultsTo: '2',
+      help: 'TCX version to emit when exporting to TCX.',
     );
 
   final validateParser = ArgParser()
@@ -104,10 +121,10 @@ void main(List<String> arguments) {
 
   switch (results.command!.name) {
     case 'convert':
-      _handleConvert(results.command!);
+      await _handleConvert(results.command!);
       break;
     case 'validate':
-      _handleValidate(results.command!);
+      await _handleValidate(results.command!);
       break;
     default:
       _printError('Unknown command: ${results.command!.name}');
@@ -116,17 +133,26 @@ void main(List<String> arguments) {
   }
 }
 
-void _handleConvert(ArgResults command) {
+Future<void> _handleConvert(ArgResults command) async {
   final inputPath = command['input'] as String?;
   final outputPath = command['output'] as String?;
   final fromFormat = _parseFormat(command['from'] as String?);
   final toFormat = _parseFormat(command['to'] as String?);
+  final encodingName = (command['encoding'] as String?)?.trim();
+  final encoding = encodingName == null || encodingName.isEmpty
+      ? utf8
+      : Encoding.getByName(encodingName.toLowerCase());
 
   if (inputPath == null ||
       outputPath == null ||
       fromFormat == null ||
       toFormat == null) {
     _printError('convert requires --from, --to, --input, and --output.');
+    exitCode = 64;
+    return;
+  }
+  if (encoding == null) {
+    _printError('Unknown encoding "$encodingName".');
     exitCode = 64;
     return;
   }
@@ -137,28 +163,43 @@ void _handleConvert(ArgResults command) {
     exitCode = 66;
     return;
   }
+  final size = inputFile.lengthSync();
+  if (size > ActivityFiles.defaultMaxPayloadBytes) {
+    _printError(
+      'Input file exceeds ${ActivityFiles.defaultMaxPayloadBytes} bytes.',
+    );
+    exitCode = 65;
+    return;
+  }
 
   final encoderOptions = _buildEncoderOptions(command);
-  final content = fromFormat == ActivityFileFormat.fit
-      ? inputFile.readAsBytesSync()
-      : inputFile.readAsStringSync();
+  final payload = inputFile.readAsBytesSync();
 
-  final diagnostics = <ParseDiagnostic>[];
   try {
-    final output = ActivityConverter.convert(
-      content,
+    final conversion = await ActivityFiles.convert(
+      source: payload,
       from: fromFormat,
       to: toFormat,
-      encoderOptions: encoderOptions,
-      diagnostics: diagnostics,
+      options: encoderOptions,
+      encoding: encoding,
+      allowFilePaths: false,
     );
+    final diagnostics = conversion.diagnostics;
+    final hasErrors = diagnostics.any(
+      (diagnostic) => diagnostic.severity == ParseSeverity.error,
+    );
+    _printDiagnostics(diagnostics);
+    if (hasErrors) {
+      _printError('Conversion aborted due to parser errors.');
+      exitCode = 65;
+      return;
+    }
     if (toFormat == ActivityFileFormat.fit) {
-      File(outputPath).writeAsBytesSync(base64Decode(output));
+      File(outputPath).writeAsBytesSync(conversion.asBytes());
     } else {
-      File(outputPath).writeAsStringSync(output);
+      File(outputPath).writeAsStringSync(conversion.asString());
     }
     stdout.writeln('Converted $inputPath → $outputPath');
-    _printDiagnostics(diagnostics);
   } on UnimplementedError catch (e) {
     _printError(e.message ?? 'Conversion not implemented for selected format.');
     exitCode = 70;
@@ -168,7 +209,7 @@ void _handleConvert(ArgResults command) {
   }
 }
 
-void _handleValidate(ArgResults command) {
+Future<void> _handleValidate(ArgResults command) async {
   final inputPath = command['input'] as String?;
   final format = _parseFormat(command['format'] as String?);
   if (inputPath == null || format == null) {
@@ -181,6 +222,14 @@ void _handleValidate(ArgResults command) {
   if (!inputFile.existsSync()) {
     _printError('Input file not found: $inputPath');
     exitCode = 66;
+    return;
+  }
+  final size = inputFile.lengthSync();
+  if (size > ActivityFiles.defaultMaxPayloadBytes) {
+    _printError(
+      'Input file exceeds ${ActivityFiles.defaultMaxPayloadBytes} bytes.',
+    );
+    exitCode = 65;
     return;
   }
 
@@ -261,6 +310,10 @@ EncoderOptions _buildEncoderOptions(ArgResults command) {
       int.tryParse(command['precision-latlon'] as String? ?? '') ?? 6;
   final precisionEle =
       int.tryParse(command['precision-ele'] as String? ?? '') ?? 2;
+  final gpxVersionRaw = (command['gpx-version'] as String? ?? '').trim();
+  final gpxVersion = gpxVersionRaw == '1.0' ? GpxVersion.v1_0 : GpxVersion.v1_1;
+  final tcxVersionRaw = (command['tcx-version'] as String? ?? '').trim();
+  final tcxVersion = tcxVersionRaw == '1' ? TcxVersion.v1 : TcxVersion.v2;
 
   Duration? parseChannelDelta(String? value) {
     final seconds = double.tryParse(value ?? '');
@@ -288,6 +341,8 @@ EncoderOptions _buildEncoderOptions(ArgResults command) {
     maxDeltaPerChannel: overrides,
     precisionLatLon: precisionLatLon,
     precisionEle: precisionEle,
+    gpxVersion: gpxVersion,
+    tcxVersion: tcxVersion,
   );
 }
 

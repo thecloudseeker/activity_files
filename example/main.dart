@@ -1,33 +1,59 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
 
-/// Compile-time flag that mirrors the README guidance: override with
-/// `dart run --define=supportsIsolates=false example/main.dart` when running on
-/// platforms that cannot spin up isolates (e.g. Flutter web).
+/// Override with `dart run --define=supportsIsolates=false example/main.dart`
+/// when running on platforms (e.g. Flutter web) that cannot spawn isolates.
 const supportsIsolates = bool.fromEnvironment(
   'supportsIsolates',
   defaultValue: true,
 );
 
 Future<void> main() async {
-  final samplePath = File('example/assets/sample.gpx');
-  final sampleBytes = await samplePath.readAsBytes();
+  final sampleFile = File('example/assets/sample.gpx');
+  final sampleBytes = await sampleFile.readAsBytes();
+
+  await _demoLoadAndConvert(sampleBytes);
+  await _buildAndExportSyntheticActivity();
+  await _exportFromRawStreams();
+}
+
+Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
+  print('=== Load & convert sample.gpx ===');
 
   final loaded = await ActivityFiles.load(
     sampleBytes,
     format: ActivityFileFormat.gpx,
     useIsolate: supportsIsolates,
   );
+  if (loaded.hasErrors) {
+    print('Load failed:\n${loaded.diagnosticsSummary(includeNode: true)}');
+    return;
+  }
   print(
-    'Loaded ${loaded.format.name} with '
-    '${loaded.activity.points.length} point(s) and '
+    'Loaded ${loaded.format.name}: '
+    '${loaded.activity.points.length} points, '
     '${loaded.activity.channels.length} channel(s)',
   );
-
   if (loaded.hasWarnings) {
     print('Parser warnings:\n${loaded.diagnosticsSummary(includeNode: true)}');
   }
+
+  final tcxConversion = await ActivityFiles.convert(
+    source: sampleBytes,
+    to: ActivityFileFormat.tcx,
+    runValidation: true,
+    useIsolate: supportsIsolates,
+  );
+  if (tcxConversion.hasErrors) {
+    print('TCX conversion failed:\n${tcxConversion.diagnosticsSummary()}');
+    return;
+  }
+  print(
+    'TCX validation errors: ${tcxConversion.validation?.errors.length ?? 0}, '
+    'diagnostics: ${tcxConversion.diagnostics.length}',
+  );
 
   final fitExport = await ActivityFiles.convertAndExport(
     source: sampleBytes,
@@ -37,23 +63,28 @@ Future<void> main() async {
     useIsolate: supportsIsolates,
     exportInIsolate: supportsIsolates,
   );
-  print('FIT payload: ${fitExport.asBytes().length} B');
-  if (fitExport.hasDiagnostics) {
-    print('Export diagnostics:\n${fitExport.diagnosticsSummary()}');
+  if (fitExport.hasErrors) {
+    print('FIT export failed:\n${fitExport.diagnosticsSummary()}');
+    return;
   }
-
-  await _buildAndExportSyntheticActivity();
+  print('FIT payload bytes: ${fitExport.asBytes().length}');
 
   final streamed = await ActivityFiles.convertAndExportStream(
-    source: Stream<List<int>>.fromIterable(sampleBytes.map((b) => [b])),
+    source: Stream<List<int>>.fromIterable([
+      for (final chunk in sampleBytes.chunks(64)) chunk,
+    ]),
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.tcx,
     runValidation: true,
     parseInIsolate: supportsIsolates,
     exportInIsolate: supportsIsolates,
   );
+  if (streamed.hasErrors) {
+    print('Streamed export failed:\n${streamed.diagnosticsSummary()}');
+    return;
+  }
   print(
-    'Streamed TCX size: ${streamed.asString().length} chars, '
+    'Streamed TCX chars: ${streamed.asString().length}; '
     'warnings: ${streamed.warningCount}',
   );
 
@@ -63,22 +94,29 @@ Future<void> main() async {
     runValidation: true,
     useIsolate: supportsIsolates,
   );
+  if (asyncExport.hasErrors) {
+    print('Async export failed:\n${asyncExport.diagnosticsSummary()}');
+    return;
+  }
   print(
     'Async export validation errors: '
     '${asyncExport.validation?.errors.length ?? 0}',
   );
-
-  await _exportFromRawStreams();
 
   final roundTrip = await ActivityFiles.load(
     fitExport.asBytes(),
     format: ActivityFileFormat.fit,
     useIsolate: supportsIsolates,
   );
+  if (roundTrip.hasErrors) {
+    print('Round-trip FIT parse failed:\n${roundTrip.diagnosticsSummary()}');
+    return;
+  }
   print('Round-trip points: ${roundTrip.activity.points.length}');
 }
 
 Future<void> _buildAndExportSyntheticActivity() async {
+  print('=== Build + export synthetic activity ===');
   final baseTime = DateTime.utc(2024, 1, 1, 12);
 
   final builder = ActivityFiles.builder()
@@ -133,6 +171,7 @@ Future<void> _buildAndExportSyntheticActivity() async {
 }
 
 Future<void> _exportFromRawStreams() async {
+  print('=== Convert from raw timestamp/value streams ===');
   final base = DateTime.utc(2024, 1, 2, 7);
   final ts0 = base.millisecondsSinceEpoch;
   final device = ActivityDeviceMetadata(
@@ -157,6 +196,7 @@ Future<void> _exportFromRawStreams() async {
     },
     label: 'Stream Demo',
     creator: 'example-main.dart',
+    sportSource: 'running',
     device: device,
     gpxMetadataDescription: 'Stream helper export',
     includeCreatorInGpxMetadataDescription: false,
@@ -164,7 +204,20 @@ Future<void> _exportFromRawStreams() async {
     trackExtensions: [ActivityFiles.gpxDeviceSummaryNode(device)],
     to: ActivityFileFormat.gpx,
     normalize: true,
-    runValidation: false,
+    runValidation: true,
   );
+  if (export.hasErrors) {
+    print('Stream helper export failed:\n${export.diagnosticsSummary()}');
+    return;
+  }
   print('Stream helper points: ${export.activity.points.length}');
+}
+
+extension on List<int> {
+  Iterable<List<int>> chunks(int size) sync* {
+    for (var i = 0; i < length; i += size) {
+      final end = (i + size) > length ? length : i + size;
+      yield sublist(i, end);
+    }
+  }
 }

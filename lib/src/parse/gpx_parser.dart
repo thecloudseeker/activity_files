@@ -6,26 +6,96 @@ import 'activity_parser.dart';
 import 'parse_result.dart';
 
 /// Parser for the GPX file format.
+// TODO(0.7.0)(feature): Preserve waypoints/routes instead of discarding them during parsing.
+// TODO(0.7.0)(feature): Capture rich metadata (author/email/link/copyright/keywords/bounds).
+// TODO(0.7.0)(feature): Keep multiple tracks/segments distinct instead of flattening into one stream.
 class GpxParser implements ActivityFormatParser {
   const GpxParser();
   @override
   ActivityParseResult parse(String input) {
     final diagnostics = <ParseDiagnostic>[];
-    final document = XmlDocument.parse(input);
+    XmlDocument document;
+    try {
+      document = XmlDocument.parse(input);
+    } on XmlParserException catch (error) {
+      final reason = error.message.trim();
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'gpx.parse.xml_error',
+          message: 'Malformed GPX XML: $reason',
+          node: const ParseNodeReference(path: 'gpx.document'),
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    } on FormatException catch (error) {
+      final trimmed = error.message.trim();
+      final reason = trimmed.isEmpty ? error.toString() : trimmed;
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'gpx.parse.format_error',
+          message: 'Failed to parse GPX payload: $reason',
+          node: const ParseNodeReference(path: 'gpx.document'),
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    }
     final root = document.rootElement;
     final creator = root.getAttribute('creator');
+    var metadataName = _firstText(root, 'name');
+    var metadataDescription = _firstText(root, 'desc');
+    final metadataExtensions = <GpxExtensionNode>[];
+    // GPX 1.1 wraps metadata; GPX 1.0 keeps name/desc/time at the root.
+    final metadataElement = root.childElements.firstWhere(
+      (element) => element.name.local.toLowerCase() == 'metadata',
+      orElse: () => XmlElement(XmlName('')),
+    );
+    if (metadataElement.name.local.isNotEmpty) {
+      metadataName = _firstText(metadataElement, 'name') ?? metadataName;
+      metadataDescription =
+          _firstText(metadataElement, 'desc') ?? metadataDescription;
+      for (final extensions in metadataElement.childElements.where(
+        (e) => e.name.local.toLowerCase() == 'extensions',
+      )) {
+        metadataExtensions.addAll(_extensionChildrenToNodes(extensions));
+      }
+    }
+    for (final extensions in root.childElements.where(
+      (e) => e.name.local.toLowerCase() == 'extensions',
+    )) {
+      metadataExtensions.addAll(_extensionChildrenToNodes(extensions));
+    }
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
     final cadenceSamples = <Sample>[];
     final powerSamples = <Sample>[];
     final temperatureSamples = <Sample>[];
     final laps = <Lap>[];
+    final trackExtensions = <GpxExtensionNode>[];
+    String? trackName;
+    String? trackDescription;
+    String? trackType;
     var sport = Sport.unknown;
     for (final trk
         in root.findElements('*').where((e) => e.name.local == 'trk')) {
+      trackName ??= _firstText(trk, 'name');
+      trackDescription ??= _firstText(trk, 'desc');
+      trackType ??= _firstText(trk, 'type');
       final typeText = _firstText(trk, 'type');
       if (typeText != null && typeText.trim().isNotEmpty) {
         sport = _sportFromString(typeText);
+      }
+      for (final extensions in trk.childElements.where(
+        (e) => e.name.local.toLowerCase() == 'extensions',
+      )) {
+        trackExtensions.addAll(_extensionChildrenToNodes(extensions));
       }
       for (final trkseg
           in trk.findElements('*').where((e) => e.name.local == 'trkseg')) {
@@ -206,6 +276,13 @@ class GpxParser implements ActivityFormatParser {
       laps: laps,
       sport: sport,
       creator: creator,
+      gpxMetadataName: metadataName,
+      gpxMetadataDescription: metadataDescription,
+      gpxMetadataExtensions: metadataExtensions,
+      gpxTrackName: trackName,
+      gpxTrackDescription: trackDescription,
+      gpxTrackType: trackType,
+      gpxTrackExtensions: trackExtensions,
     );
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
@@ -231,6 +308,39 @@ String? _firstText(XmlElement element, String localName) {
     }
   }
   return null;
+}
+
+List<GpxExtensionNode> _extensionChildrenToNodes(XmlElement extensionsElement) {
+  final nodes = <GpxExtensionNode>[];
+  for (final child in extensionsElement.children.whereType<XmlElement>()) {
+    nodes.add(_extensionNodeFromXml(child));
+  }
+  return nodes;
+}
+
+GpxExtensionNode _extensionNodeFromXml(XmlElement element) {
+  final attributes = <String, String>{
+    for (final attribute in element.attributes)
+      attribute.name.prefix != null && attribute.name.prefix!.isNotEmpty
+              ? '${attribute.name.prefix}:${attribute.name.local}'
+              : attribute.name.local:
+          attribute.value,
+  };
+  final textContent = element.children
+      .whereType<XmlText>()
+      .map((node) => node.value.trim())
+      .where((value) => value.isNotEmpty)
+      .join();
+  return GpxExtensionNode(
+    name: element.name.local,
+    namespacePrefix: element.name.prefix,
+    namespaceUri: element.name.namespaceUri,
+    value: textContent.isEmpty ? null : textContent,
+    attributes: attributes,
+    children: element.children.whereType<XmlElement>().map(
+      _extensionNodeFromXml,
+    ),
+  );
 }
 
 double _haversine(GeoPoint a, GeoPoint b) {

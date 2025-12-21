@@ -191,6 +191,58 @@ void main() {
       expect(stream.listenCount, equals(1));
     });
 
+    test('parseStream surfaces format exceptions as diagnostics', () async {
+      final stream = Stream<List<int>>.fromIterable([utf8.encode(_sampleGpx)]);
+      final result = await ActivityParser.parseStream(
+        stream,
+        ActivityFileFormat.gpx,
+        useIsolate: false,
+        maxBytes: 4,
+      );
+      expect(
+        result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isNotEmpty,
+      );
+      expect(result.activity.points, isEmpty);
+    });
+
+    test('load exposes payload bytes for stream-backed sources', () async {
+      final bytes = utf8.encode(_sampleGpx);
+      final stream = Stream<List<int>>.fromIterable([
+        bytes.sublist(0, 15),
+        bytes.sublist(15),
+      ]);
+
+      final loaded = await ActivityFiles.load(stream, useIsolate: false);
+
+      expect(loaded.bytesPayload, isNotNull);
+      expect(loaded.bytesPayload, orderedEquals(bytes));
+      expect(loaded.stringPayload, isNull);
+    });
+
+    test(
+      'stream-backed bytesPayload can be handed to other upload APIs',
+      () async {
+        final bytes = utf8.encode(_sampleGpx);
+        final stream = Stream<List<int>>.fromIterable([
+          bytes.sublist(0, 20),
+          bytes.sublist(20, 60),
+          bytes.sublist(60),
+        ]);
+        final loaded = await ActivityFiles.load(stream, useIsolate: false);
+        final payload = loaded.bytesPayload;
+        expect(payload, isNotNull);
+        expect(payload, orderedEquals(bytes));
+
+        final reparsed = await ActivityFiles.load(payload!, useIsolate: false);
+        expect(reparsed.format, equals(ActivityFileFormat.gpx));
+        expect(
+          reparsed.activity.points.length,
+          equals(loaded.activity.points.length),
+        );
+      },
+    );
+
     test(
       'convertAndExport accepts File sources with auto-detected format',
       () async {
@@ -207,6 +259,125 @@ void main() {
         expect(result.asString(), contains('<gpx'));
       },
     );
+
+    test('load requires allowFilePaths for string paths', () async {
+      final path = 'example/assets/sample.gpx';
+      await expectLater(
+        () => ActivityFiles.load(path, useIsolate: false),
+        throwsArgumentError,
+      );
+      final allowed = await ActivityFiles.load(
+        path,
+        useIsolate: false,
+        allowFilePaths: true,
+      );
+      expect(allowed.activity.points, isNotEmpty);
+      expect(allowed.sourceDescription, equals(path));
+    });
+
+    test('convert requires allowFilePaths for string paths', () async {
+      final path = 'example/assets/sample.gpx';
+      await expectLater(
+        () => ActivityFiles.convert(
+          source: path,
+          to: ActivityFileFormat.fit,
+          useIsolate: false,
+        ),
+        throwsArgumentError,
+      );
+      final conversion = await ActivityFiles.convert(
+        source: path,
+        to: ActivityFileFormat.fit,
+        useIsolate: false,
+        allowFilePaths: true,
+      );
+      expect(conversion.sourceFormat, equals(ActivityFileFormat.gpx));
+      expect(conversion.activity.points, isNotEmpty);
+    });
+
+    test('convert skips validation unless requested', () async {
+      final conversion = await ActivityFiles.convert(
+        source: _sampleGpx,
+        to: ActivityFileFormat.tcx,
+        useIsolate: false,
+      );
+      expect(conversion.validation, isNull);
+      expect(conversion.processingStats.validationDuration, isNull);
+    });
+
+    test('convert runs validation when requested', () async {
+      final conversion = await ActivityFiles.convert(
+        source: _sampleGpx,
+        to: ActivityFileFormat.tcx,
+        runValidation: true,
+        useIsolate: false,
+      );
+      expect(conversion.validation, isNotNull);
+      expect(conversion.processingStats.validationDuration, isNotNull);
+    });
+
+    test('load surfaces malformed GPX payloads as diagnostics', () async {
+      const malformed = '<gpx version="1.1"><trk><trkseg></gpx';
+      final result = await ActivityFiles.load(
+        malformed,
+        format: ActivityFileFormat.gpx,
+        useIsolate: false,
+      );
+      expect(result.hasErrors, isTrue);
+      expect(
+        result.diagnostics.where((d) => d.code == 'gpx.parse.xml_error'),
+        isNotEmpty,
+      );
+      expect(result.activity.points, isEmpty);
+    });
+
+    test('load surfaces malformed TCX payloads as diagnostics', () async {
+      const malformed =
+          '<TrainingCenterDatabase><Activities></TrainingCenterDatabase';
+      final result = await ActivityFiles.load(
+        malformed,
+        format: ActivityFileFormat.tcx,
+        useIsolate: false,
+      );
+      expect(result.hasErrors, isTrue);
+      expect(
+        result.diagnostics.where((d) => d.code == 'tcx.parse.xml_error'),
+        isNotEmpty,
+      );
+      expect(result.activity.points, isEmpty);
+    });
+
+    test('load surfaces invalid FIT binaries as diagnostics', () async {
+      final invalid = Uint8List.fromList(List<int>.filled(16, 0));
+      final result = await ActivityFiles.load(
+        invalid,
+        format: ActivityFileFormat.fit,
+        useIsolate: false,
+      );
+      expect(result.hasErrors, isTrue);
+      expect(
+        result.diagnostics.where((d) => d.code == 'parser.format_exception'),
+        isNotEmpty,
+      );
+      expect(result.activity.points, isEmpty);
+    });
+
+    test('FIT parser validates optional header CRC', () {
+      final bytes = File('example/assets/sample.fit').readAsBytesSync();
+      final corrupted = Uint8List.fromList(bytes);
+      final headerSize = corrupted[0];
+      corrupted[headerSize - 1] ^= 0xFF;
+
+      final result = ActivityParser.parseBytes(
+        corrupted,
+        ActivityFileFormat.fit,
+      );
+
+      expect(
+        result.diagnostics.where((d) => d.code == 'fit.header.crc_mismatch'),
+        isNotEmpty,
+      );
+    });
 
     test('convertAndExport builds activities from raw streams', () async {
       final baseTime = DateTime.utc(2024, 5, 3, 7);
@@ -521,6 +692,87 @@ void main() {
       expect(withoutValidation.validation, isNull);
       expect(withoutValidation.diagnostics, isEmpty);
       expect(withoutValidation.processingStats.validationDuration, isNull);
+    });
+
+    test('validateRawActivity flags lap ordering and bounds issues', () {
+      final base = DateTime.utc(2024, 6, 1, 8);
+      final points = [
+        GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+        GeoPoint(
+          latitude: 40.0005,
+          longitude: -105.0005,
+          time: base.add(const Duration(minutes: 5)),
+        ),
+      ];
+      final laps = [
+        Lap(
+          startTime: base.subtract(const Duration(minutes: 1)),
+          endTime: base.add(const Duration(minutes: 1)),
+          name: 'Early',
+        ),
+        Lap(
+          startTime: base.add(const Duration(seconds: 30)),
+          endTime: base.add(const Duration(seconds: 30)),
+          name: 'Overlap',
+        ),
+        Lap(
+          startTime: base.add(const Duration(minutes: 4)),
+          endTime: base.add(const Duration(minutes: 6)),
+          name: 'Late',
+        ),
+      ];
+
+      final result = validateRawActivity(RawActivity(points: points, laps: laps));
+
+      expect(
+        result.errors.any((error) => error.contains('Lap 2')),
+        isTrue,
+      );
+      expect(
+        result.errors.any((error) => error.contains('previous lap')),
+        isTrue,
+      );
+      expect(
+        result.warnings.any((warning) => warning.contains('before the first point')),
+        isTrue,
+      );
+      expect(
+        result.warnings.any((warning) => warning.contains('after the last point')),
+        isTrue,
+      );
+    });
+
+    test('validateRawActivity warns when channels extend beyond points', () {
+      final base = DateTime.utc(2024, 6, 2, 7);
+      final points = [
+        GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+        GeoPoint(
+          latitude: 40.0005,
+          longitude: -105.0005,
+          time: base.add(const Duration(minutes: 5)),
+        ),
+      ];
+      final power = [
+        Sample(time: base.subtract(const Duration(seconds: 10)), value: 180),
+        Sample(time: base.add(const Duration(minutes: 1)), value: 200),
+        Sample(time: base.add(const Duration(minutes: 6)), value: 220),
+      ];
+
+      final result = validateRawActivity(
+        RawActivity(
+          points: points,
+          channels: {Channel.power: power},
+        ),
+      );
+
+      expect(
+        result.warnings.any((warning) => warning.contains('before the first point')),
+        isTrue,
+      );
+      expect(
+        result.warnings.any((warning) => warning.contains('after the last point')),
+        isTrue,
+      );
     });
 
     test('load surfaces structured diagnostics summary', () async {
@@ -906,6 +1158,39 @@ void main() {
       expect(trimmed.laps.single.endTime, equals(points[1].time));
     });
 
+    test('trimInvalid clamps channels and laps to point window', () {
+      final base = DateTime.utc(2024, 1, 5, 7);
+      final points = [
+        GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+        GeoPoint(
+          latitude: 40.0001,
+          longitude: -105.0001,
+          time: base.add(const Duration(minutes: 1)),
+        ),
+      ];
+      final hrSamples = [
+        Sample(time: base, value: 130),
+        Sample(time: base.add(const Duration(minutes: 1)), value: 140),
+        Sample(time: base.add(const Duration(minutes: 2)), value: 150),
+      ];
+      final lap = Lap(
+        startTime: base,
+        endTime: base.add(const Duration(minutes: 2)),
+        distanceMeters: 500,
+      );
+      final trimmed = ActivityFiles.trimInvalid(
+        RawActivity(
+          points: points,
+          channels: {Channel.heartRate: hrSamples},
+          laps: [lap],
+        ),
+      );
+      final hr = trimmed.channel(Channel.heartRate);
+      expect(hr.length, equals(2));
+      expect(hr.last.time, equals(points.last.time));
+      expect(trimmed.laps.single.endTime, equals(points.last.time));
+    });
+
     test('crop restricts activity range and trims laps', () {
       final base = DateTime.utc(2024, 1, 6, 8);
       final points = List<GeoPoint>.generate(
@@ -1167,6 +1452,23 @@ void main() {
       expect(result.activity.points.length, equals(1));
       expect(result.diagnostics, isEmpty);
     });
+
+    test('FIT parser flags CRC mismatches as errors', () async {
+      final bytes = await File('example/assets/sample.fit').readAsBytes();
+      final corrupted = Uint8List.fromList(bytes);
+      corrupted[corrupted.length - 1] ^= 0xFF;
+      final result = ActivityParser.parseBytes(
+        corrupted,
+        ActivityFileFormat.fit,
+      );
+      final hasCrcError = result.diagnostics.any(
+        (d) =>
+            d.severity == ParseSeverity.error &&
+            (d.code.contains('crc') || d.code.contains('trailer')),
+      );
+      expect(hasCrcError, isTrue);
+      expect(result.activity.points, isEmpty);
+    });
   });
 
   group('Export serialization', () {
@@ -1308,6 +1610,8 @@ void main() {
         restored.maxDeltaPerChannel[Channel.custom('respiration')],
         equals(const Duration(milliseconds: 500)),
       );
+      expect(restored.gpxVersion, equals(GpxVersion.v1_1));
+      expect(restored.tcxVersion, equals(TcxVersion.v2));
     });
 
     test('serializes diagnostics and validation payloads', () {
@@ -1484,10 +1788,17 @@ void main() {
     test('detectFormat identifies fixture formats', () async {
       for (final entry in assets.entries) {
         final path = await assetPath(entry.key);
-        final detected = ActivityFiles.detectFormat(path);
+        final detected = ActivityFiles.detectFormat(
+          path,
+          allowFilePaths: true,
+        );
         expect(detected, equals(entry.value));
 
-        final loaded = await ActivityFiles.load(path, useIsolate: false);
+        final loaded = await ActivityFiles.load(
+          path,
+          useIsolate: false,
+          allowFilePaths: true,
+        );
         expect(loaded.format, equals(entry.value));
         if (entry.value != ActivityFileFormat.fit) {
           expect(
@@ -1499,7 +1810,15 @@ void main() {
         final errors = loaded.diagnostics
             .where((d) => d.severity == ParseSeverity.error)
             .toList();
-        expect(errors, isEmpty, reason: 'Unexpected errors for ${entry.key}');
+        if (entry.value == ActivityFileFormat.fit) {
+          expect(
+            errors,
+            isNotEmpty,
+            reason: 'Expected FIT integrity errors for ${entry.key}',
+          );
+        } else {
+          expect(errors, isEmpty, reason: 'Unexpected errors for ${entry.key}');
+        }
       }
     });
 
@@ -1525,14 +1844,32 @@ void main() {
       );
     });
 
+    test('load enforces strict FIT integrity when requested', () async {
+      final fitPath = await assetPath('sample.fit');
+      final fitBytes = await File(fitPath).readAsBytes();
+      await expectLater(
+        () => ActivityFiles.load(
+          fitBytes,
+          useIsolate: false,
+          strictFitIntegrity: true,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('convert can round-trip GPX fixture to FIT', () async {
       final gpxPath = await assetPath('sample.gpx');
-      final loaded = await ActivityFiles.load(gpxPath, useIsolate: false);
+      final loaded = await ActivityFiles.load(
+        gpxPath,
+        useIsolate: false,
+        allowFilePaths: true,
+      );
 
       final conversion = await ActivityFiles.convert(
         source: gpxPath,
         to: ActivityFileFormat.fit,
         useIsolate: false,
+        allowFilePaths: true,
       );
       expect(conversion.isBinary, isTrue);
 
@@ -1649,6 +1986,35 @@ void main() {
       expect(parsed.activity.sport, equals(Sport.cycling));
     });
 
+    test('FIT encoder supports sensor-only activities', () {
+      final start = DateTime.utc(2024, 2, 1, 6);
+      final hrSamples = [
+        Sample(time: start, value: 95),
+        Sample(time: start.add(const Duration(seconds: 30)), value: 100),
+        Sample(time: start.add(const Duration(minutes: 1)), value: 105),
+      ];
+      final activity = RawActivity(
+        channels: {Channel.heartRate: hrSamples},
+        sport: Sport.running,
+      );
+
+      final fitString = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+        options: encoderOptions,
+      );
+
+      final parsed = ActivityParser.parse(fitString, ActivityFileFormat.fit);
+
+      expect(parsed.activity.points, isEmpty);
+      final parsedHr = parsed.activity.channel(Channel.heartRate);
+      expect(parsedHr.length, equals(hrSamples.length));
+      expect(
+        parsedHr.map((sample) => sample.value.round()),
+        orderedEquals(hrSamples.map((sample) => sample.value.round())),
+      );
+    });
+
     test('FIT binary payload obeys header and CRC', () {
       final activity = _buildSampleActivity();
       final fitString = ActivityEncoder.encode(
@@ -1670,6 +2036,49 @@ void main() {
           payload[payload.length - 2] | (payload[payload.length - 1] << 8);
       final computedCrc = _fitCrc(payload.sublist(0, payload.length - 2));
       expect(storedCrc, equals(computedCrc));
+    });
+
+    test('FIT parser reports trailer CRC mismatches', () {
+      final activity = _buildSampleActivity();
+      final fitBytes = base64Decode(
+        ActivityEncoder.encode(activity, ActivityFileFormat.fit),
+      );
+      final tampered = Uint8List.fromList(fitBytes);
+      tampered[tampered.length - 1] ^= 0xFF;
+
+      final result = ActivityParser.parseBytes(
+        tampered,
+        ActivityFileFormat.fit,
+      );
+
+      expect(
+        result.diagnostics.where(
+          (diagnostic) => diagnostic.code == 'fit.trailer.crc_mismatch',
+        ),
+        isNotEmpty,
+      );
+    });
+
+    test('FIT parser warns when trailer is truncated', () {
+      final activity = _buildSampleActivity();
+      final fitBytes = base64Decode(
+        ActivityEncoder.encode(activity, ActivityFileFormat.fit),
+      );
+      final truncated = Uint8List.fromList(
+        fitBytes.sublist(0, fitBytes.length - 2),
+      );
+
+      final result = ActivityParser.parseBytes(
+        truncated,
+        ActivityFileFormat.fit,
+      );
+
+      expect(
+        result.diagnostics.where(
+          (diagnostic) => diagnostic.code == 'fit.trailer.truncated',
+        ),
+        isNotEmpty,
+      );
     });
 
     test('FIT raw round-trip preserves serialization', () {
@@ -1890,6 +2299,26 @@ void main() {
           .toList(growable: false);
       expect(rounded, equals([1000, 1000, 300]));
       expect(laps.last.distanceMeters, closeTo(300, 1e-6));
+    });
+
+    test('markLapsByDistance tolerates distance resets', () {
+      final base = DateTime.utc(2024, 1, 5);
+      final samples = <Sample>[
+        Sample(time: base, value: 0),
+        Sample(time: base.add(const Duration(minutes: 5)), value: 1100),
+        Sample(time: base.add(const Duration(minutes: 10)), value: 1500),
+        Sample(time: base.add(const Duration(minutes: 15)), value: 200),
+        Sample(time: base.add(const Duration(minutes: 20)), value: 800),
+        Sample(time: base.add(const Duration(minutes: 25)), value: 1400),
+      ];
+      final activity = RawActivity(channels: {Channel.distance: samples});
+
+      final laps = RawEditor(activity).markLapsByDistance(1000).activity.laps;
+
+      expect(laps.length, equals(3));
+      expect(laps[0].distanceMeters, closeTo(1000, 1e-6));
+      expect(laps[1].distanceMeters, closeTo(1000, 1e-6));
+      expect(laps[2].distanceMeters, closeTo(700, 1e-6));
     });
 
     test('downsampleTime retains trailing point and channel samples', () {

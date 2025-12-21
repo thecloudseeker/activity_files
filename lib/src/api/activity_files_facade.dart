@@ -21,11 +21,18 @@ import 'export_stats.dart';
 /// Callback used to translate arbitrary identifiers into [Sport] values.
 typedef SportMapper = Sport? Function(dynamic source);
 
+const int _defaultStreamBufferLimitBytes = 64 * 1024 * 1024;
+const int _maxFormatDetectBytes = 128 * 1024;
+
 /// Top-level facade exposing ergonomic helpers for app integrations.
 class ActivityFiles {
   const ActivityFiles._();
 
   static final List<SportMapper> _sportMappers = <SportMapper>[];
+
+  /// Default maximum payload size (bytes) processed by loaders when handling
+  /// inline strings/byte arrays or buffered streams.
+  static const int defaultMaxPayloadBytes = _defaultStreamBufferLimitBytes;
 
   static const String gpxDefaultExtensionNamespace =
       'https://schemas.activityfiles.dev/extensions';
@@ -34,7 +41,9 @@ class ActivityFiles {
   /// Loads [source] into a [RawActivity], attempting to infer the file format.
   ///
   /// Supported source types:
-  /// * `String` containing either inline text content or a path to a file.
+  /// * `String` containing inline text content. To read from disk pass a [File]
+  ///   (preferred) or set [allowFilePaths] to `true` when you explicitly trust
+  ///   the string to represent a local path.
   /// * `File`
   /// * `List<int>`/`Uint8List` with raw bytes (FIT binaries or already-encoded
   ///   text).
@@ -48,26 +57,49 @@ class ActivityFiles {
     ActivityFileFormat? format,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    bool allowFilePaths = false,
+    bool strictFitIntegrity = false,
   }) async {
-    final resolved = await _resolveSource(source);
+    final resolved = await _resolveSource(
+      source,
+      allowFilePaths: allowFilePaths,
+    );
+    _enforcePayloadLimit(
+      resolved.detectionBytes ?? resolved.payload,
+      encoding: encoding,
+      limit: _defaultStreamBufferLimitBytes,
+    );
     final detected = format ?? _detectFormat(resolved, encoding: encoding);
     if (detected == null) {
       throw ArgumentError(
         'Unable to infer activity format. Provide format explicitly.',
       );
     }
-    final parseResult = await _parseResolved(
-      resolved.payload,
+    ActivityParseResult parseResult;
+    try {
+      parseResult = await _parseResolved(
+        resolved.payload,
+        detected,
+        useIsolate: useIsolate,
+        encoding: encoding,
+      );
+    } on FormatException catch (error) {
+      parseResult = _failedParseResult(format: detected, error: error);
+    }
+    if (_shouldFailFitIntegrity(
       detected,
-      useIsolate: useIsolate,
-      encoding: encoding,
-    );
+      parseResult.diagnostics,
+      strictFitIntegrity,
+    )) {
+      throw FormatException('FIT integrity check failed.');
+    }
+    final payloadForResult = await _materializePayload(resolved.payload);
     return ActivityLoadResult._(
       activity: parseResult.activity,
       diagnostics: parseResult.diagnostics,
       format: detected,
       sourceDescription: resolved.description,
-      payload: resolved.payload,
+      payload: payloadForResult,
     );
   }
 
@@ -78,7 +110,9 @@ class ActivityFiles {
   /// When [normalize] is `true` (default) the converter applies
   /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to encoding.
   /// Set [exportInIsolate] to `true` to offload encoding onto a background
-  /// isolate while keeping parsing control via [useIsolate].
+  /// isolate while keeping parsing control via [useIsolate]. Enable
+  /// [runValidation] when you want the conversion to append structural
+  /// validation diagnostics/results without invoking the export pipeline again.
   static Future<ActivityConversionResult> convert({
     required Object source,
     required ActivityFileFormat to,
@@ -87,13 +121,18 @@ class ActivityFiles {
     bool normalize = true,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    bool allowFilePaths = false,
     bool exportInIsolate = false,
+    bool runValidation = false,
+    bool strictFitIntegrity = false,
   }) async {
     final loadResult = await load(
       source,
       format: from,
       useIsolate: useIsolate,
       encoding: encoding,
+      allowFilePaths: allowFilePaths,
+      strictFitIntegrity: strictFitIntegrity,
     );
     var activity = loadResult.activity;
     NormalizationStats? normalizationStats;
@@ -107,24 +146,38 @@ class ActivityFiles {
       activity = normalized.activity;
       normalizationStats = normalized.stats;
     }
-    // TODO(perf-benchmark): After channel-cursor + distance lookup optimizations
+    var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
+    // TODO(0.6.0)(perf): After channel-cursor + distance lookup optimizations
     // ship, run large GPX/FIT export benchmarks to quantify the win and detect
     // regressions in conversion hot paths.
+    final exportActivity =
+        normalize ? activity : _ensureOrderedForExport(activity);
     if (!exportInIsolate) {
-      final encoded = ActivityEncoder.encode(activity, to, options: options);
-      final binary = to == ActivityFileFormat.fit
-          ? Uint8List.fromList(base64Decode(encoded))
-          : null;
+      final encoded =
+          ActivityEncoder.encode(exportActivity, to, options: options);
+      ValidationResult? validation;
+      Duration? validationDuration;
+      if (runValidation) {
+        final stopwatch = Stopwatch()..start();
+        validation = validateRawActivity(exportActivity);
+        stopwatch.stop();
+        validationDuration = stopwatch.elapsed;
+        diagnostics = [
+          ...diagnostics,
+          ..._diagnosticsFromValidation(validation),
+        ];
+      }
       return ActivityConversionResult._(
-        activity: activity,
+        activity: exportActivity,
         sourceFormat: loadResult.format,
         targetFormat: to,
-        diagnostics: loadResult.diagnostics,
+        diagnostics: diagnostics,
         encoderOptions: options,
         encoded: encoded,
-        binary: binary,
+        validation: validation,
         processingStats: ActivityProcessingStats(
           normalization: normalizationStats,
+          validationDuration: validationDuration,
         ),
       );
     }
@@ -133,8 +186,8 @@ class ActivityFiles {
       to: to,
       options: options,
       normalize: false,
-      diagnostics: loadResult.diagnostics,
-      runValidation: false,
+      diagnostics: diagnostics,
+      runValidation: runValidation,
       useIsolate: true,
     );
     return ActivityConversionResult._(
@@ -190,8 +243,11 @@ class ActivityFiles {
     String? creator,
     ActivityDeviceMetadata? device,
   }) {
-    // TODO(extensibility): Support asynchronous/streamed iterables so extremely
+    // TODO(0.7.0)(feature): Support asynchronous/streamed iterables so extremely
     // large exports don't require the entire location/channel data in memory.
+    // Consider adding a stream-to-tempfile fallback (or disk-backed buffer)
+    // for builders/parsers so callers can process payloads larger than the
+    // in-memory limits (default: `ActivityFiles.defaultMaxPayloadBytes`).
     final decode = timestampConverter ?? _defaultTimestampDecoder;
     final rawBuilder = ActivityFiles.builder();
     if (sport != null) {
@@ -239,8 +295,8 @@ class ActivityFiles {
     bool sortAndDedup = true,
     bool trimInvalid = true,
   }) => _normalize(
-    // TODO(perf): Short-circuit when the caller already normalized the data to
-    // avoid redundant cloning in UI hot paths.
+    // TODO(0.5.0)(perf): Short-circuit when the caller already normalized the
+    // data to avoid redundant cloning in UI hot paths.
     activity,
     sortAndDedup: sortAndDedup,
     trimInvalid: trimInvalid,
@@ -314,6 +370,38 @@ class ActivityFiles {
       duration: stopwatch.elapsed,
     );
     return (activity: normalized, stats: stats);
+  }
+
+  static RawActivity _ensureOrderedForExport(RawActivity activity) {
+    final pointsOrdered = _isStrictlyOrdered(
+      activity.points,
+      (point) => point.time,
+    );
+    final channelsOrdered = activity.channels.entries.every(
+      (entry) => _isStrictlyOrdered(entry.value, (sample) => sample.time),
+    );
+    final lapsOrdered = _isStrictlyOrdered(
+      activity.laps,
+      (lap) => lap.startTime,
+    );
+    if (pointsOrdered && channelsOrdered && lapsOrdered) {
+      return activity;
+    }
+    return RawEditor(activity).sortAndDedup().activity;
+  }
+
+  static bool _isStrictlyOrdered<T>(
+    List<T> items,
+    DateTime Function(T) timeOf,
+  ) {
+    for (var i = 1; i < items.length; i++) {
+      final previous = timeOf(items[i - 1]).toUtc();
+      final current = timeOf(items[i]).toUtc();
+      if (!current.isAfter(previous)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Performs structural validation and returns detailed findings.
@@ -586,6 +674,9 @@ class ActivityFiles {
   }) {
     var working = activity;
     NormalizationStats? normalizationStats;
+    if (!normalize) {
+      working = _ensureOrderedForExport(working);
+    }
     if (normalize) {
       final normalized = _normalize(
         working,
@@ -725,6 +816,7 @@ class ActivityFiles {
     bool exportInIsolate = false,
     Encoding encoding = utf8,
     bool runValidation = false,
+    bool strictFitIntegrity = false,
   }) => _runPipeline(
     ActivityExportRequest.fromStream(
       stream: source,
@@ -736,6 +828,7 @@ class ActivityFiles {
       exportInIsolate: exportInIsolate,
       runValidation: runValidation,
       encoding: encoding,
+      strictFitIntegrity: strictFitIntegrity,
     ),
   );
 
@@ -772,16 +865,21 @@ class ActivityFiles {
     bool normalize = true,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    bool allowFilePaths = false,
     bool runValidation = false,
     bool exportInIsolate = false,
+    bool strictFitIntegrity = false,
   }) {
     final hasSource = source != null;
     final hasStreams = location != null;
-    if (hasSource == hasStreams) {
-      // TODO(ux): Surface parameter conflicts in the exception message and
-      // reference documentation so API consumers know how to fix their inputs.
+    if (hasSource && hasStreams) {
       throw ArgumentError(
-        'Provide either source or location streams when converting, not both.',
+        'Provide exactly one input when converting: use source (file/bytes/stream) or location/channels, not both.',
+      );
+    }
+    if (!hasSource && !hasStreams) {
+      throw ArgumentError(
+        'Missing input: supply source (file/bytes/stream) or location/channels when converting.',
       );
     }
 
@@ -797,6 +895,8 @@ class ActivityFiles {
           runValidation: runValidation,
           encoding: encoding,
           exportInIsolate: exportInIsolate,
+          allowFilePaths: allowFilePaths,
+          strictFitIntegrity: strictFitIntegrity,
         ),
       );
     }
@@ -862,8 +962,8 @@ class ActivityFiles {
   static Future<ActivityExportResult> _runPipeline(
     ActivityExportRequest request,
   ) async {
-    // TODO(refactor): Break this branching logic into focused helpers so new
-    // request types (e.g. async streams) can plug in without growing the
+    // TODO(0.6.0)(refactor): Break this branching logic into focused helpers so
+    // new request types (e.g. async streams) can plug in without growing the
     // nested conditionals.
     if (request.activity != null) {
       final diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
@@ -890,12 +990,25 @@ class ActivityFiles {
       );
     }
     if (request.stream != null) {
-      final parseResult = await ActivityParser.parseStream(
-        request.stream!,
+      ActivityParseResult parseResult;
+      try {
+        parseResult = await ActivityParser.parseStream(
+          request.stream!,
+          request.from!,
+          useIsolate: request.parseInIsolate,
+          encoding: request.encoding,
+          maxBytes: _defaultStreamBufferLimitBytes,
+        );
+      } on FormatException catch (error) {
+        parseResult = _failedParseResult(format: request.from!, error: error);
+      }
+      if (_shouldFailFitIntegrity(
         request.from!,
-        useIsolate: request.parseInIsolate,
-        encoding: request.encoding,
-      );
+        parseResult.diagnostics,
+        request.strictFitIntegrity,
+      )) {
+        throw FormatException('FIT integrity check failed.');
+      }
       final downstreamDiagnostics = <ParseDiagnostic>[
         ...parseResult.diagnostics,
         ...request.diagnostics,
@@ -921,14 +1034,17 @@ class ActivityFiles {
         normalize: request.normalize,
         useIsolate: request.parseInIsolate,
         encoding: request.encoding,
+        allowFilePaths: request.allowFilePaths,
         exportInIsolate: request.exportInIsolate,
+        runValidation: request.runValidation,
+        strictFitIntegrity: request.strictFitIntegrity,
       );
       var mergedDiagnostics = <ParseDiagnostic>[
         ...conversion.diagnostics,
         ...request.diagnostics,
       ];
       var result = conversion.copyWith(diagnostics: mergedDiagnostics);
-      if (request.runValidation) {
+      if (request.runValidation && conversion.validation == null) {
         final stopwatch = Stopwatch()..start();
         final validation = validateRawActivity(result.activity);
         stopwatch.stop();
@@ -958,9 +1074,17 @@ class ActivityFiles {
   static ActivityFileFormat? detectFormat(
     Object source, {
     Encoding encoding = utf8,
-  }) => _detectFormatSync(source, encoding: encoding);
+    bool allowFilePaths = false,
+  }) => _detectFormatSync(
+    source,
+    encoding: encoding,
+    allowFilePaths: allowFilePaths,
+  );
 
-  static Future<_ResolvedSource> _resolveSource(Object source) async {
+  static Future<_ResolvedSource> _resolveSource(
+    Object source, {
+    required bool allowFilePaths,
+  }) async {
     if (source is _ResolvedSource) {
       return source;
     }
@@ -999,7 +1123,10 @@ class ActivityFiles {
 
       final sniffBytes = sniffedBytes == 0 ? null : sniffBuffer.takeBytes();
       return _ResolvedSource(
-        payload: replay(),
+        payload: _ReplayableStreamPayload(
+          replay(),
+          bufferLimit: _defaultStreamBufferLimitBytes,
+        ),
         description: 'stream',
         detectionBytes: sniffBytes,
       );
@@ -1025,7 +1152,7 @@ class ActivityFiles {
       );
     }
     if (source is String) {
-      if (file_system.platformPathExists(source)) {
+      if (allowFilePaths && file_system.platformPathExists(source)) {
         final bytes = await file_system.readPlatformPath(source);
         return _ResolvedSource(
           payload: bytes,
@@ -1042,6 +1169,11 @@ class ActivityFiles {
     _ResolvedSource resolved, {
     required Encoding encoding,
   }) {
+    _enforcePayloadLimit(
+      resolved.detectionBytes ?? resolved.payload,
+      encoding: encoding,
+      limit: _defaultStreamBufferLimitBytes,
+    );
     final detectedFromExt = _detectFromExtension(resolved.fileExtension);
     if (detectedFromExt != null) {
       return detectedFromExt;
@@ -1062,8 +1194,11 @@ class ActivityFiles {
     return switch (payload) {
       String text => ActivityParser.parse(text, format),
       Uint8List bytes => _parseBytesWithBom(bytes, format, encoding),
-      List<int> bytes =>
-          ActivityParser.parseBytes(bytes, format, encoding: encoding),
+      List<int> bytes => ActivityParser.parseBytes(
+        bytes,
+        format,
+        encoding: encoding,
+      ),
       _ => throw ArgumentError(
         'Unsupported payload type ${payload.runtimeType}; expected String or List<int>.',
       ),
@@ -1075,34 +1210,93 @@ class ActivityFiles {
     ActivityFileFormat format, {
     bool useIsolate = true,
     Encoding encoding = utf8,
-  }) {
+  }) async {
+    if (payload is _ReplayableStreamPayload) {
+      final bytes = await payload.materialize(
+        maxBytes: _defaultStreamBufferLimitBytes,
+      );
+      return isolate_runner.runWithIsolation(
+        () => _parseBytesWithBom(bytes, format, encoding),
+        useIsolate: useIsolate,
+      );
+    }
     if (payload is Stream<List<int>>) {
       return ActivityParser.parseStream(
         payload,
         format,
         useIsolate: useIsolate,
         encoding: encoding,
+        maxBytes: _defaultStreamBufferLimitBytes,
       );
     }
+    _enforcePayloadLimit(
+      payload,
+      encoding: encoding,
+      limit: _defaultStreamBufferLimitBytes,
+    );
     return isolate_runner.runWithIsolation(
       () => _parseSync(payload, format, encoding),
       useIsolate: useIsolate,
     );
   }
 
+  static ActivityParseResult _failedParseResult({
+    required ActivityFileFormat format,
+    required FormatException error,
+  }) {
+    final formatName = format.name.toUpperCase();
+    final trimmed = error.message.trim();
+    final message = trimmed.isEmpty ? error.toString() : trimmed;
+    return ActivityParseResult(
+      activity: RawActivity(),
+      diagnostics: <ParseDiagnostic>[
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'parser.format_exception',
+          message: 'Failed to parse $formatName payload: $message',
+          node: ParseNodeReference(path: '${format.name}.document'),
+        ),
+      ],
+    );
+  }
+
+  static Future<Object> _materializePayload(Object payload) async {
+    if (payload is _ReplayableStreamPayload) {
+      try {
+        return await payload.materialize(
+          maxBytes: _defaultStreamBufferLimitBytes,
+        );
+      } catch (_) {
+        return Uint8List(0);
+      }
+    }
+    return payload;
+  }
+
   static ActivityFileFormat? _detectFormatSync(
     Object source, {
     required Encoding encoding,
+    required bool allowFilePaths,
   }) {
     if (source is _ResolvedSource) {
+      _enforcePayloadLimit(
+        source.detectionBytes ?? source.payload,
+        encoding: encoding,
+        limit: _defaultStreamBufferLimitBytes,
+      );
       return _detectFormat(source, encoding: encoding);
     }
+    _enforcePayloadLimit(
+      source,
+      encoding: encoding,
+      limit: _defaultStreamBufferLimitBytes,
+    );
     final filePath = file_system.platformFilePath(source);
     if (filePath != null) {
       return _detectFromExtension(_extensionForPath(filePath));
     }
     if (source is String) {
-      if (file_system.platformPathExists(source)) {
+      if (allowFilePaths && file_system.platformPathExists(source)) {
         return _detectFromExtension(_extensionForPath(source));
       }
       return _detectFromPayload(source, encoding: encoding);
@@ -1135,15 +1329,21 @@ class ActivityFiles {
     required Encoding encoding,
   }) {
     if (payload is String) {
-      return _detectFromText(payload);
+      final sniffed = _sniffTextForDetection(payload);
+      return _detectFromText(
+        sniffed.text,
+        allowPartial: sniffed.truncated,
+      );
     }
-    final bytes = payload is Uint8List
-        ? payload
-        : Uint8List.fromList(payload as List<int>);
+    final sniffed = _sniffBytesForDetection(payload);
+    final bytes = sniffed.bytes;
     final bomDecoder = _decoderForBom(bytes);
     if (bomDecoder != null) {
       final decoded = bomDecoder(bytes);
-      final detectedFromBom = _detectFromText(decoded);
+      final detectedFromBom = _detectFromText(
+        decoded,
+        allowPartial: sniffed.truncated,
+      );
       if (detectedFromBom != null) {
         return detectedFromBom;
       }
@@ -1152,10 +1352,13 @@ class ActivityFiles {
       return ActivityFileFormat.fit;
     }
     try {
-      return _detectFromText(encoding.decode(bytes));
+      return _detectFromText(
+        encoding.decode(bytes),
+        allowPartial: sniffed.truncated,
+      );
     } on FormatException {
       final fallback = utf8.decode(bytes, allowMalformed: true);
-      return _detectFromText(fallback);
+      return _detectFromText(fallback, allowPartial: sniffed.truncated);
     }
   }
 
@@ -1184,15 +1387,28 @@ class ActivityFiles {
     return false;
   }
 
-  static bool _looksBase64(String text) {
+  static bool _looksBase64(String text, {bool allowPartial = false}) {
     final trimmed = text.replaceAll(RegExp(r'\s+'), '');
-    if (trimmed.isEmpty || trimmed.length % 4 != 0) {
+    if (trimmed.isEmpty) {
       return false;
     }
-    return RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(trimmed);
+    if (!allowPartial && trimmed.length % 4 != 0) {
+      return false;
+    }
+    final matchesAlphabet = RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(trimmed);
+    if (!matchesAlphabet) {
+      return false;
+    }
+    if (allowPartial) {
+      return trimmed.length >= 8;
+    }
+    return true;
   }
 
-  static ActivityFileFormat? _detectFromText(String text) {
+  static ActivityFileFormat? _detectFromText(
+    String text, {
+    bool allowPartial = false,
+  }) {
     final trimmed = text.trimLeft();
     if (trimmed.isEmpty) {
       return null;
@@ -1206,10 +1422,43 @@ class ActivityFiles {
         return ActivityFileFormat.tcx;
       }
     }
-    if (_looksBase64(trimmed)) {
+    if (_looksBase64(trimmed, allowPartial: allowPartial)) {
       return ActivityFileFormat.fit;
     }
     return null;
+  }
+
+  static ({String text, bool truncated}) _sniffTextForDetection(
+    String text, {
+    int maxChars = _maxFormatDetectBytes,
+  }) {
+    if (text.length <= maxChars) {
+      return (text: text, truncated: false);
+    }
+    return (text: text.substring(0, maxChars), truncated: true);
+  }
+
+  static ({Uint8List bytes, bool truncated}) _sniffBytesForDetection(
+    Object payload, {
+    int maxBytes = _maxFormatDetectBytes,
+  }) {
+    if (payload is Uint8List) {
+      if (payload.length <= maxBytes) {
+        return (bytes: payload, truncated: false);
+      }
+      return (
+        bytes: Uint8List.sublistView(payload, 0, maxBytes),
+        truncated: true,
+      );
+    }
+    final list = payload as List<int>;
+    if (list.length <= maxBytes) {
+      return (bytes: Uint8List.fromList(list), truncated: false);
+    }
+    return (
+      bytes: Uint8List.fromList(list.take(maxBytes).toList()),
+      truncated: true,
+    );
   }
 
   static String Function(Uint8List bytes)? _decoderForBom(Uint8List bytes) {
@@ -1310,6 +1559,26 @@ class ActivityFiles {
       total += samples.length;
     }
     return total;
+  }
+
+  static bool _shouldFailFitIntegrity(
+    ActivityFileFormat format,
+    Iterable<ParseDiagnostic> diagnostics,
+    bool strict,
+  ) {
+    if (!strict || format != ActivityFileFormat.fit) {
+      return false;
+    }
+    for (final diagnostic in diagnostics) {
+      if (diagnostic.severity != ParseSeverity.error) {
+        continue;
+      }
+      final code = diagnostic.code;
+      if (code.startsWith('fit.header') || code.startsWith('fit.trailer')) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -1442,8 +1711,12 @@ class ActivityLoadResult with _DiagnosticSummaryMixin {
     required this.sourceDescription,
     required this.payload,
   }) : diagnostics = List.unmodifiable(diagnostics);
-  // TODO(perf): Share payload/diagnostic views when possible instead of
+  // TODO(0.6.0)(perf): Share payload/diagnostic views when possible instead of
   // cloning large buffers for every load result.
+  ///
+  /// Parse or validation failures never throw; they are recorded in
+  /// [diagnostics]. Inspect [hasErrors], [diagnostics], or
+  /// [diagnosticsSummary] before trusting [activity].
 
   /// Parsed activity.
   final RawActivity activity;
@@ -1481,8 +1754,8 @@ class ActivityExportResult with _DiagnosticSummaryMixin {
     this.processingStats = const ActivityProcessingStats(),
   }) : _binary = binary != null ? Uint8List.fromList(binary) : null,
        diagnostics = List.unmodifiable(List<ParseDiagnostic>.from(diagnostics));
-  // TODO(perf): Avoid double-copying FIT binaries/diagnostics when callers
-  // already hand over owned buffers.
+  // TODO(0.6.0)(perf): Avoid double-copying FIT binaries/diagnostics when
+  // callers already hand over owned buffers.
 
   /// Normalized activity that was encoded.
   final RawActivity activity;
@@ -1861,4 +2134,137 @@ class _ResolvedSource {
   final String description;
   final String? fileExtension;
   final Uint8List? detectionBytes;
+}
+
+class _ReplayableStreamPayload extends Stream<List<int>> {
+  _ReplayableStreamPayload(Stream<List<int>> source, {this.bufferLimit})
+    : _source = source;
+
+  final Stream<List<int>> _source;
+  final BytesBuilder _buffer = BytesBuilder(copy: false);
+  final Completer<void> _completed = Completer<void>();
+  final int? bufferLimit;
+  Uint8List? _bytes;
+  int _bufferedBytes = 0;
+  bool _listened = false;
+  Object? _error;
+  StackTrace? _errorStack;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int>)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) {
+    if (_listened) {
+      throw StateError('Stream payloads can only be listened to once.');
+    }
+    _listened = true;
+    return _source.listen(
+      (chunk) {
+        if (_completed.isCompleted) {
+          return;
+        }
+        try {
+          if (chunk.isNotEmpty) {
+            _addChunk(chunk, limit: bufferLimit);
+          }
+          onData?.call(chunk);
+        } catch (error, stackTrace) {
+          _finalize(error: error, stackTrace: stackTrace);
+          if (onError == null) {
+            Zone.current.handleUncaughtError(error, stackTrace);
+          } else if (onError is void Function(Object, StackTrace)) {
+            onError(error, stackTrace);
+          } else {
+            (onError as void Function(Object))(error);
+          }
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _finalize(error: error, stackTrace: stackTrace);
+        if (onError == null) {
+          Zone.current.handleUncaughtError(error, stackTrace);
+        } else if (onError is void Function(Object, StackTrace)) {
+          onError(error, stackTrace);
+        } else {
+          (onError as void Function(Object))(error);
+        }
+      },
+      onDone: () {
+        _finalize();
+        onDone?.call();
+      },
+      cancelOnError: cancelOnError,
+    );
+  }
+
+  Future<Uint8List> materialize({int? maxBytes}) async {
+    if (!_listened) {
+      _listened = true;
+      try {
+        await for (final chunk in _source) {
+          _addChunk(chunk, limit: maxBytes);
+        }
+        _finalize();
+      } catch (error, stackTrace) {
+        _finalize(error: error, stackTrace: stackTrace);
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    } else if (!_completed.isCompleted) {
+      await _completed.future;
+    }
+    if (_error != null) {
+      Error.throwWithStackTrace(_error!, _errorStack ?? StackTrace.current);
+    }
+    final bytes = _bytes ?? _buffer.takeBytes();
+    if (maxBytes != null && bytes.length > maxBytes) {
+      throw FormatException('Stream payload exceeds $maxBytes bytes.');
+    }
+    return bytes;
+  }
+
+  void _addChunk(List<int> chunk, {int? limit}) {
+    final threshold = limit ?? bufferLimit;
+    if (threshold != null && _bufferedBytes + chunk.length > threshold) {
+      throw FormatException('Stream payload exceeds $threshold bytes.');
+    }
+    _buffer.add(chunk);
+    _bufferedBytes += chunk.length;
+  }
+
+  void _finalize({Object? error, StackTrace? stackTrace}) {
+    if (_completed.isCompleted) {
+      return;
+    }
+    _bytes ??= _buffer.takeBytes();
+    if (error != null) {
+      _error = error;
+      _errorStack = stackTrace;
+      _completed.completeError(error, stackTrace);
+    } else {
+      _completed.complete();
+    }
+  }
+}
+
+void _enforcePayloadLimit(
+  Object payload, {
+  required Encoding encoding,
+  required int limit,
+}) {
+  int sizeBytes;
+  if (payload is Uint8List) {
+    sizeBytes = payload.length;
+  } else if (payload is List<int>) {
+    sizeBytes = payload.length;
+  } else if (payload is String) {
+    sizeBytes = encoding.encode(payload).length;
+  } else {
+    return;
+  }
+  if (sizeBytes > limit) {
+    throw FormatException('Payload exceeds $limit bytes.');
+  }
 }

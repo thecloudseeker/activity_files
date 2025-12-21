@@ -23,9 +23,9 @@ typedef StreamTimestampDecoder = DateTime Function(int timestamp);
 
 /// Known FIT manufacturer identifiers.
 /// Source: Garmin FIT SDK (FitSDKRelease_21.141.00, `c/fit_example.h`).
-/// TODO(fit-manufacturers): Auto-generate the full set (223 entries) directly
-/// from the SDK profile to avoid manual drift while keeping this map `const`
-/// so lookups stay O(1) even with the larger vendor list.
+/// TODO(0.5.0)(tooling): Auto-generate the full set (223 entries) directly from
+/// the SDK profile to avoid manual drift while keeping this map `const` so
+/// lookups stay O(1) even with the larger vendor list.
 const Map<int, String> fitManufacturerNames = {
   1: 'Garmin',
   2: 'Garmin FR405 ANTFS',
@@ -156,10 +156,11 @@ class Lap {
 }
 
 /// Metadata describing the recording device or software.
-/// TODO(metadata): Track vendor-specific fields (e.g. Garmin `garmin_product`
-/// / `device_index`, Coros `gear_id`) so exporters can round-trip manufacturer
-/// quirks without lossy mapping.
+/// TODO(0.6.0)(feature): Track vendor-specific fields (e.g. Garmin
+/// `garmin_product` / `device_index`, Coros `gear_id`) so exporters can
+/// round-trip manufacturer quirks without lossy mapping.
 class ActivityDeviceMetadata {
+  /// Creates metadata describing the originating device or software.
   const ActivityDeviceMetadata({
     this.manufacturer,
     this.model,
@@ -204,6 +205,7 @@ class ActivityDeviceMetadata {
   /// Whether any field is populated.
   bool get isNotEmpty => !isEmpty;
 
+  /// Returns a copy with selective field overrides.
   ActivityDeviceMetadata copyWith({
     String? manufacturer,
     String? model,
@@ -278,36 +280,99 @@ class GpxExtensionNode {
 
 /// Unified in-memory representation of an activity.
 class RawActivity {
-  RawActivity({
+  factory RawActivity({
     Iterable<GeoPoint>? points,
     Map<Channel, Iterable<Sample>>? channels,
     Iterable<Lap>? laps,
-    this.sport = Sport.unknown,
-    this.creator,
-    this.device,
-    this.gpxMetadataName,
-    this.gpxMetadataDescription,
-    this.gpxIncludeCreatorMetadataDescription = true,
-    this.gpxTrackName,
-    this.gpxTrackDescription,
-    this.gpxTrackType,
+    Sport sport = Sport.unknown,
+    String? creator,
+    ActivityDeviceMetadata? device,
+    String? gpxMetadataName,
+    String? gpxMetadataDescription,
+    bool gpxIncludeCreatorMetadataDescription = true,
+    String? gpxTrackName,
+    String? gpxTrackDescription,
+    String? gpxTrackType,
     Iterable<GpxExtensionNode>? gpxMetadataExtensions,
     Iterable<GpxExtensionNode>? gpxTrackExtensions,
-  }) : points = List<GeoPoint>.unmodifiable(points ?? const <GeoPoint>[]),
-       channels = Map.unmodifiable({
-         for (final entry
-             in (channels ?? const <Channel, Iterable<Sample>>{}).entries)
-           entry.key: List<Sample>.unmodifiable(
-             entry.value.map((sample) => sample.copyWith()),
-           ),
-       }),
-       laps = List<Lap>.unmodifiable(laps ?? const <Lap>[]),
-       gpxMetadataExtensions = List<GpxExtensionNode>.unmodifiable(
-         gpxMetadataExtensions ?? const <GpxExtensionNode>[],
+  }) => RawActivity._canonical(
+        points: points,
+        channels: channels,
+        laps: laps,
+        sport: sport,
+        creator: creator,
+        device: device,
+        gpxMetadataName: gpxMetadataName,
+        gpxMetadataDescription: gpxMetadataDescription,
+        gpxIncludeCreatorMetadataDescription:
+            gpxIncludeCreatorMetadataDescription,
+        gpxTrackName: gpxTrackName,
+        gpxTrackDescription: gpxTrackDescription,
+        gpxTrackType: gpxTrackType,
+        gpxMetadataExtensions: gpxMetadataExtensions,
+        gpxTrackExtensions: gpxTrackExtensions,
+        assumeCanonical: false,
+      );
+
+  RawActivity._canonical({
+    Iterable<GeoPoint>? points,
+    Map<Channel, Iterable<Sample>>? channels,
+    Iterable<Lap>? laps,
+    required this.sport,
+    required this.creator,
+    required this.device,
+    required this.gpxMetadataName,
+    required this.gpxMetadataDescription,
+    required this.gpxIncludeCreatorMetadataDescription,
+    required this.gpxTrackName,
+    required this.gpxTrackDescription,
+    required this.gpxTrackType,
+    Iterable<GpxExtensionNode>? gpxMetadataExtensions,
+    Iterable<GpxExtensionNode>? gpxTrackExtensions,
+    required bool assumeCanonical,
+  }) : assert(!assumeCanonical || points == null || points is List<GeoPoint>),
+       assert(
+         !assumeCanonical ||
+             channels == null ||
+             channels is Map<Channel, List<Sample>>,
        ),
-       gpxTrackExtensions = List<GpxExtensionNode>.unmodifiable(
-         gpxTrackExtensions ?? const <GpxExtensionNode>[],
-       );
+       assert(!assumeCanonical || laps == null || laps is List<Lap>),
+       assert(
+         !assumeCanonical ||
+             gpxMetadataExtensions == null ||
+             gpxMetadataExtensions is List<GpxExtensionNode>,
+       ),
+       assert(
+         !assumeCanonical ||
+             gpxTrackExtensions == null ||
+             gpxTrackExtensions is List<GpxExtensionNode>,
+       ),
+       points = assumeCanonical
+           ? (points as List<GeoPoint>? ?? const <GeoPoint>[])
+           : List<GeoPoint>.unmodifiable(points ?? const <GeoPoint>[]),
+       channels = assumeCanonical
+           ? (channels as Map<Channel, List<Sample>>? ??
+               const <Channel, List<Sample>>{})
+           : Map.unmodifiable({
+               for (final entry
+                   in (channels ?? const <Channel, Iterable<Sample>>{}).entries)
+                 entry.key: List<Sample>.unmodifiable(entry.value),
+             }),
+       laps = assumeCanonical
+           ? (laps as List<Lap>? ?? const <Lap>[])
+           : List<Lap>.unmodifiable(laps ?? const <Lap>[]),
+       gpxMetadataExtensions = assumeCanonical
+           ? (gpxMetadataExtensions as List<GpxExtensionNode>? ??
+               const <GpxExtensionNode>[])
+           : List<GpxExtensionNode>.unmodifiable(
+               gpxMetadataExtensions ?? const <GpxExtensionNode>[],
+             ),
+       gpxTrackExtensions = assumeCanonical
+           ? (gpxTrackExtensions as List<GpxExtensionNode>? ??
+               const <GpxExtensionNode>[])
+           : List<GpxExtensionNode>.unmodifiable(
+               gpxTrackExtensions ?? const <GpxExtensionNode>[],
+             );
 
   /// Sequence of geographic points.
   final List<GeoPoint> points;
@@ -351,6 +416,8 @@ class RawActivity {
   /// GPX track-level extensions emitted during encoding.
   final List<GpxExtensionNode> gpxTrackExtensions;
 
+  double? _approximateDistanceCache;
+
   /// Returns the samples for a given [channel], if present.
   List<Sample> channel(Channel channel) =>
       channels[channel] ?? const <Sample>[];
@@ -372,18 +439,23 @@ class RawActivity {
     Iterable<GpxExtensionNode>? gpxMetadataExtensions,
     Iterable<GpxExtensionNode>? gpxTrackExtensions,
   }) {
-    return RawActivity(
-      points: points ?? this.points,
-      channels:
-          channels ??
-          // TODO(perf-copywith-channels): Investigate sharing existing immutable
-          // channel/sample lists so a copyWith call that does not touch channels
-          // does not incur a deep clone of every sample (currently O(n)).
-          {
-            for (final entry in this.channels.entries)
-              entry.key: entry.value.map((sample) => sample.copyWith()),
-          },
-      laps: laps ?? this.laps,
+    final resolvedPoints = points ?? this.points;
+    final resolvedChannels = channels ?? this.channels;
+    final resolvedLaps = laps ?? this.laps;
+    final resolvedMetadataExtensions =
+        gpxMetadataExtensions ?? this.gpxMetadataExtensions;
+    final resolvedTrackExtensions =
+        gpxTrackExtensions ?? this.gpxTrackExtensions;
+    final canAssumeCanonical =
+        identical(resolvedPoints, this.points) &&
+        identical(resolvedChannels, this.channels) &&
+        identical(resolvedLaps, this.laps) &&
+        identical(resolvedMetadataExtensions, this.gpxMetadataExtensions) &&
+        identical(resolvedTrackExtensions, this.gpxTrackExtensions);
+    final copy = RawActivity._canonical(
+      points: resolvedPoints,
+      channels: resolvedChannels,
+      laps: resolvedLaps,
       sport: sport ?? this.sport,
       creator: creator ?? this.creator,
       device: device ?? this.device,
@@ -396,10 +468,17 @@ class RawActivity {
       gpxTrackName: gpxTrackName ?? this.gpxTrackName,
       gpxTrackDescription: gpxTrackDescription ?? this.gpxTrackDescription,
       gpxTrackType: gpxTrackType ?? this.gpxTrackType,
-      gpxMetadataExtensions:
-          gpxMetadataExtensions ?? this.gpxMetadataExtensions,
-      gpxTrackExtensions: gpxTrackExtensions ?? this.gpxTrackExtensions,
+      gpxMetadataExtensions: resolvedMetadataExtensions,
+      gpxTrackExtensions: resolvedTrackExtensions,
+      assumeCanonical: canAssumeCanonical,
     );
+    if (canAssumeCanonical &&
+        identical(resolvedPoints, this.points) &&
+        identical(resolvedChannels, this.channels) &&
+        identical(resolvedLaps, this.laps)) {
+      copy._approximateDistanceCache = _approximateDistanceCache;
+    }
+    return copy;
   }
 
   /// Returns the timestamp of the first point, if any.
@@ -410,10 +489,10 @@ class RawActivity {
 
   /// Approximates the total distance in meters based on stored channels or
   /// planar projection of geographic points.
-  double get approximateDistance {
-    // TODO(perf-distance-cache): Cache this derived distance or keep a rolling
-    // accumulator because repeated getter calls trigger an O(n) haversine scan
-    // with expensive trig for every activity access.
+  double get approximateDistance =>
+      _approximateDistanceCache ??= _computeApproximateDistance();
+
+  double _computeApproximateDistance() {
     final distanceSamples = channels[Channel.distance];
     if (distanceSamples != null && distanceSamples.isNotEmpty) {
       return distanceSamples.last.value;

@@ -1,6 +1,76 @@
 # Changelog
 
+## 0.4.0
+### Breaking
+- Plain string sources are always treated as inline payloads; pass a `File` or
+  set `allowFilePaths: true` on `load`/`convert`/`convertAndExport`/
+  `ActivityExportRequest.fromSource` to read from disk.
+- A 64MB cap (`ActivityFiles.defaultMaxPayloadBytes`) applies to
+  load/convert/detect and streamed pipelines; oversized inputs throw or emit
+  error diagnostics. Stream from disk/network or split files to go larger; only
+  `ActivityParser.parseStream(maxBytes: ...)` lets you override the limit.
+
+### Added
+- Stream-backed loads are replayable; `ActivityLoadResult.bytesPayload` exposes
+  buffered bytes even when the source was a `Stream<List<int>>`.
+- FIT integrity: header/trailer CRCs and truncation are reported as error
+  diagnostics (or throw when `strictFitIntegrity: true`); the encoder now emits
+  invalid coordinate sentinels for sensor-only activities.
+- Structural validation enforces lap ordering/overlap and warns when sensor
+  channels extend past the point timeline during load/convert/export flows.
+- GPX/TCX version selection: `EncoderOptions` and CLI flags can emit GPX 1.0/1.1
+  and TCX v1/v2; defaults remain GPX 1.1/TCX v2. FIT remains core-workout only.
+- GPX 1.0 round-trips root metadata, track extensions, and labels when
+  `gpxVersion` is `GpxVersion.v1_0`.
+
+### Changed
+- `RawTransforms` and `RawEditor` live in dedicated modules
+  (`transforms/raw_transforms.dart`, `transforms/raw_editor.dart`); `transforms.dart`
+  still exports both for existing imports.
+- `ChannelMapper.cursor` exposes reusable per-channel cursors; `mapAt` now wraps
+  it so overlays reuse cached lookups.
+- GPX/TCX/FIT encoders reuse the cursor (TCX/FIT also use distance readings) to
+  avoid repeated binary searches.
+- Resampling pre-sizes timetables and reuses sliding cursors to keep
+  `RawTransforms.resample`/`_resampleNearest` fast on long recordings.
+- `RawEditor` skips work on sorted/valid inputs and reuses its timestamp cursor
+  during `downsampleTime`.
+- FIT exports defer base64 decoding until `asBytes()` when FIT sources arrive as
+  base64 strings.
+- `RawEditor.smoothHR` now uses a sliding window to stay O(n).
+
+### Fixed
+- `RawEditor.downsampleDistance` keeps the final point even on short hops or
+  duplicate timestamps, preserving distance/duration and channel alignment.
+- `RawEditor.markLapsByDistance` recovers from non-monotonic distance channels
+  (e.g. pause resets) to keep splits accurate.
+- `RawEditor.smoothHR` respects even-numbered windows instead of averaging an
+  extra sample.
+- Format detection inspects only a small prefix and honors payload caps.
+- Exports with `normalize: false` auto-sort/dedup when needed; `recomputeDistanceAndSpeed`
+  also self-sorts to avoid invalid speed/distance.
+- `RawEditor.sortAndDedup` clones lists before sorting to keep prior
+  `RawActivity` instances immutable.
+- Malformed GPX/TCX and invalid FIT binaries now return structured
+  `ParseDiagnostic` errors instead of raw exceptions.
+- Stream parsing (`parseStream`, `convertAndExportStream`, `runPipeline` with
+  streams) returns diagnostics for malformed/oversized payloads instead of
+  throwing.
+- CLI `convert` honors explicit `--encoding`, reads GPX/TCX as bytes to avoid
+  Latin-1 corruption, and exits non-zero on parser errors.
+- `ActivityFiles.runPipeline` no longer runs validation twice when
+  `runValidation` is enabled.
+- `RawActivity.copyWith` keeps collections immutable, recognizes canonical
+  inputs to avoid clones, and reuses cached distances.
+- `RawTransforms.resample` sorts points before resampling to avoid RangeErrors
+  and keep start/end ordering.
+- `ActivityFiles.convert` enforces the export ordering guard when
+  `normalize` is `false`; `detectFormat` no longer probes filesystem paths
+  unless allowed.
+
+
 ## 0.3.2
+### Fixed
 - wrong version in pubspec.yaml
 
 ## 0.3.1
@@ -81,14 +151,17 @@
 
 ## 0.1.2
 
+### Fixed
 - pub.dev score fix.
 
 ## 0.1.1
 
+### Fixed
 - Fix README.
 
 ## 0.1.0
 
+### Added
 - Handle FIT compressed timestamp headers and ensure unknown message types
   advance the reader instead of hanging.
 - Add `ActivityParser.parseBytes`, broaden `ActivityConverter.convert` input
@@ -98,10 +171,14 @@
 
 ## 0.0.2
 
-- Upgrade dependencies and SDK.
+### Added
 - Add `example/main.dart` illustrating a minimal GPX round-trip.
+
+### Changed
+- Upgrade dependencies and SDK.
 
 ## 0.0.1
 
+### Added
 - Initial release of `activity_files` with GPX/TCX parsing, editing, validation,
   and encoding utilities plus a conversion/validation CLI scaffold.

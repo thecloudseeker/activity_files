@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-// Activity files parsing, editing, and encoding toolkit.
+/// Activity files parsing, editing, and encoding toolkit.
+library;
+
 export 'src/api/activity_files_facade.dart';
 export 'src/api/activity_export_request.dart';
 export 'src/channel_mapper.dart';

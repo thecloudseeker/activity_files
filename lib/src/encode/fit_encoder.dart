@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: BSD-3-Clause
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 import '../channel_mapper.dart';
+import '../fit/fit_crc.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
 /// Encoder for FIT payloads (limited profile support).
+// TODO(0.7.0)(feature): Allow selecting FIT protocol/profile version when broader profile coverage is implemented.
 ///
 /// The emitted binary stream contains the following message sequence:
 /// * file_id (global 0)
@@ -20,8 +23,11 @@ class FitEncoder implements ActivityFormatEncoder {
   const FitEncoder();
   @override
   String encode(RawActivity activity, EncoderOptions options) {
-    if (activity.points.isEmpty) {
-      throw ArgumentError('Cannot encode FIT without geographic points.');
+    final recordSamples = _recordSamples(activity);
+    if (recordSamples.isEmpty) {
+      throw ArgumentError(
+        'Cannot encode FIT without geographic points or sensor samples.',
+      );
     }
     final builder = BytesBuilder();
     final definitionSection = BytesBuilder();
@@ -75,7 +81,7 @@ class FitEncoder implements ActivityFormatEncoder {
     encoder.writeSession(
       dataSection,
       localId: sessionLocal,
-      timestamp: activity.points.first.time,
+      timestamp: recordSamples.first.time,
       sport: activity.sport,
     );
     // Lap messages (optional).
@@ -179,25 +185,36 @@ class FitEncoder implements ActivityFormatEncoder {
     final tempTolerance = options.maxDeltaFor(Channel.temperature);
     final speedTolerance = options.maxDeltaFor(Channel.speed);
     final distanceTolerance = options.maxDeltaFor(Channel.distance);
-    final channelMap = activity.channels.map(
-      (key, value) => MapEntry(key, List<Sample>.from(value)),
+    final searchDelta =
+        [
+          hrTolerance,
+          cadenceTolerance,
+          powerTolerance,
+          tempTolerance,
+          speedTolerance,
+          distanceTolerance,
+          options.defaultMaxDelta,
+        ].fold<Duration>(
+          options.defaultMaxDelta,
+          (previous, current) => current > previous ? current : previous,
+        );
+    final channelCursor = ChannelMapper.cursor(
+      activity.channels,
+      maxDelta: searchDelta,
     );
-    for (final point in activity.points) {
-      // TODO(perf-channel-scan): Track per-channel indices while streaming
-      // points so ChannelMapper.mapAt does not binary-search every sensor list
-      // for each emitted record.
-      final timestampSeconds = point.time
+    for (final sample in recordSamples) {
+      final timestampSeconds = sample.time
           .toUtc()
           .difference(baseTime)
           .inSeconds;
-      final lat = (point.latitude * 2147483648.0 / 180.0).round();
-      final lon = (point.longitude * 2147483648.0 / 180.0).round();
-      final altitudeRaw = _encodeAltitude(point.elevation);
-      final snapshot = ChannelMapper.mapAt(
-        point.time,
-        channelMap,
-        maxDelta: options.defaultMaxDelta,
-      );
+      final lat = sample.latitude != null
+          ? (sample.latitude! * 2147483648.0 / 180.0).round()
+          : _invalidSemicircle;
+      final lon = sample.longitude != null
+          ? (sample.longitude! * 2147483648.0 / 180.0).round()
+          : _invalidSemicircle;
+      final altitudeRaw = _encodeAltitude(sample.elevation);
+      final snapshot = channelCursor.snapshot(sample.time);
       final hr =
           snapshot.heartRateDelta != null &&
               snapshot.heartRateDelta! <= hrTolerance
@@ -227,16 +244,14 @@ class FitEncoder implements ActivityFormatEncoder {
         timestampSeconds: timestampSeconds,
         latitude: lat,
         longitude: lon,
-        altitudeRaw: altitudeRaw.round(),
+        altitudeRaw: altitudeRaw,
         hr: hr,
         cadence: cadence,
-        distanceMeters: channelMap.containsKey(Channel.distance)
-            ? _lookupSample(
-                channelMap[Channel.distance],
-                point.time,
-                distanceTolerance,
-              )
-            : null,
+        distanceMeters: _valueWithinChannel(
+          snapshot,
+          Channel.distance,
+          distanceTolerance,
+        ),
         speed: speed,
         power: power,
         temperature: temp,
@@ -248,7 +263,7 @@ class FitEncoder implements ActivityFormatEncoder {
     builder.add(headerBytes);
     builder.add(dataBytes);
     final fullData = builder.toBytes();
-    final crc = _computeFitCrc(fullData);
+    final crc = computeFitCrc(fullData);
     final dataWithCrc = BytesBuilder()
       ..add(fullData)
       ..addByte(crc & 0xFF)
@@ -262,45 +277,18 @@ class FitEncoder implements ActivityFormatEncoder {
   }
 }
 
-double? _lookupSample(
-  List<Sample>? samples,
-  DateTime timestamp,
+const int _invalidSemicircle = 0x7FFFFFFF;
+
+double? _valueWithinChannel(
+  ChannelSnapshot snapshot,
+  Channel channel,
   Duration tolerance,
 ) {
-  if (samples == null || samples.isEmpty) {
+  final reading = snapshot.reading(channel);
+  if (reading == null) {
     return null;
   }
-  final targetMicros = timestamp.toUtc().microsecondsSinceEpoch;
-  var low = 0;
-  var high = samples.length - 1;
-  while (low <= high) {
-    final mid = (low + high) >> 1;
-    final sampleMicros = samples[mid].time.microsecondsSinceEpoch;
-    if (sampleMicros < targetMicros) {
-      low = mid + 1;
-    } else if (sampleMicros > targetMicros) {
-      high = mid - 1;
-    } else {
-      return samples[mid].value;
-    }
-  }
-  Sample? bestSample;
-  var bestDelta = tolerance.inMicroseconds + 1;
-  void consider(int index) {
-    if (index < 0 || index >= samples.length) {
-      return;
-    }
-    final sample = samples[index];
-    final delta = (sample.time.microsecondsSinceEpoch - targetMicros).abs();
-    if (delta <= tolerance.inMicroseconds && delta < bestDelta) {
-      bestDelta = delta;
-      bestSample = sample;
-    }
-  }
-
-  consider(low);
-  consider(low - 1);
-  return bestSample?.value;
+  return reading.delta <= tolerance ? reading.value : null;
 }
 
 int _encodeAltitude(double? elevation) {
@@ -317,6 +305,44 @@ int _encodeAltitude(double? elevation) {
   return scaled;
 }
 
+List<_RecordSample> _recordSamples(RawActivity activity) {
+  if (activity.points.isNotEmpty) {
+    return [
+      for (final point in activity.points)
+        _RecordSample(
+          time: point.time,
+          latitude: point.latitude,
+          longitude: point.longitude,
+          elevation: point.elevation,
+        ),
+    ];
+  }
+  final timestamps = SplayTreeSet<DateTime>();
+  for (final series in activity.channels.values) {
+    for (final sample in series) {
+      timestamps.add(sample.time);
+    }
+  }
+  if (timestamps.isEmpty) {
+    return const <_RecordSample>[];
+  }
+  return [for (final time in timestamps) _RecordSample(time: time)];
+}
+
+class _RecordSample {
+  const _RecordSample({
+    required this.time,
+    this.latitude,
+    this.longitude,
+    this.elevation,
+  });
+
+  final DateTime time;
+  final double? latitude;
+  final double? longitude;
+  final double? elevation;
+}
+
 Uint8List _createHeader(int dataSize) {
   final header = Uint8List(14);
   final bd = header.buffer.asByteData();
@@ -325,7 +351,7 @@ Uint8List _createHeader(int dataSize) {
   bd.setUint16(2, 0, Endian.little); // profile version unknown
   bd.setUint32(4, dataSize, Endian.little);
   header.setRange(8, 12, '.FIT'.codeUnits);
-  final crc = _computeFitCrc(header.sublist(0, 12));
+  final crc = computeFitCrc(header, length: 12);
   bd.setUint16(12, crc, Endian.little);
   return header;
 }
@@ -546,34 +572,3 @@ int _clampUint16(int value) =>
     value < 0 ? 0 : (value > 0xFFFF ? 0xFFFF : value);
 int _clampUint32(int value) =>
     value < 0 ? 0 : (value > 0xFFFFFFFF ? 0xFFFFFFFF : value);
-int _computeFitCrc(List<int> bytes) {
-  var crc = 0;
-  for (final byte in bytes) {
-    var tmp = _fitCrcTable[crc & 0x0F];
-    crc = (crc >> 4) & 0x0FFF;
-    crc ^= tmp ^ _fitCrcTable[byte & 0x0F];
-    tmp = _fitCrcTable[crc & 0x0F];
-    crc = (crc >> 4) & 0x0FFF;
-    crc ^= tmp ^ _fitCrcTable[(byte >> 4) & 0x0F];
-  }
-  return crc & 0xFFFF;
-}
-
-const List<int> _fitCrcTable = [
-  0x0000,
-  0xCC01,
-  0xD801,
-  0x1400,
-  0xF001,
-  0x3C00,
-  0x2800,
-  0xE401,
-  0xA001,
-  0x6C00,
-  0x7800,
-  0xB401,
-  0x5000,
-  0x9C01,
-  0x8801,
-  0x4400,
-];

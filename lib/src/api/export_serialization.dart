@@ -193,12 +193,24 @@ class ExportSerialization {
       for (final entry in options.maxDeltaPerChannel.entries)
         entry.key.id: entry.value.inMicroseconds,
     },
+    'gpxVersion': options.gpxVersion.name,
+    'tcxVersion': options.tcxVersion.name,
   };
 
   static EncoderOptions encoderOptionsFromJson(Map<String, Object?> data) {
     final perChannel =
         (data['maxDeltaPerChannel'] as Map?)?.cast<String, int>() ??
         const <String, int>{};
+    String? gpxVersionRaw;
+    String? tcxVersionRaw;
+    final gpxVersionValue = data['gpxVersion'];
+    if (gpxVersionValue is String) {
+      gpxVersionRaw = gpxVersionValue;
+    }
+    final tcxVersionValue = data['tcxVersion'];
+    if (tcxVersionValue is String) {
+      tcxVersionRaw = tcxVersionValue;
+    }
     return EncoderOptions(
       defaultMaxDelta: Duration(
         microseconds: data['defaultMaxDeltaMicros'] as int,
@@ -209,6 +221,8 @@ class ExportSerialization {
         for (final entry in perChannel.entries)
           _channelFromId(entry.key): Duration(microseconds: entry.value),
       },
+      gpxVersion: _gpxVersionFromString(gpxVersionRaw),
+      tcxVersion: _tcxVersionFromString(tcxVersionRaw),
     );
   }
 
@@ -319,6 +333,26 @@ class ExportSerialization {
         return Channel.distance;
       default:
         return Channel.custom(id);
+    }
+  }
+
+  static GpxVersion _gpxVersionFromString(String? value) {
+    switch (value) {
+      case 'v1_0':
+        return GpxVersion.v1_0;
+      case 'v1_1':
+      default:
+        return GpxVersion.v1_1;
+    }
+  }
+
+  static TcxVersion _tcxVersionFromString(String? value) {
+    switch (value) {
+      case 'v1':
+        return TcxVersion.v1;
+      case 'v2':
+      default:
+        return TcxVersion.v2;
     }
   }
 }

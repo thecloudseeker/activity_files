@@ -6,12 +6,48 @@ import 'activity_parser.dart';
 import 'parse_result.dart';
 
 /// Parser for the TCX file format.
+// TODO(0.7.0)(feature): Support multi-activity TCX files by preserving and
+// parsing all top-level <Activity> elements instead of only using the first
+// one. Add an option/flag to preserve per-activity metadata and return a
+// multi-activity model or diagnostics when multiple activities are present.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
   @override
   ActivityParseResult parse(String input) {
     final diagnostics = <ParseDiagnostic>[];
-    final document = XmlDocument.parse(input);
+    XmlDocument document;
+    try {
+      document = XmlDocument.parse(input);
+    } on XmlParserException catch (error) {
+      final reason = error.message.trim();
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'tcx.parse.xml_error',
+          message: 'Malformed TCX XML: $reason',
+          node: const ParseNodeReference(path: 'tcx.document'),
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    } on FormatException catch (error) {
+      final trimmed = error.message.trim();
+      final reason = trimmed.isEmpty ? error.toString() : trimmed;
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'tcx.parse.format_error',
+          message: 'Failed to parse TCX payload: $reason',
+          node: const ParseNodeReference(path: 'tcx.document'),
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    }
     final activities = document.findAllElements('Activity');
     if (activities.isEmpty) {
       return ActivityParseResult(

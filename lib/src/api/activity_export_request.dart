@@ -21,10 +21,13 @@ class ActivityExportRequest {
     required this.parseInIsolate,
     required this.exportInIsolate,
     required this.encoding,
+    required this.allowFilePaths,
+    required this.strictFitIntegrity,
     required Iterable<ParseDiagnostic> diagnostics,
     this.validation,
   }) : diagnostics = List<ParseDiagnostic>.unmodifiable(diagnostics);
 
+  /// Builds a request that skips parsing and exports an existing [RawActivity].
   factory ActivityExportRequest.fromActivity({
     required RawActivity activity,
     required ActivityFileFormat to,
@@ -34,6 +37,7 @@ class ActivityExportRequest {
     bool exportInIsolate = false,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     ValidationResult? validation,
+    bool strictFitIntegrity = false,
   }) => ActivityExportRequest._(
     activity: activity,
     to: to,
@@ -43,10 +47,13 @@ class ActivityExportRequest {
     parseInIsolate: false,
     exportInIsolate: exportInIsolate,
     encoding: utf8,
+    allowFilePaths: false,
+    strictFitIntegrity: strictFitIntegrity,
     diagnostics: diagnostics,
     validation: validation,
   );
 
+  /// Builds a request that parses a file/path/byte source before exporting.
   factory ActivityExportRequest.fromSource({
     required Object source,
     required ActivityFileFormat? from,
@@ -58,6 +65,8 @@ class ActivityExportRequest {
     bool exportInIsolate = false,
     Encoding encoding = utf8,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
+    bool allowFilePaths = false,
+    bool strictFitIntegrity = false,
   }) => ActivityExportRequest._(
     source: source,
     from: from,
@@ -68,6 +77,8 @@ class ActivityExportRequest {
     parseInIsolate: parseInIsolate,
     exportInIsolate: exportInIsolate,
     encoding: encoding,
+    allowFilePaths: allowFilePaths,
+    strictFitIntegrity: strictFitIntegrity,
     diagnostics: diagnostics,
     validation: null,
   );
@@ -83,6 +94,7 @@ class ActivityExportRequest {
     bool exportInIsolate = false,
     Encoding encoding = utf8,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
+    bool strictFitIntegrity = false,
   }) => ActivityExportRequest._(
     stream: stream,
     from: from,
@@ -93,6 +105,8 @@ class ActivityExportRequest {
     parseInIsolate: parseInIsolate,
     exportInIsolate: exportInIsolate,
     encoding: encoding,
+    allowFilePaths: false,
+    strictFitIntegrity: strictFitIntegrity,
     diagnostics: diagnostics,
     validation: null,
   );
@@ -129,6 +143,13 @@ class ActivityExportRequest {
 
   /// Text encoding used when parsing textual payloads.
   final Encoding encoding;
+
+  /// Whether plain string sources may be treated as local file paths.
+  final bool allowFilePaths;
+
+  /// Whether FIT integrity failures (CRC/size) should throw instead of only
+  /// surfacing diagnostics.
+  final bool strictFitIntegrity;
 
   /// Diagnostics gathered prior to export.
   final List<ParseDiagnostic> diagnostics;
