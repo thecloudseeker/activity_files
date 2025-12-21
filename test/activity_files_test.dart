@@ -722,22 +722,25 @@ void main() {
         ),
       ];
 
-      final result = validateRawActivity(RawActivity(points: points, laps: laps));
-
-      expect(
-        result.errors.any((error) => error.contains('Lap 2')),
-        isTrue,
+      final result = validateRawActivity(
+        RawActivity(points: points, laps: laps),
       );
+
+      expect(result.errors.any((error) => error.contains('Lap 2')), isTrue);
       expect(
         result.errors.any((error) => error.contains('previous lap')),
         isTrue,
       );
       expect(
-        result.warnings.any((warning) => warning.contains('before the first point')),
+        result.warnings.any(
+          (warning) => warning.contains('before the first point'),
+        ),
         isTrue,
       );
       expect(
-        result.warnings.any((warning) => warning.contains('after the last point')),
+        result.warnings.any(
+          (warning) => warning.contains('after the last point'),
+        ),
         isTrue,
       );
     });
@@ -759,18 +762,19 @@ void main() {
       ];
 
       final result = validateRawActivity(
-        RawActivity(
-          points: points,
-          channels: {Channel.power: power},
-        ),
+        RawActivity(points: points, channels: {Channel.power: power}),
       );
 
       expect(
-        result.warnings.any((warning) => warning.contains('before the first point')),
+        result.warnings.any(
+          (warning) => warning.contains('before the first point'),
+        ),
         isTrue,
       );
       expect(
-        result.warnings.any((warning) => warning.contains('after the last point')),
+        result.warnings.any(
+          (warning) => warning.contains('after the last point'),
+        ),
         isTrue,
       );
     });
@@ -1788,10 +1792,7 @@ void main() {
     test('detectFormat identifies fixture formats', () async {
       for (final entry in assets.entries) {
         final path = await assetPath(entry.key);
-        final detected = ActivityFiles.detectFormat(
-          path,
-          allowFilePaths: true,
-        );
+        final detected = ActivityFiles.detectFormat(path, allowFilePaths: true);
         expect(detected, equals(entry.value));
 
         final loaded = await ActivityFiles.load(

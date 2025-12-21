@@ -150,11 +150,15 @@ class ActivityFiles {
     // TODO(0.6.0)(perf): After channel-cursor + distance lookup optimizations
     // ship, run large GPX/FIT export benchmarks to quantify the win and detect
     // regressions in conversion hot paths.
-    final exportActivity =
-        normalize ? activity : _ensureOrderedForExport(activity);
+    final exportActivity = normalize
+        ? activity
+        : _ensureOrderedForExport(activity);
     if (!exportInIsolate) {
-      final encoded =
-          ActivityEncoder.encode(exportActivity, to, options: options);
+      final encoded = ActivityEncoder.encode(
+        exportActivity,
+        to,
+        options: options,
+      );
       ValidationResult? validation;
       Duration? validationDuration;
       if (runValidation) {
@@ -1330,10 +1334,7 @@ class ActivityFiles {
   }) {
     if (payload is String) {
       final sniffed = _sniffTextForDetection(payload);
-      return _detectFromText(
-        sniffed.text,
-        allowPartial: sniffed.truncated,
-      );
+      return _detectFromText(sniffed.text, allowPartial: sniffed.truncated);
     }
     final sniffed = _sniffBytesForDetection(payload);
     final bytes = sniffed.bytes;

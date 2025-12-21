@@ -214,8 +214,9 @@ void main() {
       );
 
       final smoothed = RawEditor(activity).smoothHR(3).activity;
-      final values =
-          smoothed.channel(Channel.heartRate).map((sample) => sample.value);
+      final values = smoothed
+          .channel(Channel.heartRate)
+          .map((sample) => sample.value);
 
       expect(values, orderedEquals([105, 110, 120, 125]));
     });
@@ -236,13 +237,13 @@ void main() {
       final copy = activity.copyWith();
 
       expect(
-        identical(copy.channels[Channel.heartRate], activity.channels[Channel.heartRate]),
+        identical(
+          copy.channels[Channel.heartRate],
+          activity.channels[Channel.heartRate],
+        ),
         isTrue,
       );
-      expect(
-        identical(copy.points, activity.points),
-        isTrue,
-      );
+      expect(identical(copy.points, activity.points), isTrue);
       expect(copy.approximateDistance, equals(activity.approximateDistance));
     });
   });

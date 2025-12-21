@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.1
+- Fix formatting and prevent it from happening again with a local git hook
+
 ## 0.4.0
 ### Breaking
 - Plain string sources are always treated as inline payloads; pass a `File` or

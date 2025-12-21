@@ -296,23 +296,22 @@ class RawActivity {
     Iterable<GpxExtensionNode>? gpxMetadataExtensions,
     Iterable<GpxExtensionNode>? gpxTrackExtensions,
   }) => RawActivity._canonical(
-        points: points,
-        channels: channels,
-        laps: laps,
-        sport: sport,
-        creator: creator,
-        device: device,
-        gpxMetadataName: gpxMetadataName,
-        gpxMetadataDescription: gpxMetadataDescription,
-        gpxIncludeCreatorMetadataDescription:
-            gpxIncludeCreatorMetadataDescription,
-        gpxTrackName: gpxTrackName,
-        gpxTrackDescription: gpxTrackDescription,
-        gpxTrackType: gpxTrackType,
-        gpxMetadataExtensions: gpxMetadataExtensions,
-        gpxTrackExtensions: gpxTrackExtensions,
-        assumeCanonical: false,
-      );
+    points: points,
+    channels: channels,
+    laps: laps,
+    sport: sport,
+    creator: creator,
+    device: device,
+    gpxMetadataName: gpxMetadataName,
+    gpxMetadataDescription: gpxMetadataDescription,
+    gpxIncludeCreatorMetadataDescription: gpxIncludeCreatorMetadataDescription,
+    gpxTrackName: gpxTrackName,
+    gpxTrackDescription: gpxTrackDescription,
+    gpxTrackType: gpxTrackType,
+    gpxMetadataExtensions: gpxMetadataExtensions,
+    gpxTrackExtensions: gpxTrackExtensions,
+    assumeCanonical: false,
+  );
 
   RawActivity._canonical({
     Iterable<GeoPoint>? points,
@@ -352,7 +351,7 @@ class RawActivity {
            : List<GeoPoint>.unmodifiable(points ?? const <GeoPoint>[]),
        channels = assumeCanonical
            ? (channels as Map<Channel, List<Sample>>? ??
-               const <Channel, List<Sample>>{})
+                 const <Channel, List<Sample>>{})
            : Map.unmodifiable({
                for (final entry
                    in (channels ?? const <Channel, Iterable<Sample>>{}).entries)
@@ -363,13 +362,13 @@ class RawActivity {
            : List<Lap>.unmodifiable(laps ?? const <Lap>[]),
        gpxMetadataExtensions = assumeCanonical
            ? (gpxMetadataExtensions as List<GpxExtensionNode>? ??
-               const <GpxExtensionNode>[])
+                 const <GpxExtensionNode>[])
            : List<GpxExtensionNode>.unmodifiable(
                gpxMetadataExtensions ?? const <GpxExtensionNode>[],
              ),
        gpxTrackExtensions = assumeCanonical
            ? (gpxTrackExtensions as List<GpxExtensionNode>? ??
-               const <GpxExtensionNode>[])
+                 const <GpxExtensionNode>[])
            : List<GpxExtensionNode>.unmodifiable(
                gpxTrackExtensions ?? const <GpxExtensionNode>[],
              );

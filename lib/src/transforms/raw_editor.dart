@@ -472,10 +472,7 @@ bool _isSortedSamples(List<Sample> samples) =>
 bool _isSortedByStart(List<Lap> laps) =>
     _isSortedBy(laps, (lap) => lap.startTime);
 
-bool _isStrictlyIncreasing<T>(
-  List<T> items,
-  DateTime Function(T item) timeOf,
-) {
+bool _isStrictlyIncreasing<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {
     final previous = timeOf(items[i - 1]).toUtc();
     final current = timeOf(items[i]).toUtc();
