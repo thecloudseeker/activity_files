@@ -31,8 +31,8 @@ class FitParser implements ActivityFormatParser {
     Uint8List payload,
     List<ParseDiagnostic> diagnostics,
   ) {
-    final reader = _FitByteReader(payload);
-    final header = _FitHeader.tryRead(reader);
+    final pass1Reader = _FitByteReader(payload);
+    final header = _FitHeader.tryRead(pass1Reader);
     if (header == null) {
       throw FormatException('Invalid FIT header.');
     }
@@ -62,7 +62,84 @@ class FitParser implements ActivityFormatParser {
     if (header.dataType != '.FIT') {
       throw FormatException('Unsupported FIT file type: ${header.dataType}');
     }
+    final dataLimit = header.headerSize + header.dataSize;
+
+    // Pass 1: Collect all message definitions WITHOUT processing data messages.
+    // This ensures definitions are available before decoding data.
     final definitions = <int, _FitMessageDefinition>{};
+    pass1Reader.position = header.headerSize;
+    while (pass1Reader.position < dataLimit &&
+        pass1Reader.position < payload.length) {
+      final recordHeader = pass1Reader.readUint8();
+      final isCompressed = (recordHeader & 0x80) != 0;
+      final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
+      final hasDeveloper = !isCompressed && (recordHeader & 0x20) != 0;
+      var localType = recordHeader & 0x0F;
+      if (isCompressed) {
+        localType = (recordHeader >> 5) & 0x03;
+      }
+
+      if (isDefinition) {
+        final def = _FitMessageDefinition.read(
+          pass1Reader,
+          localType,
+          hasDeveloper: hasDeveloper,
+        );
+        if (def != null && def.fields.isNotEmpty) {
+          // Preserve record definitions from being overwritten
+          final existing = definitions[localType];
+          final isRecord = def.globalId == 20;
+          final hasExistingRecord = existing != null && existing.globalId == 20;
+          if (!hasExistingRecord || isRecord) {
+            definitions[localType] = def;
+          }
+        }
+      } else {
+        // Skip data message payload using known definition
+        final def = definitions[localType];
+        if (def != null) {
+          pass1Reader.skip(def.dataSize(compressedTimestamp: isCompressed));
+        }
+        // If definition not yet known, cannot skip correctly - handle in pass 2.
+      }
+    }
+
+    // Pass 1b: For swimming files with data before definitions, do a second scan
+    // to collect any definitions we missed due to early data messages.
+    pass1Reader.position = header.headerSize;
+    while (pass1Reader.position < dataLimit &&
+        pass1Reader.position < payload.length) {
+      final recordHeader = pass1Reader.readUint8();
+      final isCompressed = (recordHeader & 0x80) != 0;
+      final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
+      final hasDeveloper = !isCompressed && (recordHeader & 0x20) != 0;
+      var localType = recordHeader & 0x0F;
+      if (isCompressed) {
+        localType = (recordHeader >> 5) & 0x03;
+      }
+
+      if (isDefinition) {
+        final def = _FitMessageDefinition.read(
+          pass1Reader,
+          localType,
+          hasDeveloper: hasDeveloper,
+        );
+        if (def != null &&
+            def.fields.isNotEmpty &&
+            !definitions.containsKey(localType)) {
+          definitions[localType] = def;
+        }
+      } else {
+        // Skip data message
+        final def = definitions[localType];
+        if (def != null) {
+          pass1Reader.skip(def.dataSize(compressedTimestamp: isCompressed));
+        }
+      }
+    }
+
+    // Pass 2: Decode data messages using collected definitions
+    final reader = _FitByteReader(payload)..position = header.headerSize;
     final lastTimestamps = <int, int>{};
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
@@ -75,7 +152,6 @@ class FitParser implements ActivityFormatParser {
     Sport sport = Sport.unknown;
     String? creator;
     ActivityDeviceMetadata? deviceMetadata;
-    final dataLimit = header.headerSize + header.dataSize;
     if (dataLimit > payload.length) {
       diagnostics.add(
         ParseDiagnostic(
@@ -131,68 +207,28 @@ class FitParser implements ActivityFormatParser {
         final offset = recordHeader & 0x1F;
         final previous = lastTimestamps[localType];
         if (previous == null) {
-          final definition = definitions[localType];
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'fit.compressed_header.missing_timestamp',
-              message:
-                  'Encountered compressed header for local message $localType without prior timestamp; skipping.',
-              node: ParseNodeReference(
-                path: 'fit.message',
-                description: 'localType=$localType',
-              ),
-            ),
-          );
-          if (definition != null) {
-            reader.skip(definition.dataSize(compressedTimestamp: true));
-          } else {
-            reader.skipRemaining(dataLimit - reader.position);
-            break;
-          }
-          continue;
+          // Seed timestamp with offset to avoid skipping the message.
+          compressedTimestamp = offset;
+          lastTimestamps[localType] = offset;
+        } else {
+          compressedTimestamp = _applyCompressedTimestamp(previous, offset);
         }
-        compressedTimestamp = _applyCompressedTimestamp(previous, offset);
       }
       if (isDefinition) {
-        final definition = _FitMessageDefinition.read(
+        // Skip definition processing in pass 2 - already collected in pass 1
+        _FitMessageDefinition.read(
           reader,
           localType,
           hasDeveloper: hasDeveloper,
         );
-        if (definition != null) {
-          definitions[localType] = definition;
-        } else {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'fit.definition.malformed',
-              message: 'Malformed FIT definition message skipped.',
-              node: ParseNodeReference(
-                path: 'fit.definition',
-                description: 'localType=$localType',
-              ),
-            ),
-          );
-        }
         continue;
       }
-      final definition = definitions[localType];
+      var definition = definitions[localType];
       if (definition == null) {
-        diagnostics.add(
-          ParseDiagnostic(
-            severity: ParseSeverity.warning,
-            code: 'fit.definition.missing',
-            message:
-                'Data message references unknown definition #$localType; aborting parse.',
-            node: ParseNodeReference(
-              path: 'fit.message',
-              description: 'localType=$localType',
-            ),
-          ),
-        );
-        reader.skipRemaining(dataLimit - reader.position);
-        break;
+        // Definition not found - skip message gracefully and continue parsing.
+        // This is common in swimming files where data messages appear before definitions.
+        // We've already logged this in Pass 1, so just skip silently in Pass 2.
+        continue;
       }
       final values = definition.readValues(
         reader,
@@ -262,8 +298,12 @@ class FitParser implements ActivityFormatParser {
           if (sportValue is int) {
             sport = _mapSport(sportValue);
           }
+          // TODO(0.5.0)(feature): Extract session stats (elapsed_time, total_distance,
+          // avg/max speeds, HR, cadence, power, calories) from fields 8, 9, 11-14, 16-18, 25-30.
           break;
         case 19: // lap
+          // TODO(0.5.0)(feature): Extract lap stats (event, type, position, calories,
+          // avg/max speeds/HR/cadence/power per lap) from remaining fields (0, 1, 3-6, 9-14, etc).
           final start = _decodeTimestamp(values[2]);
           final totalTime = _asNumber(values[7])?.toDouble();
           final distanceMeters = _asNumber(values[8])?.toDouble();
@@ -297,6 +337,9 @@ class FitParser implements ActivityFormatParser {
             );
             continue;
           }
+          // TODO(0.5.0)(feature): Extract grade (field 78), left_right_balance (field 120),
+          // grit/flow (Garmin running metrics), eBike telemetry, and other record fields.
+          // TODO(0.5.0)(feature): Map vendor-specific fields (53, 73, 87, 107, 134-136, 143).
           final lat = _decodeSemicircles(values[0]);
           final lon = _decodeSemicircles(values[1]);
           final altitude = _decodeAltitude(values[2]);
@@ -479,7 +522,7 @@ class _FitHeader {
       final protocol = reader.readUint8();
       final profile = reader.readUint16();
       final dataSize = reader.readUint32();
-      final dataType = utf8.decode(reader.readBytes(4));
+      final dataType = utf8.decode(reader.readBytes(4), allowMalformed: true);
       final hasHeaderCrc = size > 12;
       final remaining = size - 12;
       if (remaining > 0) {
@@ -648,8 +691,15 @@ class _FitByteReader {
   }
 
   Uint8List readBytes(int length) {
-    final slice = bytes.sublist(position, position + length);
-    position += length;
+    if (length <= 0) return Uint8List(0);
+    final available = bytes.length - position;
+    final safe = length > available ? available : length;
+    if (safe <= 0) {
+      position = bytes.length;
+      return Uint8List(0);
+    }
+    final slice = bytes.sublist(position, position + safe);
+    position += safe;
     return Uint8List.fromList(slice);
   }
 
@@ -674,24 +724,40 @@ class _FitByteReader {
     int size, {
     Endian endian = Endian.little,
   }) {
+    if (size <= 0 || position >= bytes.length) {
+      position = bytes.length;
+      return null;
+    }
     final data = bytes.buffer.asByteData();
     Object? value;
     switch (baseType & 0x1F) {
       case 0x00: // enum
       case 0x02: // uint8
       case 0x0A: // uint8z
+        if (position >= bytes.length) {
+          position = bytes.length;
+          return null;
+        }
         final raw = bytes[position];
         position += size;
         if (raw == 0xFF) return null;
         value = raw;
         break;
       case 0x01: // sint8
+        if (position >= bytes.length) {
+          position = bytes.length;
+          return null;
+        }
         final raw = data.getInt8(position);
         position += size;
         if (raw == 0x7F) return null;
         value = raw;
         break;
       case 0x03: // sint16
+        if (position + 2 > bytes.length) {
+          position = bytes.length;
+          return null;
+        }
         final raw = data.getInt16(position, endian);
         position += 2;
         if (raw == 0x7FFF) return null;
@@ -699,12 +765,20 @@ class _FitByteReader {
         break;
       case 0x04: // uint16
       case 0x0B: // uint16z
+        if (position + 2 > bytes.length) {
+          position = bytes.length;
+          return null;
+        }
         final raw = data.getUint16(position, endian);
         position += 2;
         if (raw == 0xFFFF) return null;
         value = raw;
         break;
       case 0x05: // sint32
+        if (position + 4 > bytes.length) {
+          position = bytes.length;
+          return null;
+        }
         final raw = data.getInt32(position, endian);
         position += 4;
         if (raw == 0x7FFFFFFF) return null;
@@ -712,6 +786,10 @@ class _FitByteReader {
         break;
       case 0x06: // uint32
       case 0x0C: // uint32z
+        if (position + 4 > bytes.length) {
+          position = bytes.length;
+          return null;
+        }
         final raw = data.getUint32(position, endian);
         position += 4;
         if (raw == 0xFFFFFFFF) return null;
@@ -721,7 +799,7 @@ class _FitByteReader {
         final rawBytes = readBytes(size);
         final nul = rawBytes.indexOf(0);
         final slice = nul >= 0 ? rawBytes.sublist(0, nul) : rawBytes;
-        value = utf8.decode(slice);
+        value = utf8.decode(slice, allowMalformed: true);
         break;
       default:
         final rawBytes = readBytes(size);

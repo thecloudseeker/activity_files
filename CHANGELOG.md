@@ -1,6 +1,13 @@
 # Changelog
 
+## 0.4.2
+### Fixed
+- Fix FIT parser for non-standard message ordering. Thanks [@hallr-boulder](https://github.com/hallr-boulder) for reporting (fixes #2)
+- Improved support for swimming activity files with non-standard message ordering
+- Parser now gracefully handles unknown message types instead of crashing
+
 ## 0.4.1
+### Fixed
 - Fix formatting and prevent it from happening again with a local git hook
 
 ## 0.4.0

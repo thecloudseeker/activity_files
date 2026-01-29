@@ -25,6 +25,10 @@ void main() {
     precisionEle: 2,
   );
 
+  // TODO(0.5.0)(test): Add multi-device test suite (Wahoo, Coros, eBike files)
+  // to validate FIT extraction works across different device profiles and
+  // vendor-specific field implementations.
+
   group('Facade convenience', () {
     test('load infers GPX format from inline content', () async {
       final result = await ActivityFiles.load(_sampleGpx, useIsolate: false);

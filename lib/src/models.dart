@@ -142,6 +142,8 @@ class Lap {
   final double? distanceMeters;
   final String? name;
   Duration get elapsed => endTime.difference(startTime);
+  // TODO(0.5.0)(feature): Add lap-level statistics (avgHeartRate, maxHeartRate,
+  // avgCadence, maxCadence, avgSpeed, maxSpeed, avgPower, maxPower, calories).
   Lap copyWith({
     DateTime? startTime,
     DateTime? endTime,
@@ -390,6 +392,9 @@ class RawActivity {
 
   /// Optional device metadata attached to the activity.
   final ActivityDeviceMetadata? device;
+  // TODO(0.5.0)(feature): Add session-level summary stats (totalElapsedTime,
+  // totalDistance, totalCalories, avgHeartRate, maxHeartRate, avgCadence,
+  // maxCadence, avgSpeed, maxSpeed, avgPower, maxPower) and eBike telemetry.
 
   /// Optional metadata title used for GPX encoders.
   final String? gpxMetadataName;
