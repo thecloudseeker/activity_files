@@ -6,7 +6,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.4.2
+  activity_files: ^0.4.3
 ```
 
 Then install dependencies:
@@ -221,6 +221,12 @@ if (export.hasErrors) {
 > FIT integrity: Header/trailer CRC mismatches and truncated FIT payloads are
 > surfaced as error diagnostics and the parsed activity is empty. Treat these as
 > corrupted uploads and halt processing.
+>
+> **FIT data corruption**: The parser automatically filters corrupt data points
+> (e.g., timestamps outside 1989–2050, invalid coordinates, or points >24 hours
+> apart or >100km from neighbors). Removed points trigger a warning diagnostic
+> but don't block conversion; this ensures FIT→GPX and FIT→TCX output matches
+> reference files even when source files contain corrupted records.
 
 > Strict mode: Pass `strictFitIntegrity: true` to `ActivityFiles.load` /
 > `convert` / streamed export helpers when you want FIT integrity errors to

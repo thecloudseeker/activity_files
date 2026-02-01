@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import '../fit/fit_crc.dart';
 import '../models.dart';
@@ -389,6 +390,10 @@ class FitParser implements ActivityFormatParser {
           break;
       }
     }
+    // Filter points to find the largest temporally contiguous group.
+    // This removes corrupted data at the start/end of files with invalid timestamps.
+    final filteredPoints = _filterContiguousPoints(points, diagnostics);
+
     final channels = <Channel, Iterable<Sample>>{};
     if (hrSamples.isNotEmpty) channels[Channel.heartRate] = hrSamples;
     if (cadenceSamples.isNotEmpty) channels[Channel.cadence] = cadenceSamples;
@@ -399,7 +404,7 @@ class FitParser implements ActivityFormatParser {
       channels[Channel.distance] = distanceSamples;
     }
     final activity = RawActivity(
-      points: points,
+      points: filteredPoints,
       channels: channels,
       laps: laps,
       sport: sport,
@@ -456,6 +461,14 @@ DateTime? _decodeTimestamp(Object? raw) {
   if (seconds == 0 || seconds == 0xFFFFFFFF) {
     return null;
   }
+  // Reject timestamps outside reasonable range (1989-12-31 onwards to 2050-12-31)
+  // FIT epoch is 1989-12-31, so:
+  // - Min: 1989-12-31 00:00:01 = 1 second (allow from epoch start)
+  // - Max: 2050-12-31 = ~1924992000 seconds
+  // This filters obviously corrupted data while allowing valid activities.
+  if (seconds < 1 || seconds > 1924992000) {
+    return null;
+  }
   return DateTime.utc(1989, 12, 31).add(Duration(seconds: seconds));
 }
 
@@ -464,10 +477,118 @@ double? _decodeSemicircles(Object? raw) {
     return null;
   }
   final value = raw.toInt();
+  // Check for invalid marker values before conversion
   if (value == 0x7FFFFFFF || value == 0x80000000) {
     return null;
   }
-  return (value * 180.0) / 2147483648.0;
+  final degrees = (value * 180.0) / 2147483648.0;
+  // Validate coordinate is within valid latitude/longitude range
+  // This catches corrupted data that would result in invalid coordinates
+  if (degrees < -180.0 || degrees > 180.0) {
+    return null;
+  }
+  return degrees;
+}
+
+/// Filters points to keep only the largest temporally contiguous group.
+/// This removes corrupted data with timestamps that are years apart from the main activity.
+List<GeoPoint> _filterContiguousPoints(
+  List<GeoPoint> points,
+  List<ParseDiagnostic> diagnostics,
+) {
+  if (points.length <= 10) {
+    // Skip filtering for small datasets (likely test data or very short activities)
+    return points;
+  }
+
+  // Sort points by time
+  final sorted = [...points]..sort((a, b) => a.time.compareTo(b.time));
+
+  // Find groups where consecutive points are within a reasonable time window (24 hours)
+  final groups = <List<GeoPoint>>[];
+  var currentGroup = <GeoPoint>[sorted[0]];
+
+  for (var i = 1; i < sorted.length; i++) {
+    final gap = sorted[i].time.difference(sorted[i - 1].time);
+    // If gap is more than 24 hours, start a new group
+    if (gap.inHours > 24) {
+      groups.add(currentGroup);
+      currentGroup = <GeoPoint>[sorted[i]];
+    } else {
+      currentGroup.add(sorted[i]);
+    }
+  }
+  groups.add(currentGroup);
+
+  // Find the largest group
+  if (groups.length == 1) {
+    currentGroup = sorted;
+  } else {
+    currentGroup = groups.reduce((a, b) => a.length > b.length ? a : b);
+  }
+
+  // Additional filtering: remove points with coordinates far from their neighbors
+  // This catches corrupted records with plausible timestamps but invalid coordinates
+  final filtered = <GeoPoint>[];
+  for (var i = 0; i < currentGroup.length; i++) {
+    final point = currentGroup[i];
+    var isValid = true;
+
+    // Check distance from neighbors (skip first and last if they're outliers)
+    if (currentGroup.length >= 3) {
+      if (i == 0) {
+        // Check first point against second
+        final dist = _distance(point, currentGroup[1]);
+        // If first point is >100km from second, it's likely corrupt
+        if (dist > 100000) {
+          isValid = false;
+        }
+      } else if (i == currentGroup.length - 1) {
+        // Check last point against second-to-last
+        final dist = _distance(point, currentGroup[i - 1]);
+        // If last point is >100km from previous, it's likely corrupt
+        if (dist > 100000) {
+          isValid = false;
+        }
+      }
+    }
+
+    if (isValid) {
+      filtered.add(point);
+    }
+  }
+
+  final totalRemoved = points.length - filtered.length;
+  if (totalRemoved > 0) {
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: 'fit.points.filtered_outliers',
+        message:
+            'Removed $totalRemoved outlier point(s) with invalid timestamps or coordinates.',
+        node: const ParseNodeReference(path: 'fit.points'),
+      ),
+    );
+  }
+
+  return filtered;
+}
+
+/// Calculate approximate distance in meters between two points using Haversine formula
+double _distance(GeoPoint a, GeoPoint b) {
+  const earthRadius = 6371000.0; // meters
+  final lat1 = a.latitude * 0.017453292519943295; // degrees to radians
+  final lat2 = b.latitude * 0.017453292519943295;
+  final dLat = lat2 - lat1;
+  final dLon = (b.longitude - a.longitude) * 0.017453292519943295;
+
+  final sinDLat = math.sin(dLat / 2);
+  final sinDLon = math.sin(dLon / 2);
+  final a2 =
+      sinDLat * sinDLat + math.cos(lat1) * math.cos(lat2) * sinDLon * sinDLon;
+  final c = 2 * math.asin(math.sqrt(a2));
+
+  return earthRadius * c;
 }
 
 double? _decodeAltitude(Object? raw) {

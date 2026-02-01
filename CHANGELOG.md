@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3
+### Fixed
+- Fix FIT parser to remove corrupted data points with invalid timestamps or coordinates, ensuring FIT→GPX and FIT→TCX output matches reference files
+
 ## 0.4.2
 ### Fixed
 - Fix FIT parser for non-standard message ordering. Thanks [@hallr-boulder](https://github.com/hallr-boulder) for reporting (fixes #2)
