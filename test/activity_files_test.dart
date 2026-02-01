@@ -2164,6 +2164,238 @@ void main() {
       expect(points.first.latitude, closeTo(0.0, 1e-6));
       expect(points.last.latitude, closeTo(0.0005, 1e-6));
     });
+
+    test(
+      'FIT parser filters points with corrupt timestamps outside valid range',
+      () {
+        // Build large FIT file with >10 points to trigger filtering
+        final validBase = DateTime.utc(2026, 1, 8, 14, 0, 0);
+        final fitEpoch = DateTime.utc(1989, 12, 31);
+
+        final validTimestamp = validBase.difference(fitEpoch).inSeconds;
+        final corruptOld = DateTime.utc(
+          1990,
+          1,
+          1,
+        ).difference(fitEpoch).inSeconds;
+        final corruptFuture = DateTime.utc(
+          2060,
+          1,
+          1,
+        ).difference(fitEpoch).inSeconds;
+
+        final data = BytesBuilder();
+        data.add([
+          0x40,
+          0x00,
+          0x00,
+          0x14,
+          0x00,
+          0x03,
+          0xFD,
+          0x04,
+          0x86,
+          0x00,
+          0x04,
+          0x85,
+          0x01,
+          0x04,
+          0x85,
+        ]);
+
+        int writeInt32(int value) => value & 0xFFFFFFFF;
+        List<int> int32LE(int value) => [
+          value & 0xFF,
+          (value >> 8) & 0xFF,
+          (value >> 16) & 0xFF,
+          (value >> 24) & 0xFF,
+        ];
+
+        int encodeSemicircles(double degrees) =>
+            ((degrees * 2147483648.0) / 180.0).round();
+
+        // Add 15 valid points so filtering is triggered
+        for (var i = 0; i < 15; i++) {
+          data.add([
+            0x00,
+            ...int32LE(validTimestamp + (i * 10)),
+            ...int32LE(writeInt32(encodeSemicircles(39.938589 + (i * 0.0001)))),
+            ...int32LE(
+              writeInt32(encodeSemicircles(-105.258161 + (i * 0.0001))),
+            ),
+          ]);
+        }
+
+        // Add corrupt points at the end
+        data.add([
+          0x00,
+          ...int32LE(corruptFuture),
+          ...int32LE(writeInt32(encodeSemicircles(0.0))),
+          ...int32LE(writeInt32(encodeSemicircles(0.0))),
+        ]);
+
+        final payload = data.toBytes();
+        final header = Uint8List(14);
+        final bd = ByteData.view(header.buffer);
+        header[0] = 14;
+        header[1] = 0x10;
+        bd.setUint16(2, 0, Endian.little);
+        bd.setUint32(4, payload.length, Endian.little);
+        header.setRange(8, 12, '.FIT'.codeUnits);
+
+        int fitCrc(Uint8List data, [int offset = 0, int? length]) {
+          var crc = 0;
+          for (var i = offset; i < offset + (length ?? data.length); i++) {
+            final byte = data[i];
+            for (var bit = 0; bit < 8; bit++) {
+              if ((crc & 1) != 0) {
+                crc = (crc >> 1) ^ 0x8005;
+              } else {
+                crc >>= 1;
+              }
+              if ((byte & (1 << bit)) != 0) {
+                crc ^= 0x8005;
+              }
+            }
+          }
+          return crc & 0xFFFF;
+        }
+
+        final crc = fitCrc(header.sublist(0, 12));
+        bd.setUint16(12, crc, Endian.little);
+        final dataCrc = fitCrc(payload);
+
+        final bytes = Uint8List.fromList([
+          ...header,
+          ...payload,
+          dataCrc & 0xFF,
+          (dataCrc >> 8) & 0xFF,
+        ]);
+
+        final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+        // Should have 15 valid points (corrupt point with invalid timestamp is skipped)
+        expect(result.activity.points.length, equals(15));
+
+        // Should have a diagnostic about the skipped record with invalid timestamp
+        final skippedWarnings = result.diagnostics.where(
+          (d) => d.code == 'fit.record.missing_timestamp',
+        );
+        expect(skippedWarnings, isNotEmpty);
+      },
+    );
+
+    test('FIT parser filters spatially distant outlier points', () {
+      // Build large FIT file with >10 points including spatial outliers
+      final validBase = DateTime.utc(2026, 1, 8, 14, 0, 0);
+      final fitEpoch = DateTime.utc(1989, 12, 31);
+      final validTimestamp = validBase.difference(fitEpoch).inSeconds;
+
+      final data = BytesBuilder();
+      data.add([
+        0x40,
+        0x00,
+        0x00,
+        0x14,
+        0x00,
+        0x03,
+        0xFD,
+        0x04,
+        0x86,
+        0x00,
+        0x04,
+        0x85,
+        0x01,
+        0x04,
+        0x85,
+      ]);
+
+      int writeInt32(int value) => value & 0xFFFFFFFF;
+      List<int> int32LE(int value) => [
+        value & 0xFF,
+        (value >> 8) & 0xFF,
+        (value >> 16) & 0xFF,
+        (value >> 24) & 0xFF,
+      ];
+
+      int encodeSemicircles(double degrees) =>
+          ((degrees * 2147483648.0) / 180.0).round();
+
+      // Add 15 valid Colorado points
+      for (var i = 0; i < 15; i++) {
+        data.add([
+          0x00,
+          ...int32LE(validTimestamp + (i * 10)),
+          ...int32LE(writeInt32(encodeSemicircles(39.938589 + (i * 0.0001)))),
+          ...int32LE(writeInt32(encodeSemicircles(-105.258161 + (i * 0.0001)))),
+        ]);
+      }
+
+      // Add spatial outlier at the end (Berlin coordinates - >8000km away)
+      data.add([
+        0x00,
+        ...int32LE(validTimestamp + 150),
+        ...int32LE(writeInt32(encodeSemicircles(52.756393))),
+        ...int32LE(writeInt32(encodeSemicircles(13.024073))),
+      ]);
+
+      final payload = data.toBytes();
+      final header = Uint8List(14);
+      final bd = ByteData.view(header.buffer);
+      header[0] = 14;
+      header[1] = 0x10;
+      bd.setUint16(2, 0, Endian.little);
+      bd.setUint32(4, payload.length, Endian.little);
+      header.setRange(8, 12, '.FIT'.codeUnits);
+
+      int fitCrc(Uint8List data, [int offset = 0, int? length]) {
+        var crc = 0;
+        for (var i = offset; i < offset + (length ?? data.length); i++) {
+          final byte = data[i];
+          for (var bit = 0; bit < 8; bit++) {
+            if ((crc & 1) != 0) {
+              crc = (crc >> 1) ^ 0x8005;
+            } else {
+              crc >>= 1;
+            }
+            if ((byte & (1 << bit)) != 0) {
+              crc ^= 0x8005;
+            }
+          }
+        }
+        return crc & 0xFFFF;
+      }
+
+      final crc = fitCrc(header.sublist(0, 12));
+      bd.setUint16(12, crc, Endian.little);
+      final dataCrc = fitCrc(payload);
+
+      final bytes = Uint8List.fromList([
+        ...header,
+        ...payload,
+        dataCrc & 0xFF,
+        (dataCrc >> 8) & 0xFF,
+      ]);
+
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      // Should have filtered out the spatial outlier (16 - 1 = 15 valid points)
+      expect(result.activity.points.length, equals(15));
+
+      // All remaining points should be in Colorado
+      for (final point in result.activity.points) {
+        expect(point.latitude, greaterThan(39.0));
+        expect(point.latitude, lessThan(40.0));
+        expect(point.longitude, greaterThan(-106.0));
+        expect(point.longitude, lessThan(-105.0));
+      }
+
+      // Should have a warning about filtered outliers
+      final outlierWarnings = result.diagnostics.where(
+        (d) => d.code == 'fit.points.filtered_outliers',
+      );
+      expect(outlierWarnings, isNotEmpty);
+    });
   });
 
   group('Async parsing', () {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4
+### Added
+- New Unit tests
+- New Integration tests
+- Synthetic test data generator with clean fixtures
+
 ## 0.4.3
 ### Fixed
 - Fix FIT parser to remove corrupted data points with invalid timestamps or coordinates, ensuring FIT→GPX and FIT→TCX output matches reference files
