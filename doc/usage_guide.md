@@ -6,7 +6,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.4.4
+  activity_files: ^0.5.0
 ```
 
 Then install dependencies:
@@ -117,7 +117,7 @@ class RidePreview extends StatelessWidget {
 }
 ```
 
-> Web note: Flutter web does not support isolates. Always pass `useIsolate: false` (and `exportInIsolate: false`) when targeting the web. The snippets above gate those flags with `!kIsWeb` for convenience.
+> Web note: When targeting Flutter web, use `useIsolate: false` (and `exportInIsolate: false`). The snippets above gate those flags with `!kIsWeb` for convenience.
 
 ### Raw streams
 
@@ -158,6 +158,21 @@ final export = await ActivityFiles.convertAndExport(
 ```
 
 Each stream uses records (`({timestamp, latitude, longitude, elevation})` and `({timestamp, value})`), making it trivial to forward arrays from REST or gRPC payloads. When wearable categories differ from the built-in `Sport` enum, call `ActivityFiles.registerSportMapper` once during startup to plug in your own mapping strategy.
+
+### FIT session/lap stats
+
+When parsing FIT files, session summary values (distance, time, avg/max metrics) are surfaced on `RawActivity.summary`, and lap stats are populated on each `Lap` when available:
+
+```dart
+final result = await ActivityFiles.load(fitBytes, format: ActivityFileFormat.fit);
+final summary = result.activity.summary;
+print('Distance: ${summary?.totalDistanceMeters}');
+print('Avg HR: ${summary?.avgHeartRate}');
+
+for (final lap in result.activity.laps) {
+  print('Lap ${lap.name}: ${lap.distanceMeters}m, avg HR ${lap.avgHeartRate}');
+}
+```
 
 ## Dart VM / CLI
 
@@ -219,40 +234,67 @@ if (export.hasErrors) {
 > `hasErrors` on the result to surface failures gracefully.
 
 > FIT integrity: Header/trailer CRC mismatches and truncated FIT payloads are
-> surfaced as error diagnostics and the parsed activity is empty. Treat these as
-> corrupted uploads and halt processing.
->
-> **FIT data corruption**: The parser automatically filters corrupt data points
-> (e.g., timestamps outside 1989–2050, invalid coordinates, or points >24 hours
-> apart or >100km from neighbors). Removed points trigger a warning diagnostic
-> but don't block conversion; this ensures FIT→GPX and FIT→TCX output matches
-> reference files even when source files contain corrupted records.
+> surfaced as error diagnostics. Parsing continues and may yield usable points;
+> the parser also filters corrupt data points (for example timestamps outside
+> 1989–2050, invalid coordinates, or points that are more than 24 hours apart
+> or 100 km from neighbors) and emits warning diagnostics when it removes
+> them. Decide to accept with warnings or reject.
 
 > Strict mode: Pass `strictFitIntegrity: true` to `ActivityFiles.load` /
 > `convert` / streamed export helpers when you want FIT integrity errors to
-> throw `FormatException` immediately instead of returning diagnostics.
+> throw `FormatException` instead of returning diagnostics.
+
+## Resilience (kurz)
+
+- **FIT Korruption**: CRC/trailer Fehler → `fit.header.crc_mismatch`,
+  `fit.trailer.crc_mismatch`, `fit.trailer.truncated`; Parser liest, was geht.
+  Unknown definitions → `fit.definition.missing`; compressed header ohne
+  timestamp → `fit.compressed_header.missing_timestamp` (Warnung).
+- **Strict reject**: `strictFitIntegrity: true` setzen.
+- **Tolerant**:
+
+  ```dart
+  final r = await ActivityFiles.load(fitBytes);
+  final hasCrc = r.diagnostics.any((d) => d.code.contains('crc') || d.code.contains('truncated'));
+  if (hasCrc && r.activity.points.isNotEmpty) {
+    // akzeptieren, aber flaggen
+  }
+  ```
+
+- **GPX/TCX malformed**: `gpx.parse.malformed` / `tcx.parse.malformed`; keine Daten → ablehnen.
+- **Bad GPS/Sensor-Daten**: `normalizeActivity(... trimInvalid: true, sortAndDedup: true, recomputeDistanceAndSpeed: true)`; Channels clampen via `trimInvalid(... channelsBoundToPoints: true)`.
+- **Laps prüfen**:
+
+  ```dart
+  final laps = RawEditor(activity).validateLapBoundaries();
+  if (laps.hasIssues) log(laps.errors);
+  ```
+
+- **Encoding**: Legacy GPX/TCX mit `encoding: latin1` laden.
+- **Telemetry**: Diagnostic-Codes zählen (z.B. `fit.trailer.crc_mismatch`, `gpx.parse.malformed`).
 
 ## Payload limits
 
 - Inline strings/byte arrays and buffered streams are capped at 64MB
-  (`ActivityFiles.defaultMaxPayloadBytes`). Larger inputs throw
+  (`ActivityFiles.defaultMaxPayloadBytes`) by default. Larger inputs throw
   `FormatException` and the CLI rejects them to prevent unbounded buffering.
-- For very large files, stream from disk/network in smaller chunks or split the
-  source before parsing/exporting.
+- To override the limit, pass `maxPayloadBytes` to `load()`, `convert()`,
+  `convertAndExport()`, `convertAndExportStream()`, or `detectFormat()`. Pass
+  `null` to disable the limit entirely.
+- For very large files, stream from disk/network in smaller chunks, split the
+  source before parsing/exporting, or set `maxPayloadBytes: null` if you trust
+  the input.
 
-## Format limitations
+## Format handling
 
-- GPX parsing flattens all tracks/segments into one stream and does not retain
-  waypoints or routes.
-- TCX parsing reads only the first `<Activity>` element; subsequent activities
-  are ignored.
+- GPX parsing merges all tracks and segments into one unified activity stream.
+- TCX parsing reads the first `<Activity>` element.
 
-Split multi-activity files or extend the parsers if you need to preserve those
-constructs end to end.
+For files with multiple activities, split them before parsing or extend the parsers for your specific needs.
 
 ## Async export & streaming
 
-> Web note: Flutter web does not support isolates. Pass `useIsolate: false` (and disable `exportInIsolate`) when running these helpers in a web build.
+> Web note: When targeting Flutter web, use `useIsolate: false` and `exportInIsolate: false`.
 
 ```dart
 Future<void> exportOffMainThread(
@@ -382,6 +424,84 @@ final normalized = builder.build();
 > records so pipelines can avoid manually instantiating `GeoPoint` / `Sample`
 > data.
 
+### Multi-sport activities (triathlons)
+
+`activity_files` supports multi-sport activities like triathlons where different segments have different sports. The `Lap` class includes an optional `sport` field that allows each lap to specify its own sport type:
+
+```dart
+final triathlon = RawActivity(
+  points: [/* GPS points */],
+  laps: [
+    Lap(
+      startTime: DateTime.utc(2024, 7, 21, 6, 0),
+      endTime: DateTime.utc(2024, 7, 21, 6, 20),
+      distanceMeters: 750,
+      sport: Sport.swimming,  // Swim leg
+    ),
+    Lap(
+      startTime: DateTime.utc(2024, 7, 21, 6, 25),
+      endTime: DateTime.utc(2024, 7, 21, 7, 25),
+      distanceMeters: 40000,
+      sport: Sport.cycling,  // Bike leg
+    ),
+    Lap(
+      startTime: DateTime.utc(2024, 7, 21, 7, 30),
+      endTime: DateTime.utc(2024, 7, 21, 8, 0),
+      distanceMeters: 5000,
+      sport: Sport.running,  // Run leg
+    ),
+  ],
+  sport: Sport.swimming,  // Overall activity sport (first segment)
+);
+```
+
+When parsing TCX files with multiple `<Activity>` elements or FIT files with multiple sessions, the parser automatically:
+- Merges all segments into a single `RawActivity`
+- Assigns the appropriate sport to each lap based on its parent activity/session
+- Emits an info-level diagnostic (`tcx.multi_activity` or `fit.multi_session`) indicating the number of sport segments detected
+
+Laps without an explicit `sport` value inherit from the activity's overall sport.
+
+### Merging and splitting activities
+
+`ActivityFiles` provides convenience methods for combining separate activities or splitting multi-sport files:
+
+```dart
+// Merge separate swim/bike/run files into a triathlon
+final swim = await ActivityFiles.load(File('swim.gpx'));
+final bike = await ActivityFiles.load(File('bike.fit'));
+final run = await ActivityFiles.load(File('run.tcx'));
+
+final triathlon = ActivityFiles.merge(
+  [swim.activity, bike.activity, run.activity],
+  preserveSportPerLap: true,  // Assigns each source's sport to its laps
+);
+
+// Export as a single multi-sport file
+await ActivityFiles.export(
+  activity: triathlon,
+  to: ActivityFileFormat.tcx,
+);
+
+// Split a triathlon file into separate sport-specific files
+final parsed = await ActivityFiles.load(File('triathlon.tcx'));
+final splits = ActivityFiles.splitBySport(parsed.activity);
+
+// Each split contains only points/channels/laps for that sport
+final swimActivity = splits[Sport.swimming]!;
+final bikeActivity = splits[Sport.cycling]!;
+final runActivity = splits[Sport.running]!;
+
+// Export each segment separately
+await ActivityFiles.export(activity: swimActivity, to: ActivityFileFormat.gpx);
+await ActivityFiles.export(activity: bikeActivity, to: ActivityFileFormat.gpx);
+await ActivityFiles.export(activity: runActivity, to: ActivityFileFormat.gpx);
+```
+
+`merge()` combines GPS points, sensor channels, and laps from all activities. Set `preserveSportPerLap: true` to create multi-sport activities where each lap retains its source activity's sport.
+
+`splitBySport()` divides activities by lap sport assignments, filtering points and channels to each sport's time range. Each resulting activity contains only data from laps with that sport type.
+
 ## Parsing + encoding
 
 ```dart
@@ -431,6 +551,22 @@ name/description/time fields and metadata/track extensions. Tracks/segments are
 still flattened, and waypoints/routes are ignored, so waypoint-heavy or
 multi-track files will lose that structure on round-trip.
 
+GPX now supports the full Garmin TrackPointExtension v2 schema, which includes
+these channel types:
+- `Channel.heartRate` - Heart rate (BPM)
+- `Channel.cadence` - Cadence (RPM)
+- `Channel.power` - Power (watts)
+- `Channel.temperature` - Air temperature (Celsius)
+- `Channel.waterTemperature` - Water temperature (Celsius)
+- `Channel.depth` - Depth (meters)
+- `Channel.speed` - Speed (m/s)
+- `Channel.course` - Course/heading (degrees true, 0-360)
+- `Channel.bearing` - Bearing (degrees true, 0-360)
+
+All v2 fields are automatically parsed from GPX files and encoded when present
+in the activity's channel data. Use `ChannelSnapshot` convenience accessors
+(e.g., `snapshot.waterTemperature`, `snapshot.depth`) to read these values.
+
 ## Editing pipeline
 
 ```dart
@@ -443,6 +579,13 @@ final editor = ActivityFiles.edit(activity)
     .recomputeDistanceAndSpeed();
 
 final cleaned = editor.activity;
+
+// Validate lap boundaries after compound edits
+final lapValidation = editor.validateLapBoundaries();
+if (lapValidation.hasIssues) {
+  print('Lap validation errors: ${lapValidation.errors}');
+  print('Lap validation warnings: ${lapValidation.warnings}');
+}
 final resampled = RawTransforms.resample(cleaned, step: const Duration(seconds: 2));
 final (activity: withDistance, totalDistance: total) =
     RawTransforms.computeCumulativeDistance(resampled);
@@ -574,3 +717,257 @@ The CLI reports parser diagnostics, validation warnings, and exits with a non-ze
 status when conversion/validation errors occur. Use `--encoding` for non-UTF8 GPX/TCX
 inputs. FIT inputs/outputs are handled as raw binary files by default (the string
 APIs only use base64).
+
+## Troubleshooting common errors
+
+### Format not recognized: "Unable to infer activity format"
+
+**Cause**: The loader could not detect the format from the file content or extension.
+
+**Solutions**:
+- **Pass `format` explicitly**:
+  ```dart
+  final result = await ActivityFiles.load(
+    source,
+    format: ActivityFileFormat.gpx,  // or tcx, fit
+  );
+  ```
+- **For filesystem paths**: Enable `allowFilePaths` if you're passing a path string:
+  ```dart
+  final result = await ActivityFiles.load(
+    'path/to/file.gpx',
+    allowFilePaths: true,
+  );
+  ```
+- **For FIT files**: Prefer raw bytes or `File` over base64 strings:
+  ```dart
+  // Good: raw bytes
+  final bytes = await File('activity.fit').readAsBytes();
+  final result = await ActivityFiles.load(bytes, format: ActivityFileFormat.fit);
+  
+  // Less ideal: base64 string (still works, but harder to detect)
+  final base64Fit = base64Encode(bytes);
+  final result = await ActivityFiles.load(
+    base64Fit,
+    format: ActivityFileFormat.fit,  // specify format explicitly
+  );
+  ```
+
+### Payload exceeds size limit
+
+**Cause**: The input file is larger than the default 64MB limit for security/resource safety.
+
+**Solutions**:
+- **For one-off large files**: Increase or disable the limit:
+  ```dart
+  final result = await ActivityFiles.load(
+    source,
+    maxPayloadBytes: null,  // disable limit (use only for trusted inputs!)
+  );
+  ```
+- **For production code**: Use streaming APIs that don't require full buffering:
+  ```dart
+  // Streaming parse
+  final stream = File('large.fit').openRead();
+  final result = await ActivityFiles.load(
+    stream,
+    // Streams buffer in smaller chunks and can handle very large files
+  );
+  
+  // Streaming conversion/export
+  final converted = await ActivityFiles.convertAndExportStream(
+    source: File('large.gpx').openRead(),
+    from: ActivityFileFormat.gpx,
+    to: ActivityFileFormat.fit,
+  );
+  ```
+- **Route large inputs through pipelines**:
+  ```dart
+  // ActivityExportRequest supports streaming sources
+  final request = ActivityExportRequest.fromStream(
+    stream: largeFileStream,
+    from: ActivityFileFormat.gpx,
+    to: ActivityFileFormat.fit,
+  );
+  final result = await ActivityFiles.runPipeline(request);
+  ```
+
+### Text encoding mismatch (GPX/TCX)
+
+**Cause**: The file is encoded in a non-UTF-8 format (e.g., ISO-8859-1, Windows-1252), but the loader expected UTF-8.
+
+**Symptom**: `FormatException: Invalid UTF-8` or garbled character output.
+
+**Solutions**:
+- **Specify the correct encoding**:
+  ```dart
+  import 'dart:convert';
+  
+  final result = await ActivityFiles.load(
+    source,
+    encoding: latin1,  // or iso-8859-1, windows1252, etc.
+  );
+  ```
+- **For CLI**: Use the `--encoding` flag:
+  ```bash
+  dart pub global run activity_files convert \
+    --source activity.gpx \
+    --from gpx \
+    --to fit \
+    --encoding iso-8859-1
+  ```
+- **When reading from disk**: Let Dart auto-detect or specify encoding:
+  ```dart
+  final file = File('activity.gpx');
+  final content = await file.readAsString(encoding: latin1);
+  final result = await ActivityFiles.load(content, encoding: latin1);
+  ```
+
+### FIT integrity check failed
+
+**Cause**: The FIT file has corrupted header/trailer CRCs or is truncated, often due to incomplete upload/transfer.
+
+**Solutions**:
+- **If the file is legitimate**: Disable strict integrity checks for parsing (but data may be incomplete):
+  ```dart
+  final result = await ActivityFiles.load(
+    source,
+    format: ActivityFileFormat.fit,
+    strictFitIntegrity: false,  // Allows corrupt CRCs; still parses what's available
+  );
+  ```
+- **To catch integrity issues early**: Enable strict checks:
+  ```dart
+  final result = await ActivityFiles.load(
+    source,
+    format: ActivityFileFormat.fit,
+    strictFitIntegrity: true,  // Throws if CRCs don't match
+  );
+  ```
+- **Re-download or regenerate the file**: The best solution is to obtain a clean copy:
+  - From a watch/device: resync or re-export.
+  - From an upload: check that the transfer completed fully.
+  - From a conversion: re-run the conversion from a trusted source.
+
+### Validation warnings and errors
+
+**Cause**: The activity data violates structural constraints (e.g., laps outside the point time range, duplicate timestamps, invalid coordinates).
+
+**Solutions**:
+- **Review diagnostics**:
+  ```dart
+  final result = await ActivityFiles.load(source);
+  for (final diagnostic in result.diagnostics) {
+    print('${diagnostic.severity}: ${diagnostic.message}');
+    if (diagnostic.node != null) {
+      print('  Location: ${diagnostic.node!.format()}');
+    }
+  }
+  ```
+- **Auto-fix common issues** via normalization:
+  ```dart
+  final activity = result.activity;
+  
+  // Remove duplicate/out-of-order timestamps and invalid coordinates
+  final cleaned = ActivityFiles.normalizeActivity(activity);
+  
+  // Trim points outside the activity time window
+  final trimmed = ActivityFiles.trimInvalid(activity);
+  ```
+- **Custom fixes** for specific scenarios:
+  ```dart
+  final editor = ActivityFiles.edit(activity)
+    ..sortAndDedup()           // Sort points/channels/laps, remove duplicates
+    ..trimInvalid()            // Remove invalid coordinates
+    ..crop(start: t1, end: t2) // Trim to a time range
+    ..smoothHR(window: 5);     // Moving average on heart rate
+  
+  final fixed = editor.activity;
+  ```
+- **For multi-sport activities**: Check lap sport assignments:
+  ```dart
+  final result = await ActivityFiles.load(source);
+  for (final lap in result.activity.laps) {
+    print('Lap sport: ${lap.sport ?? result.activity.sport}');
+  }
+  ```
+
+### Convert/export failing silently
+
+**Cause**: Parser diagnostics contain errors, but the result is returned (with empty/partial activity).
+
+**Solutions**:
+- **Always check for errors before processing**:
+  ```dart
+  final result = await ActivityFiles.load(source);
+  
+  if (result.hasErrors) {
+    print('Parse failed with errors:');
+    for (final diag in result.diagnostics
+        .where((d) => d.severity == ParseSeverity.error)) {
+      print('  ERROR: ${diag.message}');
+    }
+    return;  // Don't proceed
+  }
+  
+  // Safe to process result.activity now
+  ```
+- **Run validation to surface data quality issues**:
+  ```dart
+  final result = await ActivityFiles.convertAndExport(
+    source: source,
+    to: ActivityFileFormat.fit,
+    runValidation: true,  // Appends validation diagnostics
+  );
+  
+  if (result.validation?.isValid == false) {
+    print('Data validation issues:');
+    for (final error in result.validation!.errors) {
+      print('  $error');
+    }
+  }
+  ```
+- **Check the `activity` in the result** to verify data was loaded:
+  ```dart
+  final result = await ActivityFiles.load(source);
+  if (result.activity.points.isEmpty) {
+    print('No points were parsed (format or content issue)');
+    print('Diagnostics: ${result.diagnostics}');
+  }
+  ```
+
+### Large file memory usage
+
+**Cause**: Streaming or large conversion is using excessive memory due to buffering.
+
+**Solutions**:
+- **Prefer `parseStream` and `convertAndExportStream`**: They buffer in fixed chunks:
+  ```dart
+  final result = await ActivityFiles.convertAndExportStream(
+    source: File('huge.gpx').openRead(),
+    from: ActivityFileFormat.gpx,
+    to: ActivityFileFormat.fit,
+  );
+  // Stream is consumed incrementally; minimal memory for the file itself.
+  ```
+- **Avoid `maxPayloadBytes: null`** on streamed inputs; let it default:
+  ```dart
+  // Good: reasonable limit on buffered payload
+  final stream = File('large.fit').openRead();
+  final result = await ActivityFiles.load(stream);  // Uses default 64MB buffer
+  
+  // Risky: no limit could cause OOM on very large files
+  final result = await ActivityFiles.load(
+    stream,
+    maxPayloadBytes: null,  // Only if you trust the file size!
+  );
+  ```
+- **Post-process in isolates** to avoid blocking the UI:
+  ```dart
+  final result = await ActivityFiles.convert(
+    source: source,
+    to: ActivityFileFormat.fit,
+    useIsolate: true,           // Parse in background
+    exportInIsolate: true,      // Encode in background
+  );
+  ```

@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
+/// Tests for TCX version compatibility (v1 and v2).
+///
+/// Validates parsing and encoding of both TCX v1 and v2 formats.
+library;
+
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 

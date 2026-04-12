@@ -42,17 +42,41 @@ class ChannelSnapshot {
   /// Time delta for power sample.
   Duration? get powerDelta => deltaFor(Channel.power);
 
-  /// Temperature in degrees Celsius.
+  /// Air temperature in degrees Celsius.
   double? get temperature => valueFor(Channel.temperature);
 
   /// Time delta for temperature sample.
   Duration? get temperatureDelta => deltaFor(Channel.temperature);
+
+  /// Water temperature in degrees Celsius.
+  double? get waterTemperature => valueFor(Channel.waterTemperature);
+
+  /// Time delta for water temperature sample.
+  Duration? get waterTemperatureDelta => deltaFor(Channel.waterTemperature);
+
+  /// Depth in meters.
+  double? get depth => valueFor(Channel.depth);
+
+  /// Time delta for depth sample.
+  Duration? get depthDelta => deltaFor(Channel.depth);
 
   /// Speed in meters per second.
   double? get speed => valueFor(Channel.speed);
 
   /// Time delta for speed sample.
   Duration? get speedDelta => deltaFor(Channel.speed);
+
+  /// Course/heading in degrees true (0-360).
+  double? get course => valueFor(Channel.course);
+
+  /// Time delta for course sample.
+  Duration? get courseDelta => deltaFor(Channel.course);
+
+  /// Bearing in degrees true (0-360).
+  double? get bearing => valueFor(Channel.bearing);
+
+  /// Time delta for bearing sample.
+  Duration? get bearingDelta => deltaFor(Channel.bearing);
 
   /// Whether no channel was resolved.
   bool get isEmpty => _readings.isEmpty;
@@ -135,7 +159,13 @@ class _ChannelSeries {
   _ChannelSeries(List<Sample> samples)
     : _samples = samples,
       _timestamps = samples
-          .map((sample) => sample.time.toUtc().microsecondsSinceEpoch)
+          .map((sample) {
+            // Avoid unnecessary toUtc() conversion - sample.time is already UTC
+            final time = sample.time;
+            return time.isUtc
+                ? time.microsecondsSinceEpoch
+                : time.toUtc().microsecondsSinceEpoch;
+          })
           .toList(growable: false);
 
   final List<Sample> _samples;

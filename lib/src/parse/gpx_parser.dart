@@ -6,13 +6,25 @@ import 'activity_parser.dart';
 import 'parse_result.dart';
 
 /// Parser for the GPX file format.
-// TODO(0.7.0)(feature): Preserve waypoints/routes instead of discarding them during parsing.
-// TODO(0.7.0)(feature): Capture rich metadata (author/email/link/copyright/keywords/bounds).
-// TODO(0.7.0)(feature): Keep multiple tracks/segments distinct instead of flattening into one stream.
+// TODO(0.7.0): GPX: Implement round-trip preservation for waypoints/routes/metadata and multiple tracks.
 class GpxParser implements ActivityFormatParser {
   const GpxParser();
+
+  static final _gpxSportCache = <String, Sport>{};
+  static const _gpxSportMap = {
+    'running': Sport.running,
+    'cycling': Sport.cycling,
+    'biking': Sport.cycling,
+    'bike': Sport.cycling,
+    'swimming': Sport.swimming,
+    'hiking': Sport.hiking,
+    'walking': Sport.walking,
+    'other': Sport.other,
+  };
   @override
   ActivityParseResult parse(String input) {
+    // For large files, we could add event-based parsing here in the future
+    // Current threshold: files > 1MB might benefit from streaming
     final diagnostics = <ParseDiagnostic>[];
     XmlDocument document;
     try {
@@ -53,59 +65,74 @@ class GpxParser implements ActivityFormatParser {
     var metadataDescription = _firstText(root, 'desc');
     final metadataExtensions = <GpxExtensionNode>[];
     // GPX 1.1 wraps metadata; GPX 1.0 keeps name/desc/time at the root.
-    final metadataElement = root.childElements.firstWhere(
-      (element) => element.name.local.toLowerCase() == 'metadata',
-      orElse: () => XmlElement(XmlName('')),
-    );
-    if (metadataElement.name.local.isNotEmpty) {
+    final metadataElement = root.getElement('metadata');
+    if (metadataElement != null) {
       metadataName = _firstText(metadataElement, 'name') ?? metadataName;
       metadataDescription =
           _firstText(metadataElement, 'desc') ?? metadataDescription;
-      for (final extensions in metadataElement.childElements.where(
-        (e) => e.name.local.toLowerCase() == 'extensions',
-      )) {
-        metadataExtensions.addAll(_extensionChildrenToNodes(extensions));
+      for (final child in metadataElement.childElements) {
+        if (child.name.local == 'extensions') {
+          metadataExtensions.addAll(_extensionChildrenToNodes(child));
+        }
       }
     }
-    for (final extensions in root.childElements.where(
-      (e) => e.name.local.toLowerCase() == 'extensions',
-    )) {
-      metadataExtensions.addAll(_extensionChildrenToNodes(extensions));
+    for (final child in root.childElements) {
+      if (child.name.local == 'extensions') {
+        metadataExtensions.addAll(_extensionChildrenToNodes(child));
+      }
     }
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
     final cadenceSamples = <Sample>[];
     final powerSamples = <Sample>[];
     final temperatureSamples = <Sample>[];
+    final waterTemperatureSamples = <Sample>[];
+    final depthSamples = <Sample>[];
+    final speedSamples = <Sample>[];
+    final courseSamples = <Sample>[];
+    final bearingSamples = <Sample>[];
     final laps = <Lap>[];
     final trackExtensions = <GpxExtensionNode>[];
     String? trackName;
     String? trackDescription;
     String? trackType;
     var sport = Sport.unknown;
-    for (final trk
-        in root.findElements('*').where((e) => e.name.local == 'trk')) {
-      trackName ??= _firstText(trk, 'name');
-      trackDescription ??= _firstText(trk, 'desc');
-      trackType ??= _firstText(trk, 'type');
-      final typeText = _firstText(trk, 'type');
-      if (typeText != null && typeText.trim().isNotEmpty) {
-        sport = _sportFromString(typeText);
+
+    // Direct iteration instead of .where() to avoid creating iterables
+    for (final trk in root.childElements) {
+      if (trk.name.local != 'trk') continue;
+
+      // Batch lookup for track metadata to avoid repeated scans
+      if (trackName == null || trackDescription == null || trackType == null) {
+        final trackTexts = _batchTrackTexts(trk);
+        trackName ??= trackTexts['name'];
+        trackDescription ??= trackTexts['desc'];
+        trackType ??= trackTexts['type'];
+        final typeText = trackTexts['type'];
+        if (typeText != null && typeText.trim().isNotEmpty) {
+          sport = _sportFromString(typeText);
+        }
       }
-      for (final extensions in trk.childElements.where(
-        (e) => e.name.local.toLowerCase() == 'extensions',
-      )) {
-        trackExtensions.addAll(_extensionChildrenToNodes(extensions));
+      for (final child in trk.childElements) {
+        if (child.name.local == 'extensions') {
+          trackExtensions.addAll(_extensionChildrenToNodes(child));
+        }
       }
-      for (final trkseg
-          in trk.findElements('*').where((e) => e.name.local == 'trkseg')) {
+
+      // Direct iteration for track segments
+      for (final trkseg in trk.childElements) {
+        if (trkseg.name.local != 'trkseg') continue;
+
         DateTime? segmentStart;
         DateTime? segmentEnd;
         var segmentDistance = 0.0;
         GeoPoint? previous;
         var index = 0;
-        for (final trkpt
-            in trkseg.findElements('*').where((e) => e.name.local == 'trkpt')) {
+
+        // Direct iteration for trackpoints
+        for (final trkpt in trkseg.childElements) {
+          if (trkpt.name.local != 'trkpt') continue;
+
           index++;
           final latText = trkpt.getAttribute('lat');
           final lonText = trkpt.getAttribute('lon');
@@ -126,7 +153,26 @@ class GpxParser implements ActivityFormatParser {
             );
             continue;
           }
-          final timeText = _firstText(trkpt, 'time');
+
+          // Parse child elements in one pass for efficiency
+          String? timeText;
+          String? eleText;
+          final extensionNodes = <XmlElement>[];
+
+          for (final child in trkpt.childElements) {
+            switch (child.name.local) {
+              case 'time':
+                timeText ??= child.innerText.trim();
+                break;
+              case 'ele':
+                eleText ??= child.innerText.trim();
+                break;
+              case 'extensions':
+                extensionNodes.add(child);
+                break;
+            }
+          }
+
           if (timeText == null) {
             diagnostics.add(
               ParseDiagnostic(
@@ -160,7 +206,7 @@ class GpxParser implements ActivityFormatParser {
             );
             continue;
           }
-          final eleText = _firstText(trkpt, 'ele');
+
           final elevation = eleText != null ? double.tryParse(eleText) : null;
           if (eleText != null && elevation == null) {
             diagnostics.add(
@@ -191,60 +237,76 @@ class GpxParser implements ActivityFormatParser {
             segmentDistance += _haversine(prev, point);
           }
           previous = point;
-          final extensionElements = trkpt
-              .findElements('*')
-              .where((e) => e.name.local.toLowerCase() == 'extensions')
-              .expand(
-                (ext) => ext.children.whereType<XmlElement>().where(
-                  (element) =>
-                      element.name.local.toLowerCase() == 'trackpointextension',
-                ),
-              );
-          for (final ext in extensionElements) {
-            for (final child in ext.childElements) {
-              final name = child.name.local.toLowerCase();
-              final valueText = child.innerText.trim();
-              if (valueText.isEmpty) {
-                continue;
-              }
-              final parsed = double.tryParse(valueText);
-              if (parsed == null) {
-                diagnostics.add(
-                  ParseDiagnostic(
-                    severity: ParseSeverity.warning,
-                    code: 'gpx.extension.invalid_number',
-                    message:
-                        'Unparsable extension value "$valueText" for $name at $time.',
-                    node: ParseNodeReference(
-                      path: 'gpx.trk.trkseg.trkpt.extensions.$name',
-                      index: index - 1,
-                    ),
-                  ),
-                );
-                continue;
-              }
-              switch (name) {
-                case 'hr':
-                  hrSamples.add(Sample(time: time, value: parsed));
-                  break;
-                case 'cad':
-                case 'cadence':
-                  cadenceSamples.add(Sample(time: time, value: parsed));
-                  break;
-                case 'power':
-                  powerSamples.add(Sample(time: time, value: parsed));
-                  break;
-                case 'atemp':
-                case 'temp':
-                  temperatureSamples.add(Sample(time: time, value: parsed));
-                  break;
-                default:
-                  // Unknown extension; ignore.
-                  break;
+
+          // Parse extensions efficiently (already collected in first pass)
+          for (final extChild in extensionNodes) {
+            for (final tpext in extChild.childElements) {
+              if (tpext.name.local == 'TrackPointExtension') {
+                // Cache child elements for efficient access
+                for (final child in tpext.childElements) {
+                  final name = child.name.local;
+                  final valueText = child.innerText.trim();
+                  if (valueText.isEmpty) {
+                    continue;
+                  }
+                  final parsed = double.tryParse(valueText);
+                  if (parsed == null) {
+                    diagnostics.add(
+                      ParseDiagnostic(
+                        severity: ParseSeverity.warning,
+                        code: 'gpx.extension.invalid_number',
+                        message:
+                            'Unparsable extension value "$valueText" for $name at $time.',
+                        node: ParseNodeReference(
+                          path: 'gpx.trk.trkseg.trkpt.extensions.$name',
+                          index: index - 1,
+                        ),
+                      ),
+                    );
+                    continue;
+                  }
+                  // Use case-sensitive comparison (Garmin uses lowercase)
+                  switch (name) {
+                    case 'hr':
+                      hrSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'cad':
+                    case 'cadence':
+                      cadenceSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'power':
+                      powerSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'atemp':
+                    case 'temp':
+                      temperatureSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'wtemp':
+                      waterTemperatureSamples.add(
+                        Sample(time: time, value: parsed),
+                      );
+                      break;
+                    case 'depth':
+                      depthSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'speed':
+                      speedSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'course':
+                      courseSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    case 'bearing':
+                      bearingSamples.add(Sample(time: time, value: parsed));
+                      break;
+                    default:
+                      // Unknown extension; ignore.
+                      break;
+                  }
+                }
               }
             }
           }
-        }
+        } // End of trkpt loop
         if (segmentStart != null && segmentEnd != null) {
           laps.add(
             Lap(
@@ -270,6 +332,21 @@ class GpxParser implements ActivityFormatParser {
     if (temperatureSamples.isNotEmpty) {
       channelMap[Channel.temperature] = temperatureSamples;
     }
+    if (waterTemperatureSamples.isNotEmpty) {
+      channelMap[Channel.waterTemperature] = waterTemperatureSamples;
+    }
+    if (depthSamples.isNotEmpty) {
+      channelMap[Channel.depth] = depthSamples;
+    }
+    if (speedSamples.isNotEmpty) {
+      channelMap[Channel.speed] = speedSamples;
+    }
+    if (courseSamples.isNotEmpty) {
+      channelMap[Channel.course] = courseSamples;
+    }
+    if (bearingSamples.isNotEmpty) {
+      channelMap[Channel.bearing] = bearingSamples;
+    }
     final activity = RawActivity(
       points: points,
       channels: channelMap,
@@ -288,31 +365,53 @@ class GpxParser implements ActivityFormatParser {
   }
 
   Sport _sportFromString(String value) {
+    if (value.isEmpty) {
+      return Sport.unknown;
+    }
+
+    // Check cache first
+    final cached = GpxParser._gpxSportCache[value];
+    if (cached != null) {
+      return cached;
+    }
+
     final normalized = value.trim().toLowerCase();
-    return switch (normalized) {
-      'running' => Sport.running,
-      'cycling' || 'biking' || 'bike' => Sport.cycling,
-      'swimming' => Sport.swimming,
-      'hiking' => Sport.hiking,
-      'walking' => Sport.walking,
-      'other' => Sport.other,
-      _ => Sport.unknown,
-    };
+    final result = GpxParser._gpxSportMap[normalized] ?? Sport.unknown;
+
+    // Cache for future lookups
+    GpxParser._gpxSportCache[value] = result;
+
+    return result;
   }
 }
 
 String? _firstText(XmlElement element, String localName) {
+  // Direct case-sensitive lookup (XML is case-sensitive anyway)
   for (final child in element.childElements) {
-    if (child.name.local.toLowerCase() == localName.toLowerCase()) {
+    if (child.name.local == localName) {
       return child.innerText.isEmpty ? null : child.innerText.trim();
     }
   }
   return null;
 }
 
+/// Batch lookup for track metadata to avoid repeated element scans
+Map<String, String?> _batchTrackTexts(XmlElement trackElement) {
+  final texts = <String, String?>{};
+  for (final child in trackElement.childElements) {
+    final localName = child.name.local;
+    if (localName == 'name' || localName == 'desc' || localName == 'type') {
+      final trimmed = child.innerText.trim();
+      texts[localName] = trimmed.isEmpty ? null : trimmed;
+    }
+  }
+  return texts;
+}
+
 List<GpxExtensionNode> _extensionChildrenToNodes(XmlElement extensionsElement) {
+  // Use childElements directly instead of children.whereType for efficiency
   final nodes = <GpxExtensionNode>[];
-  for (final child in extensionsElement.children.whereType<XmlElement>()) {
+  for (final child in extensionsElement.childElements) {
     nodes.add(_extensionNodeFromXml(child));
   }
   return nodes;
@@ -326,20 +425,23 @@ GpxExtensionNode _extensionNodeFromXml(XmlElement element) {
               : attribute.name.local:
           attribute.value,
   };
-  final textContent = element.children
-      .whereType<XmlText>()
-      .map((node) => node.value.trim())
-      .where((value) => value.isNotEmpty)
-      .join();
+  // Optimize text content extraction
+  String? textContent;
+  for (final child in element.children) {
+    if (child is XmlText) {
+      final trimmed = child.value.trim();
+      if (trimmed.isNotEmpty) {
+        textContent = (textContent ?? '') + trimmed;
+      }
+    }
+  }
   return GpxExtensionNode(
     name: element.name.local,
     namespacePrefix: element.name.prefix,
     namespaceUri: element.name.namespaceUri,
-    value: textContent.isEmpty ? null : textContent,
+    value: textContent,
     attributes: attributes,
-    children: element.children.whereType<XmlElement>().map(
-      _extensionNodeFromXml,
-    ),
+    children: element.childElements.map(_extensionNodeFromXml),
   );
 }
 

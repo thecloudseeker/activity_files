@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
+/// Unit tests for RawEditor transform operations.
+///
+/// Tests data manipulation utilities like trimming, downsampling,
+/// smoothing, and channel resampling.
+library;
+
 import 'package:activity_files/src/models.dart';
 import 'package:activity_files/src/transforms.dart';
 import 'package:test/test.dart';

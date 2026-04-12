@@ -35,10 +35,38 @@ class FitParser implements ActivityFormatParser {
     final pass1Reader = _FitByteReader(payload);
     final header = _FitHeader.tryRead(pass1Reader);
     if (header == null) {
-      throw FormatException('Invalid FIT header.');
+      throw FormatException(
+        'Invalid FIT header: could not read magic number and dataSize.\n'
+        '\n'
+        'This usually means:\n'
+        '  • The file is not a valid FIT file\n'
+        '  • The file is corrupted or truncated\n'
+        '  • The file was not transferred correctly (incomplete download)\n'
+        '\n'
+        'Please verify:\n'
+        '  1. The file has a .fit extension and is not renamed\n'
+        '  2. The file size is at least 14 bytes (minimum FIT header)\n'
+        '  3. The file was downloaded/transferred completely\n'
+        '  4. Try re-downloading the file from the source device\n'
+        '\n'
+        'File size: ${payload.length} bytes',
+      );
     }
     if (header.headerSize > payload.length) {
-      throw FormatException('FIT header size exceeds available payload.');
+      throw FormatException(
+        'FIT header claims ${header.headerSize} bytes but file only has ${payload.length} bytes.\n'
+        '\n'
+        'The file is truncated or corrupted:\n'
+        '  • Header size: ${header.headerSize} bytes\n'
+        '  • Available data: ${payload.length} bytes\n'
+        '  • Missing: ${header.headerSize - payload.length} bytes\n'
+        '\n'
+        'Solutions:\n'
+        '  1. Re-download the file from the device/source\n'
+        '  2. Check network/transfer logs for interruptions\n'
+        '  3. Verify the file was saved/exported completely\n'
+        '  4. If partial recovery is needed, use strictFitIntegrity: false',
+      );
     }
     if (header.hasHeaderCrc) {
       final storedHeaderCrc =
@@ -61,12 +89,28 @@ class FitParser implements ActivityFormatParser {
       }
     }
     if (header.dataType != '.FIT') {
-      throw FormatException('Unsupported FIT file type: ${header.dataType}');
+      throw FormatException(
+        'Unsupported FIT file type: "${header.dataType}" (expected ".FIT").\n'
+        '\n'
+        'This file is either:\n'
+        '  • Not a valid FIT file\n'
+        '  • A corrupted FIT header\n'
+        '  • A different file format entirely\n'
+        '\n'
+        'Please verify:\n'
+        '  1. The file is a genuine FIT file from a fitness device\n'
+        '  2. The file extension is .fit (correct format)\n'
+        '  3. The file was not converted to another format\n'
+        '  4. Check with the source device that exported this file\n'
+        '\n'
+        'If you believe this is a valid FIT file, please report it as a bug.',
+      );
     }
     final dataLimit = header.headerSize + header.dataSize;
 
     // Pass 1: Collect all message definitions WITHOUT processing data messages.
     // This ensures definitions are available before decoding data.
+    // TODO(0.5.5)(fit): Replace static local->definition snapshots with definition timelines so local redefinitions decode against the active schema at each message offset.
     final definitions = <int, _FitMessageDefinition>{};
     pass1Reader.position = header.headerSize;
     while (pass1Reader.position < dataLimit &&
@@ -149,10 +193,13 @@ class FitParser implements ActivityFormatParser {
     final tempSamples = <Sample>[];
     final speedSamples = <Sample>[];
     final distanceSamples = <Sample>[];
+    final extraSamples = <Channel, List<Sample>>{};
     final laps = <Lap>[];
+    var sawDataMessage = false;
     Sport sport = Sport.unknown;
     String? creator;
     ActivityDeviceMetadata? deviceMetadata;
+    ActivitySummary? summary;
     if (dataLimit > payload.length) {
       diagnostics.add(
         ParseDiagnostic(
@@ -217,6 +264,7 @@ class FitParser implements ActivityFormatParser {
       }
       if (isDefinition) {
         // Skip definition processing in pass 2 - already collected in pass 1
+        // TODO(0.5.5)(fit): Apply in-stream definition updates in pass 2 (do not freeze to pass1) to support files that redefine record locals many times.
         _FitMessageDefinition.read(
           reader,
           localType,
@@ -224,12 +272,22 @@ class FitParser implements ActivityFormatParser {
         );
         continue;
       }
+      sawDataMessage = true;
       var definition = definitions[localType];
       if (definition == null) {
-        // Definition not found - skip message gracefully and continue parsing.
-        // This is common in swimming files where data messages appear before definitions.
-        // We've already logged this in Pass 1, so just skip silently in Pass 2.
-        continue;
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.error,
+            code: 'fit.data.unknown_definition',
+            message:
+                'Data message references unknown definition #$localType; parsing stopped to avoid corrupt output.',
+            node: ParseNodeReference(
+              path: 'fit.message',
+              description: 'localType=$localType',
+            ),
+          ),
+        );
+        break;
       }
       final values = definition.readValues(
         reader,
@@ -299,25 +357,44 @@ class FitParser implements ActivityFormatParser {
           if (sportValue is int) {
             sport = _mapSport(sportValue);
           }
-          // TODO(0.5.0)(feature): Extract session stats (elapsed_time, total_distance,
-          // avg/max speeds, HR, cadence, power, calories) from fields 8, 9, 11-14, 16-18, 25-30.
+          summary = ActivitySummary(
+            elapsedTime: _decodeFitDuration(values[8]),
+            timerTime: _decodeFitDuration(values[9]),
+            totalDistanceMeters: _decodeFitDistance(values[11]),
+            calories: _asNumber(values[14])?.toDouble(),
+            avgSpeed: _decodeFitSpeed(values[16]),
+            maxSpeed: _decodeFitSpeed(values[17]),
+            avgHeartRate: _asNumber(values[18])?.toDouble(),
+            maxHeartRate: _asNumber(values[19])?.toDouble(),
+            avgCadence: _asNumber(values[20])?.toDouble(),
+            maxCadence: _asNumber(values[21])?.toDouble(),
+            avgPower: _asNumber(values[22])?.toDouble(),
+            maxPower: _asNumber(values[23])?.toDouble(),
+          );
           break;
         case 19: // lap
-          // TODO(0.5.0)(feature): Extract lap stats (event, type, position, calories,
-          // avg/max speeds/HR/cadence/power per lap) from remaining fields (0, 1, 3-6, 9-14, etc).
           final start = _decodeTimestamp(values[2]);
-          final totalTime = _asNumber(values[7])?.toDouble();
-          final distanceMeters = _asNumber(values[8])?.toDouble();
+          final totalTime = _decodeFitDuration(values[7]);
+          final distanceMeters = _decodeFitDistance(values[8]);
           if (start != null && totalTime != null) {
-            final end = start.add(
-              Duration(milliseconds: (totalTime * 1000).round()),
-            );
+            final end = start.add(totalTime);
             laps.add(
               Lap(
                 startTime: start,
                 endTime: end,
                 distanceMeters: distanceMeters,
                 name: 'Lap ${laps.length + 1}',
+                calories: _asNumber(values[21])?.toDouble(),
+                avgSpeed: _decodeFitSpeed(values[13]),
+                maxSpeed: _decodeFitSpeed(values[14]),
+                avgHeartRate: _asNumber(values[15])?.toDouble(),
+                maxHeartRate: _asNumber(values[16])?.toDouble(),
+                avgCadence: _asNumber(values[17])?.toDouble(),
+                maxCadence: _asNumber(values[18])?.toDouble(),
+                avgPower: _asNumber(values[19])?.toDouble(),
+                maxPower: _asNumber(values[20])?.toDouble(),
+                event: _asNumber(values[0])?.toInt(),
+                eventType: _asNumber(values[1])?.toInt(),
               ),
             );
           }
@@ -336,11 +413,21 @@ class FitParser implements ActivityFormatParser {
                 ),
               ),
             );
+            // TODO(0.5.5)(fit): Add bounded timestamp recovery fallback (compressed offset/history) before dropping records from valid containers with variant layouts.
             continue;
           }
-          // TODO(0.5.0)(feature): Extract grade (field 78), left_right_balance (field 120),
-          // grit/flow (Garmin running metrics), eBike telemetry, and other record fields.
-          // TODO(0.5.0)(feature): Map vendor-specific fields (53, 73, 87, 107, 134-136, 143).
+          void addSample(Channel channel, num? value) {
+            if (value == null) return;
+            (extraSamples[channel] ??= <Sample>[]).add(
+              Sample(time: timestamp, value: value.toDouble()),
+            );
+          }
+          void addVendorField(int field) {
+            addSample(
+              Channel.custom('fit_field_$field'),
+              _asNumber(values[field]),
+            );
+          }
           final lat = _decodeSemicircles(values[0]);
           final lon = _decodeSemicircles(values[1]);
           final altitude = _decodeAltitude(values[2]);
@@ -384,6 +471,19 @@ class FitParser implements ActivityFormatParser {
           if (temp != null) {
             tempSamples.add(Sample(time: timestamp, value: temp.toDouble()));
           }
+          addSample(Channel.custom('grade'), _decodeFitScaled(values[78], 100));
+          addSample(
+            Channel.custom('left_right_balance'),
+            _asNumber(values[120]),
+          );
+          addVendorField(53);
+          addVendorField(73);
+          addVendorField(87);
+          addVendorField(107);
+          addVendorField(134);
+          addVendorField(135);
+          addVendorField(136);
+          addVendorField(143);
           break;
         default:
           // Skip unhandled message types.
@@ -403,6 +503,25 @@ class FitParser implements ActivityFormatParser {
     if (distanceSamples.isNotEmpty) {
       channels[Channel.distance] = distanceSamples;
     }
+    for (final entry in extraSamples.entries) {
+      if (entry.value.isNotEmpty) {
+        channels[entry.key] = entry.value;
+      }
+    }
+    if (filteredPoints.isEmpty &&
+        channels.isEmpty &&
+        laps.isEmpty &&
+        sawDataMessage) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'fit.no_usable_data',
+          message:
+              'FIT file did not yield any usable activity data; the file may be corrupt or unsupported.',
+          node: const ParseNodeReference(path: 'fit.file'),
+        ),
+      );
+    }
     final activity = RawActivity(
       points: filteredPoints,
       channels: channels,
@@ -412,6 +531,7 @@ class FitParser implements ActivityFormatParser {
       device: deviceMetadata != null && deviceMetadata.isNotEmpty
           ? deviceMetadata
           : null,
+      summary: summary,
     );
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
@@ -600,6 +720,26 @@ double? _decodeAltitude(Object? raw) {
     return null;
   }
   return (value / 5.0) - 500.0;
+}
+
+Duration? _decodeFitDuration(Object? raw) {
+  final value = _asNumber(raw)?.toDouble();
+  if (value == null) return null;
+  return Duration(milliseconds: (value * 1000).round());
+}
+
+double? _decodeFitDistance(Object? raw) {
+  return _decodeFitScaled(raw, 100);
+}
+
+double? _decodeFitSpeed(Object? raw) {
+  return _decodeFitScaled(raw, 1000);
+}
+
+double? _decodeFitScaled(Object? raw, double scale) {
+  final value = _asNumber(raw)?.toDouble();
+  if (value == null) return null;
+  return value / scale;
 }
 
 num? _asNumber(Object? raw) {

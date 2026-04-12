@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
+/// Tests for GPX version compatibility (1.0 and 1.1).
+///
+/// Validates parsing and encoding of both GPX 1.0 and 1.1 formats.
+library;
+
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 

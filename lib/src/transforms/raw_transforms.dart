@@ -13,8 +13,7 @@ class RawTransforms {
     final original = _isSortedByTime(activity.points)
         ? activity.points
         : ([...activity.points]..sort((a, b) => a.time.compareTo(b.time)));
-    // TODO(0.6.0)(validation): Sort/deduplicate channel samples here so
-    // interpolation stays correct when callers skip normalization.
+    // TODO(0.6.0): Channel mapping validation and edge case handling.
     if (original.length < 2) {
       return activity;
     }

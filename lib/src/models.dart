@@ -22,39 +22,188 @@ typedef ChannelStreamSample = ({int timestamp, num value});
 typedef StreamTimestampDecoder = DateTime Function(int timestamp);
 
 /// Known FIT manufacturer identifiers.
-/// Source: Garmin FIT SDK (FitSDKRelease_21.141.00, `c/fit_example.h`).
-/// TODO(0.5.0)(tooling): Auto-generate the full set (223 entries) directly from
-/// the SDK profile to avoid manual drift while keeping this map `const` so
-/// lookups stay O(1) even with the larger vendor list.
+/// Source: Garmin FIT SDK via mrihtar/Garmin-FIT Perl module (auto-generated).
+/// Expanded from 28 to 179 entries for comprehensive manufacturer coverage.
 const Map<int, String> fitManufacturerNames = {
   1: 'Garmin',
   2: 'Garmin FR405 ANTFS',
   3: 'Zephyr',
+  4: 'Dayton',
+  5: 'IDT',
+  6: 'SRM',
+  7: 'Quarq',
+  8: 'iBike',
   9: 'Saris',
+  10: 'Spark HK',
+  11: 'Tanita',
   12: 'Echowell',
   13: 'Dynastream OEM',
+  14: 'Nautilus',
   15: 'Dynastream',
+  16: 'Timex',
+  17: 'Metrigear',
+  18: 'Xelic',
+  19: 'Beurer',
   20: 'Cardiosport',
+  21: 'A&D',
   22: 'HMM',
   23: 'Suunto',
+  24: 'Thita Elektronik',
   25: 'GPulse',
+  26: 'Clean Mobile',
+  27: 'Pedal Brain',
+  28: 'Peaksware',
+  29: 'Saxonar',
+  30: 'LeMond Fitness',
+  31: 'Dexcom',
   32: 'Wahoo Fitness',
+  33: 'Octane Fitness',
+  34: 'Archinoetics',
+  35: 'The Hurt Box',
   36: 'Citizen Systems',
-  38: 'o-synce',
+  37: 'Magellan',
+  38: 'Osynce',
+  39: 'Holux',
+  40: 'Concept2',
+  42: 'One Giant Leap',
+  43: 'Ace Sensor',
+  44: 'Brim Brothers',
+  45: 'Xplova',
+  46: 'Perception Digital',
+  47: 'BF1systems',
+  48: 'Pioneer',
+  49: 'Spantec',
+  50: 'Metalogics',
+  51: '4iiiis',
+  52: 'Seiko Epson',
   53: 'Seiko Epson OEM',
+  54: 'Ifor Powell',
   55: 'Maxwell Guider',
+  56: 'Star Trac',
+  57: 'Breakaway',
+  58: 'Alatech Technology Ltd',
+  59: 'MIO Technology Europe',
+  60: 'Rotor',
+  61: 'Geonaute',
+  62: 'ID Bike',
   63: 'Specialized',
+  64: 'Wtek',
+  65: 'Physical Enterprises',
+  66: 'North Pole Engineering',
+  67: 'Bkool',
+  68: 'Cateye',
   69: 'Stages Cycling',
-  70: 'Sigma Sport',
+  70: 'Sigmasport',
+  71: 'TomTom',
+  72: 'Peripedal',
+  73: 'Wattbike',
   76: 'Moxy',
+  77: 'Ciclosport',
+  78: 'Powerbahn',
   79: 'Acorn Projects APS',
+  80: 'Lifebeam',
+  81: 'Bontrager',
+  82: 'Wellgo',
+  83: 'Scosche',
+  84: 'Magura',
+  85: 'Woodway',
+  86: 'Elite',
+  87: 'Nielsen Kellerman',
+  88: 'DK City',
   89: 'Tacx',
+  90: 'Direction Technology',
+  91: 'Magtonic',
+  92: '1partCarbon',
+  93: 'Inside Ride Technologies',
+  94: 'Sound Of Motion',
+  95: 'Stryd',
+  96: 'ICG',
+  97: 'MiPulse',
+  98: 'BSX Athletics',
+  99: 'Look',
+  100: 'Campagnolo SRL',
+  101: 'Body Bike Smart',
+  102: 'Praxisworks',
+  103: 'Limits Technology',
+  104: 'Topaction Technology',
+  105: 'Cosinuss',
+  106: 'Fitcare',
+  107: 'Magene',
+  108: 'Giant Manufacturing Co',
+  109: 'Tigrasport',
+  110: 'Salutron',
+  111: 'Technogym',
   112: 'Bryton Sensors',
-  144: 'Zwift Byte',
+  113: 'Latitude Limited',
+  114: 'Soaring Technology',
+  115: 'Igpsport',
+  116: 'Thinkrider',
+  117: 'Gopher Sport',
+  118: 'Waterrower',
+  119: 'Orangetheory',
+  120: 'Inpeak',
+  121: 'Kinetic',
+  122: 'Johnson Health Tech',
+  123: 'Polar Electro',
+  124: 'Seesense',
+  125: 'NCI Technology',
+  126: 'iQsquare',
+  127: 'Leomo',
+  128: 'iFit.com',
+  129: 'Coros Byte',
+  130: 'Versa Design',
+  131: 'Chileaf',
+  132: 'Cycplus',
   255: 'Development',
+  257: 'Healthandlife',
+  258: 'Lezyne',
+  259: 'Scribe Labs',
   260: 'Zwift',
+  261: 'Watteam',
+  262: 'Recon',
+  263: 'Favero Electronics',
+  264: 'Dynovelo',
+  265: 'Strava',
+  266: 'Precor',
   267: 'Bryton',
+  268: 'SRAM',
+  269: 'Navman',
+  270: 'Cobi',
+  271: 'Spivi',
+  272: 'MIO Magellan',
+  273: 'Evesports',
+  274: 'Sensitivus Gauge',
+  275: 'Podoon',
+  276: 'Life Time Fitness',
+  277: 'Falco e-Motors',
+  278: 'Minoura',
+  279: 'Cycliq',
+  280: 'Luxottica',
+  281: 'TrainerRoad',
+  282: 'The Sufferfest',
+  283: 'Fullspeedahead',
+  284: 'Virtualtraining',
+  285: 'Feedbacksports',
+  286: 'Omata',
+  287: 'VDO',
+  288: 'Magneticdays',
   289: 'Hammerhead',
+  290: 'Kinetic by Kurt',
+  291: 'Shapelog',
+  292: 'Dabuziduo',
+  293: 'Jetblack',
+  294: 'Coros',
+  295: 'Virtugo',
+  296: 'Velosense',
+  297: 'Cycligentinc',
+  298: 'Trailforks',
+  299: 'Mahle Ebikemotion',
+  300: 'Nurvv',
+  301: 'Microprogram',
+  302: 'Zone5cloud',
+  303: 'Greenteg',
+  304: 'Yamaha Motors',
+  5759: 'Actigraphcorp',
 };
 
 /// A strongly-typed channel identifier used for sensor samples.
@@ -74,11 +223,23 @@ class Channel {
   /// Primary power channel.
   static const Channel power = Channel._('power');
 
-  /// Primary temperature channel.
+  /// Primary temperature channel (air temperature in Celsius).
   static const Channel temperature = Channel._('temperature');
+
+  /// Water temperature channel (Celsius).
+  static const Channel waterTemperature = Channel._('water_temperature');
+
+  /// Depth channel (meters).
+  static const Channel depth = Channel._('depth');
 
   /// Derived speed channel (m/s).
   static const Channel speed = Channel._('speed');
+
+  /// Course/heading channel (degrees true, 0-360).
+  static const Channel course = Channel._('course');
+
+  /// Bearing channel (degrees true, 0-360).
+  static const Channel bearing = Channel._('bearing');
 
   /// Derived distance channel (meters).
   static const Channel distance = Channel._('distance');
@@ -129,38 +290,205 @@ class Sample {
 }
 
 /// Summary information for a lap or segment.
+///
+/// For multi-sport activities (e.g., triathlons), each lap can have its own
+/// sport. If not specified, the lap inherits the activity's overall sport.
 class Lap {
   Lap({
     required DateTime startTime,
     required DateTime endTime,
     this.distanceMeters,
     this.name,
+    this.sport,
+    this.calories,
+    this.avgSpeed,
+    this.maxSpeed,
+    this.avgHeartRate,
+    this.maxHeartRate,
+    this.avgCadence,
+    this.maxCadence,
+    this.avgPower,
+    this.maxPower,
+    this.event,
+    this.eventType,
   }) : startTime = startTime.toUtc(),
        endTime = endTime.toUtc();
+
+  /// Start timestamp (UTC).
   final DateTime startTime;
+
+  /// End timestamp (UTC).
   final DateTime endTime;
+
+  /// Total distance covered in this lap (meters).
   final double? distanceMeters;
+
+  /// Optional lap name or label.
   final String? name;
+
+  /// Sport for this specific lap (null inherits from activity-level sport).
+  ///
+  /// Used for multi-sport activities like triathlons where each segment
+  /// (swim, bike, run) has a different sport type.
+  final Sport? sport;
+
+  /// Total calories burned during this lap (kcal).
+  final double? calories;
+
+  /// Average speed for the lap (m/s).
+  final double? avgSpeed;
+
+  /// Maximum speed for the lap (m/s).
+  final double? maxSpeed;
+
+  /// Average heart rate for the lap (bpm).
+  final double? avgHeartRate;
+
+  /// Maximum heart rate for the lap (bpm).
+  final double? maxHeartRate;
+
+  /// Average cadence for the lap (rpm).
+  final double? avgCadence;
+
+  /// Maximum cadence for the lap (rpm).
+  final double? maxCadence;
+
+  /// Average power for the lap (watts).
+  final double? avgPower;
+
+  /// Maximum power for the lap (watts).
+  final double? maxPower;
+
+  /// FIT event identifier for the lap (raw FIT field 0).
+  final int? event;
+
+  /// FIT event type for the lap (raw FIT field 1).
+  final int? eventType;
+
+  /// Duration of this lap.
   Duration get elapsed => endTime.difference(startTime);
-  // TODO(0.5.0)(feature): Add lap-level statistics (avgHeartRate, maxHeartRate,
-  // avgCadence, maxCadence, avgSpeed, maxSpeed, avgPower, maxPower, calories).
+
   Lap copyWith({
     DateTime? startTime,
     DateTime? endTime,
     double? distanceMeters,
     String? name,
+    Sport? sport,
+    double? calories,
+    double? avgSpeed,
+    double? maxSpeed,
+    double? avgHeartRate,
+    double? maxHeartRate,
+    double? avgCadence,
+    double? maxCadence,
+    double? avgPower,
+    double? maxPower,
+    int? event,
+    int? eventType,
   }) => Lap(
     startTime: (startTime ?? this.startTime).toUtc(),
     endTime: (endTime ?? this.endTime).toUtc(),
     distanceMeters: distanceMeters ?? this.distanceMeters,
     name: name ?? this.name,
+    sport: sport ?? this.sport,
+    calories: calories ?? this.calories,
+    avgSpeed: avgSpeed ?? this.avgSpeed,
+    maxSpeed: maxSpeed ?? this.maxSpeed,
+    avgHeartRate: avgHeartRate ?? this.avgHeartRate,
+    maxHeartRate: maxHeartRate ?? this.maxHeartRate,
+    avgCadence: avgCadence ?? this.avgCadence,
+    maxCadence: maxCadence ?? this.maxCadence,
+    avgPower: avgPower ?? this.avgPower,
+    maxPower: maxPower ?? this.maxPower,
+    event: event ?? this.event,
+    eventType: eventType ?? this.eventType,
+  );
+}
+
+/// Summary information for an activity/session.
+class ActivitySummary {
+  const ActivitySummary({
+    this.elapsedTime,
+    this.timerTime,
+    this.totalDistanceMeters,
+    this.avgSpeed,
+    this.maxSpeed,
+    this.avgHeartRate,
+    this.maxHeartRate,
+    this.avgCadence,
+    this.maxCadence,
+    this.avgPower,
+    this.maxPower,
+    this.calories,
+  });
+
+  /// Total elapsed time for the activity.
+  final Duration? elapsedTime;
+
+  /// Total timer time for the activity.
+  final Duration? timerTime;
+
+  /// Total distance covered in meters.
+  final double? totalDistanceMeters;
+
+  /// Average speed across the activity (m/s).
+  final double? avgSpeed;
+
+  /// Maximum speed across the activity (m/s).
+  final double? maxSpeed;
+
+  /// Average heart rate across the activity (bpm).
+  final double? avgHeartRate;
+
+  /// Maximum heart rate across the activity (bpm).
+  final double? maxHeartRate;
+
+  /// Average cadence across the activity (rpm).
+  final double? avgCadence;
+
+  /// Maximum cadence across the activity (rpm).
+  final double? maxCadence;
+
+  /// Average power across the activity (watts).
+  final double? avgPower;
+
+  /// Maximum power across the activity (watts).
+  final double? maxPower;
+
+  /// Total calories burned (kcal).
+  final double? calories;
+
+  ActivitySummary copyWith({
+    Duration? elapsedTime,
+    Duration? timerTime,
+    double? totalDistanceMeters,
+    double? avgSpeed,
+    double? maxSpeed,
+    double? avgHeartRate,
+    double? maxHeartRate,
+    double? avgCadence,
+    double? maxCadence,
+    double? avgPower,
+    double? maxPower,
+    double? calories,
+  }) => ActivitySummary(
+    elapsedTime: elapsedTime ?? this.elapsedTime,
+    timerTime: timerTime ?? this.timerTime,
+    totalDistanceMeters: totalDistanceMeters ?? this.totalDistanceMeters,
+    avgSpeed: avgSpeed ?? this.avgSpeed,
+    maxSpeed: maxSpeed ?? this.maxSpeed,
+    avgHeartRate: avgHeartRate ?? this.avgHeartRate,
+    maxHeartRate: maxHeartRate ?? this.maxHeartRate,
+    avgCadence: avgCadence ?? this.avgCadence,
+    maxCadence: maxCadence ?? this.maxCadence,
+    avgPower: avgPower ?? this.avgPower,
+    maxPower: maxPower ?? this.maxPower,
+    calories: calories ?? this.calories,
   );
 }
 
 /// Metadata describing the recording device or software.
-/// TODO(0.6.0)(feature): Track vendor-specific fields (e.g. Garmin
-/// `garmin_product` / `device_index`, Coros `gear_id`) so exporters can
-/// round-trip manufacturer quirks without lossy mapping.
+/// TODO(0.6.0): Validate device metadata and handle edge cases in channel mappings.
 class ActivityDeviceMetadata {
   /// Creates metadata describing the originating device or software.
   const ActivityDeviceMetadata({
@@ -289,6 +617,7 @@ class RawActivity {
     Sport sport = Sport.unknown,
     String? creator,
     ActivityDeviceMetadata? device,
+    ActivitySummary? summary,
     String? gpxMetadataName,
     String? gpxMetadataDescription,
     bool gpxIncludeCreatorMetadataDescription = true,
@@ -304,6 +633,7 @@ class RawActivity {
     sport: sport,
     creator: creator,
     device: device,
+    summary: summary,
     gpxMetadataName: gpxMetadataName,
     gpxMetadataDescription: gpxMetadataDescription,
     gpxIncludeCreatorMetadataDescription: gpxIncludeCreatorMetadataDescription,
@@ -322,6 +652,7 @@ class RawActivity {
     required this.sport,
     required this.creator,
     required this.device,
+    required this.summary,
     required this.gpxMetadataName,
     required this.gpxMetadataDescription,
     required this.gpxIncludeCreatorMetadataDescription,
@@ -392,9 +723,9 @@ class RawActivity {
 
   /// Optional device metadata attached to the activity.
   final ActivityDeviceMetadata? device;
-  // TODO(0.5.0)(feature): Add session-level summary stats (totalElapsedTime,
-  // totalDistance, totalCalories, avgHeartRate, maxHeartRate, avgCadence,
-  // maxCadence, avgSpeed, maxSpeed, avgPower, maxPower) and eBike telemetry.
+
+  /// Summary stats captured from source metadata when available.
+  final ActivitySummary? summary;
 
   /// Optional metadata title used for GPX encoders.
   final String? gpxMetadataName;
@@ -434,6 +765,7 @@ class RawActivity {
     Sport? sport,
     String? creator,
     ActivityDeviceMetadata? device,
+    ActivitySummary? summary,
     String? gpxMetadataName,
     String? gpxMetadataDescription,
     bool? gpxIncludeCreatorMetadataDescription,
@@ -463,6 +795,7 @@ class RawActivity {
       sport: sport ?? this.sport,
       creator: creator ?? this.creator,
       device: device ?? this.device,
+      summary: summary ?? this.summary,
       gpxMetadataName: gpxMetadataName ?? this.gpxMetadataName,
       gpxMetadataDescription:
           gpxMetadataDescription ?? this.gpxMetadataDescription,

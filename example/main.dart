@@ -11,10 +11,13 @@ const supportsIsolates = bool.fromEnvironment(
 );
 
 Future<void> main() async {
-  final sampleFile = File('example/assets/sample.gpx');
-  final sampleBytes = await sampleFile.readAsBytes();
+  final sampleFile = File('example/assets/artificial.gpx');
+  final fallbackFile = File('example/assets/sample.gpx');
+  final resolvedFile = sampleFile.existsSync() ? sampleFile : fallbackFile;
+  final sampleBytes = await resolvedFile.readAsBytes();
 
   await _demoLoadAndConvert(sampleBytes);
+  await _demoFilePathHandling(resolvedFile);
   await _buildAndExportSyntheticActivity();
   await _exportFromRawStreams();
 }
@@ -113,6 +116,36 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
     return;
   }
   print('Round-trip points: ${roundTrip.activity.points.length}');
+  final summary = roundTrip.activity.summary;
+  if (summary != null) {
+    print(
+      'Summary: ${summary.totalDistanceMeters?.toStringAsFixed(1) ?? 'n/a'}m, '
+      'elapsed=${summary.elapsedTime?.inSeconds ?? 0}s, '
+      'avgHR=${summary.avgHeartRate?.toStringAsFixed(0) ?? 'n/a'}',
+    );
+  }
+}
+
+Future<void> _demoFilePathHandling(File sampleFile) async {
+  print('=== File path handling (0.4.0+ migration) ===');
+
+  // Option 1: Pass File object directly (recommended)
+  final viaFileObject = await ActivityFiles.load(
+    sampleFile,
+    useIsolate: supportsIsolates,
+  );
+  print('Via File object: ${viaFileObject.activity.points.length} points');
+
+  // Option 2: Use allowFilePaths flag with string path
+  final viaStringPath = await ActivityFiles.load(
+    sampleFile.path,
+    allowFilePaths: true,
+    useIsolate: supportsIsolates,
+  );
+  print('Via string path: ${viaStringPath.activity.points.length} points');
+
+  // Note: Without allowFilePaths, string is treated as inline content:
+  // await ActivityFiles.load('/path/to/file.gpx'); // Would fail!
 }
 
 Future<void> _buildAndExportSyntheticActivity() async {

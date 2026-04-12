@@ -26,7 +26,18 @@ class FitEncoder implements ActivityFormatEncoder {
     final recordSamples = _recordSamples(activity);
     if (recordSamples.isEmpty) {
       throw ArgumentError(
-        'Cannot encode FIT without geographic points or sensor samples.',
+        'Cannot encode empty activity to FIT. Activity must contain at least geographic points or sensor samples.\n'
+        '\n'
+        'The activity has no data:\n'
+        '  • GPS points: ${activity.points.length}\n'
+        '  • Sensor channels: ${activity.channels.length}\n'
+        '\n'
+        'To fix this:\n'
+        '  1. Add GPS trackpoints: builder.addPoint(lat, lon, elevation, time)\n'
+        '  2. Or add sensor data: builder.addSample(Channel.heartRate, time, value)\n'
+        '  3. Or load data from a file: await ActivityFiles.load(File("activity.gpx"))\n'
+        '\n'
+        'FIT requires at least one data point to be valid.',
       );
     }
     final builder = BytesBuilder();

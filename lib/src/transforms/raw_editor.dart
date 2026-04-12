@@ -8,9 +8,7 @@ class RawEditor {
   /// Returns the current result.
   RawActivity get activity => _activity;
 
-  // TODO(0.6.0)(feature): Provide helpers (e.g. histogram, HR zones) that
-  // operate on the edited activity so callers don’t need a separate pass over
-  // the data.
+  // TODO(0.8.0): Comprehensive analytics suite (power/HR zones, threshold analysis, HRV, segment detection, elevation analysis, outlier detection, track simplification, privacy zones).
 
   /// Ensures samples and points are sorted by time and removes duplicates.
   RawEditor sortAndDedup() {
@@ -55,7 +53,7 @@ class RawEditor {
             ..sort((a, b) => a.startTime.compareTo(b.startTime)));
     _activity = _activity.copyWith(
       points: dedupedPoints,
-      channels: sortedChannels.map((key, value) => MapEntry(key, value)),
+      channels: sortedChannels, // Already a Map, no need to copy again
       laps: sortedLaps,
     );
     return this;
@@ -79,10 +77,10 @@ class RawEditor {
       }
       return valid;
     }).toList();
-    // TODO(0.6.0)(feature): Preserve laps when all points are discarded so
-    // sensor-only activities keep timing metadata.
+    // TODO(0.6.0): Channel mapping validation and edge case handling.
     final retainedPoints = allValid
-        ? List<GeoPoint>.from(_activity.points)
+        ? _activity
+              .points // No invalid points, no copy needed
         : validPoints;
     final start = retainedPoints.isNotEmpty ? retainedPoints.first.time : null;
     final end = retainedPoints.isNotEmpty ? retainedPoints.last.time : null;
@@ -129,15 +127,15 @@ class RawEditor {
   }
 
   /// Crops the activity to the inclusive [start] and [end] times.
+  ///
+  /// Note: After cropping, use [validateLapBoundaries] to detect lap timing
+  /// mismatches if the activity contains laps.
   RawEditor crop(DateTime start, DateTime end) {
     if (end.isBefore(start)) {
       throw ArgumentError.value(end, 'end', 'must be after start');
     }
     final startUtc = start.toUtc();
     final endUtc = end.toUtc();
-    // TODO(0.5.0)(validation): Provide a helper that re-validates lap
-    // boundaries after compound edits so downstream code can detect mismatches
-    // early.
     final croppedPoints = _activity.points
         .where(
           (point) =>
@@ -381,8 +379,6 @@ class RawEditor {
 
   /// Generates laps at every [meters] boundary using the distance channel.
   RawEditor markLapsByDistance(double meters) {
-    // TODO(0.7.0)(feature): Support time- or elevation-based lap generation so
-    // consumers can ask for split summaries beyond fixed distance segments.
     if (meters <= 0) {
       throw ArgumentError.value(meters, 'meters', 'must be positive');
     }
@@ -449,6 +445,82 @@ class RawEditor {
     }
     _activity = _activity.copyWith(laps: laps);
     return this;
+  }
+
+  /// Validates that lap boundaries align with the current activity timeframe.
+  ///
+  /// This helper is useful after compound edits (crop, trim, downsample, etc.)
+  /// to detect lap boundary mismatches early. Returns a [LapValidationResult]
+  /// with any detected issues.
+  ///
+  /// Checks performed:
+  /// - Lap start/end times are in chronological order
+  /// - Laps don't overlap
+  /// - Lap boundaries fall within the activity's point timeframe
+  /// - Each lap's end time is after its start time
+  // TODO(0.5.5)(refactor): Share lap boundary checks with validateRawActivity().
+  LapValidationResult validateLapBoundaries() {
+    final errors = <String>[];
+    final warnings = <String>[];
+
+    if (_activity.points.isEmpty) {
+      if (_activity.laps.isNotEmpty) {
+        warnings.add(
+          'Activity has ${_activity.laps.length} lap(s) but no GPS points',
+        );
+      }
+      return LapValidationResult(errors: errors, warnings: warnings);
+    }
+
+    final pointsStart = _activity.points.first.time.toUtc();
+    final pointsEnd = _activity.points.last.time.toUtc();
+
+    Lap? previous;
+    for (var i = 0; i < _activity.laps.length; i++) {
+      final lap = _activity.laps[i];
+      final label = 'Lap ${i + 1}';
+      final start = lap.startTime.toUtc();
+      final end = lap.endTime.toUtc();
+
+      // Check that end is after start
+      if (!end.isAfter(start)) {
+        errors.add(
+          '$label ends at ${end.toIso8601String()} which is not after its start ${start.toIso8601String()}',
+        );
+      }
+
+      // Check chronological order and overlaps with previous lap
+      final prev = previous;
+      if (prev != null) {
+        final prevStart = prev.startTime.toUtc();
+        final prevEnd = prev.endTime.toUtc();
+        if (start.isBefore(prevStart)) {
+          errors.add(
+            '$label starts before the previous lap (${prevStart.toIso8601String()}); ensure laps are ordered chronologically',
+          );
+        } else if (start.isBefore(prevEnd)) {
+          errors.add(
+            '$label starts at ${start.toIso8601String()} before the previous lap ended at ${prevEnd.toIso8601String()}',
+          );
+        }
+      }
+
+      // Check alignment with point timeframe
+      if (start.isBefore(pointsStart)) {
+        warnings.add(
+          '$label starts at ${start.toIso8601String()} before the first point (${pointsStart.toIso8601String()})',
+        );
+      }
+      if (end.isAfter(pointsEnd)) {
+        warnings.add(
+          '$label ends at ${end.toIso8601String()} after the last point (${pointsEnd.toIso8601String()})',
+        );
+      }
+
+      previous = lap;
+    }
+
+    return LapValidationResult(errors: errors, warnings: warnings);
   }
 }
 

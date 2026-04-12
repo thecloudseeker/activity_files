@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'models.dart';
 
+// TODO(0.6.0): Validation auto-corrections (timestamp gaps, sensor drift, invalid coordinates).
+// TODO(0.6.0): Actionable error messages with recovery suggestions and warning prioritization.
+
 /// Outcome of activity validation.
 class ValidationResult {
   ValidationResult({Iterable<String>? errors, Iterable<String>? warnings})
@@ -17,6 +20,29 @@ class ValidationResult {
   bool get isValid => errors.isEmpty;
 }
 
+/// Outcome of lap boundary validation.
+///
+/// Used to detect lap timing mismatches after compound edits like crop,
+/// trim, or downsample operations.
+// TODO(0.5.5)(refactor): Reuse shared lap boundary logic from RawEditor.
+class LapValidationResult {
+  LapValidationResult({Iterable<String>? errors, Iterable<String>? warnings})
+    : errors = List.unmodifiable(errors ?? const <String>[]),
+      warnings = List.unmodifiable(warnings ?? const <String>[]);
+
+  /// Fatal validation failures (e.g., overlapping laps, inverted times).
+  final List<String> errors;
+
+  /// Non-fatal issues (e.g., laps extending beyond point timeframe).
+  final List<String> warnings;
+
+  /// Whether no errors were recorded.
+  bool get isValid => errors.isEmpty;
+
+  /// Whether there are any issues (errors or warnings).
+  bool get hasIssues => errors.isNotEmpty || warnings.isNotEmpty;
+}
+
 /// Runs a set of structural checks over [activity].
 ValidationResult validateRawActivity(
   RawActivity activity, {
@@ -27,7 +53,8 @@ ValidationResult validateRawActivity(
   DateTime? pointsStart;
   DateTime? pointsEnd;
   for (final point in activity.points) {
-    final timestamp = point.time.toUtc();
+    // GeoPoint.time is already UTC from constructor
+    final timestamp = point.time;
     if (pointsStart == null || timestamp.isBefore(pointsStart)) {
       pointsStart = timestamp;
     }
@@ -57,7 +84,8 @@ ValidationResult validateRawActivity(
   ) {
     DateTime? previous;
     for (final element in series) {
-      final current = timeOf(element).toUtc();
+      // timeOf returns already UTC DateTime (from GeoPoint, Sample, or Lap constructor)
+      final current = timeOf(element);
       final prev = previous;
       if (prev != null) {
         if (current.isBefore(prev)) {
@@ -108,8 +136,9 @@ ValidationResult validateRawActivity(
     for (var i = 0; i < activity.laps.length; i++) {
       final lap = activity.laps[i];
       final label = 'Lap ${i + 1}';
-      final start = lap.startTime.toUtc();
-      final end = lap.endTime.toUtc();
+      // Lap times are always UTC (from Lap constructor)
+      final start = lap.startTime;
+      final end = lap.endTime;
       if (!end.isAfter(start)) {
         errors.add(
           '$label ends at ${end.toIso8601String()} which is not after its start ${start.toIso8601String()}',
@@ -117,8 +146,8 @@ ValidationResult validateRawActivity(
       }
       final prev = previous;
       if (prev != null) {
-        final prevStart = prev.startTime.toUtc();
-        final prevEnd = prev.endTime.toUtc();
+        final prevStart = prev.startTime;
+        final prevEnd = prev.endTime;
         if (start.isBefore(prevStart)) {
           errors.add(
             '$label starts before the previous lap (${prevStart.toIso8601String()}); ensure laps are ordered chronologically.',
@@ -151,7 +180,8 @@ ValidationResult validateRawActivity(
       DateTime? earliestBefore;
       DateTime? latestAfter;
       for (final sample in entry.value) {
-        final timestamp = sample.time.toUtc();
+        // sample.time is already UTC from Sample constructor
+        final timestamp = sample.time;
         if (timestamp.isBefore(pointsStart)) {
           earliestBefore ??= timestamp;
         } else if (timestamp.isAfter(pointsEnd)) {

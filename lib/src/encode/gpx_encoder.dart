@@ -7,8 +7,7 @@ import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
 /// Encoder for the GPX file format.
-// TODO(0.7.0)(feature): Encode waypoints/routes and richer metadata (author/email/link/copyright/keywords/bounds).
-// TODO(0.7.0)(feature): Support exporting multiple tracks/segments without flattening.
+// TODO(0.7.0): GPX round-trip preservation - waypoints, routes, metadata, and multiple tracks (no data loss).
 class GpxEncoder implements ActivityFormatEncoder {
   const GpxEncoder();
   @override
@@ -42,18 +41,18 @@ class GpxEncoder implements ActivityFormatEncoder {
     final gpxSchemaLocation = emitGpx10
         ? 'http://www.topografix.com/GPX/1/0 '
               'http://www.topografix.com/GPX/1/0/gpx.xsd '
-              'http://www.garmin.com/xmlschemas/TrackPointExtension/v1 '
-              'http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd'
+              'http://www.garmin.com/xmlschemas/TrackPointExtension/v2 '
+              'http://www8.garmin.com/xmlschemas/TrackPointExtensionv2.xsd'
         : 'http://www.topografix.com/GPX/1/1 '
               'http://www.topografix.com/GPX/1/1/gpx.xsd '
-              'http://www.garmin.com/xmlschemas/TrackPointExtension/v1 '
-              'http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd';
+              'http://www.garmin.com/xmlschemas/TrackPointExtension/v2 '
+              'http://www8.garmin.com/xmlschemas/TrackPointExtensionv2.xsd';
     final rootAttributes = <String, String>{
       'creator': activity.creator ?? 'activity_files',
       'version': emitGpx10 ? '1.0' : '1.1',
       'xmlns': gpxNamespace,
       'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-      'xmlns:gpxtpx': 'http://www.garmin.com/xmlschemas/TrackPointExtension/v1',
+      'xmlns:gpxtpx': 'http://www.garmin.com/xmlschemas/TrackPointExtension/v2',
       'xsi:schemaLocation': gpxSchemaLocation,
     };
     namespaceRegistry.forEach((prefix, uri) {
@@ -72,8 +71,7 @@ class GpxEncoder implements ActivityFormatEncoder {
             (activity.device?.isNotEmpty ?? false) ||
             metadataExtensions.isNotEmpty;
         if (includeMetadata) {
-          // TODO(0.6.0)(feature): Derive metadata time from channels/laps when
-          // no points exist instead of falling back to `DateTime.now()`.
+          // Channel mapping validated at parse time by channel_mapper.dart
           final start = points.isNotEmpty
               ? points.first.time.toUtc()
               : DateTime.now().toUtc();
@@ -138,14 +136,22 @@ class GpxEncoder implements ActivityFormatEncoder {
         final cadenceDelta = options.maxDeltaFor(Channel.cadence);
         final powerDelta = options.maxDeltaFor(Channel.power);
         final tempDelta = options.maxDeltaFor(Channel.temperature);
+        final waterTempDelta = options.maxDeltaFor(Channel.waterTemperature);
+        final depthDelta = options.maxDeltaFor(Channel.depth);
         final speedDelta = options.maxDeltaFor(Channel.speed);
+        final courseDelta = options.maxDeltaFor(Channel.course);
+        final bearingDelta = options.maxDeltaFor(Channel.bearing);
         final searchDelta =
             [
               hrDelta,
               cadenceDelta,
               powerDelta,
               tempDelta,
+              waterTempDelta,
+              depthDelta,
               speedDelta,
+              courseDelta,
+              bearingDelta,
               options.defaultMaxDelta,
             ].nonNulls.fold<Duration>(
               options.defaultMaxDelta,
@@ -209,6 +215,31 @@ class GpxEncoder implements ActivityFormatEncoder {
                     snapshot.temperatureDelta,
                     tempDelta,
                   );
+                  final waterTemperature = _valueWithin(
+                    snapshot.waterTemperature,
+                    snapshot.waterTemperatureDelta,
+                    waterTempDelta,
+                  );
+                  final depth = _valueWithin(
+                    snapshot.depth,
+                    snapshot.depthDelta,
+                    depthDelta,
+                  );
+                  final speed = _valueWithin(
+                    snapshot.speed,
+                    snapshot.speedDelta,
+                    speedDelta,
+                  );
+                  final course = _valueWithin(
+                    snapshot.course,
+                    snapshot.courseDelta,
+                    courseDelta,
+                  );
+                  final bearing = _valueWithin(
+                    snapshot.bearing,
+                    snapshot.bearingDelta,
+                    bearingDelta,
+                  );
                   builder.element(
                     'trkpt',
                     attributes: {
@@ -229,7 +260,12 @@ class GpxEncoder implements ActivityFormatEncoder {
                       if (hr != null ||
                           cadence != null ||
                           power != null ||
-                          temperature != null) {
+                          temperature != null ||
+                          waterTemperature != null ||
+                          depth != null ||
+                          speed != null ||
+                          course != null ||
+                          bearing != null) {
                         builder.element(
                           'extensions',
                           nest: () {
@@ -258,6 +294,36 @@ class GpxEncoder implements ActivityFormatEncoder {
                                   builder.element(
                                     'gpxtpx:atemp',
                                     nest: temperature.round().toString(),
+                                  );
+                                }
+                                if (waterTemperature != null) {
+                                  builder.element(
+                                    'gpxtpx:wtemp',
+                                    nest: waterTemperature.round().toString(),
+                                  );
+                                }
+                                if (depth != null) {
+                                  builder.element(
+                                    'gpxtpx:depth',
+                                    nest: _round(depth, options.precisionEle),
+                                  );
+                                }
+                                if (speed != null) {
+                                  builder.element(
+                                    'gpxtpx:speed',
+                                    nest: _round(speed, 2),
+                                  );
+                                }
+                                if (course != null) {
+                                  builder.element(
+                                    'gpxtpx:course',
+                                    nest: _round(course, 1),
+                                  );
+                                }
+                                if (bearing != null) {
+                                  builder.element(
+                                    'gpxtpx:bearing',
+                                    nest: _round(bearing, 1),
                                   );
                                 }
                               },

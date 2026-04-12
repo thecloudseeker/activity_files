@@ -25,6 +25,7 @@ class ActivityExportRequest {
     required this.strictFitIntegrity,
     required Iterable<ParseDiagnostic> diagnostics,
     this.validation,
+    this.maxPayloadBytes,
   }) : diagnostics = List<ParseDiagnostic>.unmodifiable(diagnostics);
 
   /// Builds a request that skips parsing and exports an existing [RawActivity].
@@ -51,6 +52,7 @@ class ActivityExportRequest {
     strictFitIntegrity: strictFitIntegrity,
     diagnostics: diagnostics,
     validation: validation,
+    maxPayloadBytes: null,
   );
 
   /// Builds a request that parses a file/path/byte source before exporting.
@@ -67,6 +69,7 @@ class ActivityExportRequest {
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
+    int? maxPayloadBytes = 64 * 1024 * 1024,
   }) => ActivityExportRequest._(
     source: source,
     from: from,
@@ -81,6 +84,7 @@ class ActivityExportRequest {
     strictFitIntegrity: strictFitIntegrity,
     diagnostics: diagnostics,
     validation: null,
+    maxPayloadBytes: maxPayloadBytes,
   );
 
   factory ActivityExportRequest.fromStream({
@@ -95,6 +99,7 @@ class ActivityExportRequest {
     Encoding encoding = utf8,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     bool strictFitIntegrity = false,
+    int? maxPayloadBytes = 64 * 1024 * 1024,
   }) => ActivityExportRequest._(
     stream: stream,
     from: from,
@@ -109,6 +114,7 @@ class ActivityExportRequest {
     strictFitIntegrity: strictFitIntegrity,
     diagnostics: diagnostics,
     validation: null,
+    maxPayloadBytes: maxPayloadBytes,
   );
 
   /// Activity to export when already parsed.
@@ -150,6 +156,10 @@ class ActivityExportRequest {
   /// Whether FIT integrity failures (CRC/size) should throw instead of only
   /// surfacing diagnostics.
   final bool strictFitIntegrity;
+
+  /// Maximum bytes allowed for inline strings/bytes and buffered streams.
+  /// When null, no limit is enforced.
+  final int? maxPayloadBytes;
 
   /// Diagnostics gathered prior to export.
   final List<ParseDiagnostic> diagnostics;

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
+/// Unit tests for channel mapper functionality.
+///
+/// Tests the ChannelMapper class which maps channel data to timestamps
+/// with time-delta tolerance and cursor-based navigation.
+library;
+
 import 'package:activity_files/src/channel_mapper.dart';
 import 'package:activity_files/src/models.dart';
 import 'package:test/test.dart';

@@ -10,7 +10,7 @@
 
 Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
 
-  A pure Dart toolkit for reading, editing, validating, and writing workoutactivity files. `activity_files` provides format-agnostic models, robust GPX, TCX and FIT parsers/encoders, transformation utilities, and a CLI for quick conversionsor validation.
+A complete Dart toolkit for parsing, editing, validating, and converting workout activity files in GPX, TCX, FIT, GeoJSON, and CSV formats.
   
 ## Highlights
 
@@ -24,9 +24,9 @@ Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
   namespace-tolerant parsers that never throw on untrusted files.
 - Channel cursors, resampling helpers, and encoder options keep exports fast
   while letting you control tolerances/precision.
+- FIT session + lap stats are exposed via `ActivitySummary` and enriched `Lap` fields.
 - Flexible export targets: emit GPX 1.0/1.1 and TCX v1/v2 via `EncoderOptions`
-  or CLI flags; FIT encoding focuses on core workout fields (developer fields
-  and full SDK coverage intentionally out of scope today).
+  or CLI flags; FIT encoding covers core workout fields.
 
 See the [usage guide](doc/usage_guide.md) for the full feature tour and
 performance notes.
@@ -35,6 +35,8 @@ performance notes.
 
 - [Usage guide (full README)](doc/usage_guide.md) – Flutter, CLI, streaming,
   and error-handling walkthroughs.
+- [**Roadmap**](ROADMAP.md) – Planned features and timeline to 1.0.0.
+- [Testing guide](doc/testing.md) – Running tests and writing new ones.
 - [Example app](example/main.dart) – minimal GPX round-trip.
 - [CLI reference](doc/usage_guide.md#cli-usage) – conversions/validation from
   the terminal.
@@ -46,7 +48,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.4.4
+  activity_files: ^0.5.0
 ```
 
 Then install dependencies:
@@ -55,13 +57,13 @@ Then install dependencies:
 dart pub get
 ```
 
-See `example/main.dart` for a complete sample or jump straight into the facade:
+See `example/main.dart` for a complete sample (uses the generated `example/assets/sample.*`) or jump straight into the facade:
 
 ```dart
 import 'package:activity_files/activity_files.dart';
 
 Future<void> convertGpxToFit(Uint8List bytes) async {
-  // 1) Load + detect format; throws if format cannot be inferred.
+  // 1) Load + auto-detect format.
   final load = await ActivityFiles.load(
     bytes,
     useIsolate: true,

@@ -141,9 +141,7 @@ Future<void> _handleConvert(ArgResults command) async {
   final encodingName = (command['encoding'] as String?)?.trim();
   final encoding = encodingName == null || encodingName.isEmpty
       ? utf8
-      : (encodingName.toLowerCase() == 'utf8'
-            ? utf8
-            : Encoding.getByName(encodingName.toLowerCase()));
+      : Encoding.getByName(encodingName.toLowerCase());
 
   if (inputPath == null ||
       outputPath == null ||

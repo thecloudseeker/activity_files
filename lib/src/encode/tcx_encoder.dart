@@ -9,6 +9,7 @@ import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
 /// Encoder for the TCX file format.
+// TODO(0.7.0): TCX round-trip preservation - courses, workouts, waypoints, and extensions (no data loss).
 class TcxEncoder implements ActivityFormatEncoder {
   const TcxEncoder();
   @override

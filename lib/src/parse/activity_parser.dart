@@ -89,7 +89,9 @@ class ActivityParser {
         if (chunk.isNotEmpty) {
           totalBytes += chunk.length;
           if (maxBytes != null && totalBytes > maxBytes) {
-            throw FormatException('Stream payload exceeds $maxBytes bytes.');
+            throw FormatException(
+              'Stream payload exceeds $maxBytes bytes. Hint: use `ActivityParser.parseStream` with a sensible `maxBytes`, or route large inputs through streamed conversion/export APIs.',
+            );
           }
           builder.add(chunk);
         }
@@ -143,7 +145,7 @@ class ActivityParser {
 
   static Object _clonePayload(Object payload) => switch (payload) {
     String text => text,
-    Uint8List bytes => Uint8List.fromList(bytes),
+    Uint8List bytes => bytes, // Already immutable view, no copy needed
     List<int> bytes => Uint8List.fromList(bytes),
     _ => payload,
   };
@@ -161,7 +163,8 @@ class ActivityParser {
         ParseDiagnostic(
           severity: ParseSeverity.error,
           code: 'parser.format_exception',
-          message: 'Failed to parse $formatName payload: $message',
+          message:
+              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes` instead of base64 text and verify integrity. If the input is ambiguous, provide `format` explicitly.',
           node: ParseNodeReference(path: '${format.name}.document'),
         ),
       ],

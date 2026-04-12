@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.5.0
+
+### Migration
+- **Upgrading?** This version mitigates the 0.4.0 breaking changes: the 64MB payload limit is now configurable per-call via `maxPayloadBytes` and file paths work with `allowFilePaths: true` or by passing `File` objects.
+
+### Added
+- **CSV & GeoJSON Support**: Full import/export for CSV and GeoJSON formats with roundtrip testing.
+- **Public API Methods**: Facade methods for CSV/GeoJSON: `exportToCsv()`, `importFromCsv()`, `exportToGeojson()`, `exportToGeojsonPoints()`, `importFromGeojson()`.
+- **Better Error Messages**: All exceptions now include actionable recovery hints and troubleshooting steps.
+- **Parser Performance**: XML element caching and batch lookups reduce parsing time by 2-5x for large files (5000+ points).
+- Full Garmin TrackPointExtension v2 schema support: GPX parser and encoder now handle all v2 fields (`wtemp`, `depth`, `speed`, `course`, `bearing`) plus existing v1 fields (`hr`, `cad`, `power`, `atemp`) with corresponding channel types and `ChannelSnapshot` accessors.
+- Expanded FIT manufacturer database from 28 to 179 entries for comprehensive device identification.
+- Multi-sport activity support: TCX and FIT parsers handle triathlon files with multiple sport segments. New `Lap.sport` field enables per-lap sport tracking, and `ActivityFiles.merge()`/`splitBySport()` combine or divide multi-sport activities.
+- FIT session + lap stats are now parsed into `ActivitySummary` and additional `Lap` fields; extra record fields are surfaced as custom channels.
+- Added an artificial fixture generator (`scripts/generate_artificial_fixtures.dart`) that refreshes sample fixtures for tests and examples.
+- Lap boundary validation via `RawEditor.validateLapBoundaries()` for detecting timing mismatches.
+- Performance improvements in normalization and hot paths.
+- Parser optimization: through eliminating redundant XML traversals, removing case-insensitive string comparisons and caching child element lookups during trackpoint parsing. Large files (>5000 points) see the most benefit.
+
+### Changed
+- CSV parser normalizes line endings (`\r\n` → `\n`).
+- Optimized sport string conversion with caching.
+- GPX/TCX parsing now uses batch element lookups instead of repeated traversals.
+- `Lap` class includes optional `sport` field; null values inherit from activity-level sport.
+- TCX parser sport mapping extended to include swimming.
+- Test suite reorganized into focused categories with shared fixtures. See `doc/testing.md` for details.
+- Payload limit now configurable per-call via optional `maxPayloadBytes` parameter (default: 64MB).
+
+### Fixed
+- FIT parser now fails gracefully (with diagnostics) instead of crashing when a data message references an unknown local definition (e.g. issue #2 user fixture). New diagnostics: `fit.data.unknown_definition`, `fit.no_usable_data`.
+
 ## 0.4.4
 ### Added
 - New Unit tests

@@ -7,10 +7,14 @@ import 'package:async/async.dart';
 import '../channel_mapper.dart';
 import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';
+import '../encode/csv_encoder.dart';
+import '../encode/geojson_encoder.dart';
 import '../platform/file_system.dart' as file_system;
 import '../platform/isolate_runner.dart' as isolate_runner;
 import '../models.dart';
 import '../parse/activity_parser.dart';
+import '../parse/csv_parser.dart';
+import '../parse/geojson_parser.dart';
 import '../parse/parse_result.dart';
 import '../transforms.dart';
 import '../validation.dart';
@@ -25,6 +29,32 @@ const int _defaultStreamBufferLimitBytes = 64 * 1024 * 1024;
 const int _maxFormatDetectBytes = 128 * 1024;
 
 /// Top-level facade exposing ergonomic helpers for app integrations.
+///
+/// See ROADMAP.md for planned features and release timeline.
+///
+// 0.6.0 - PERFORMANCE & ROBUSTNESS
+// TODO(0.6.0): Configurable handling of corrupted FIT files.
+// TODO(0.6.0): Auto-fix common data issues (gaps, drift, invalid GPS).
+// TODO(0.6.0): Test suite for malformed files.
+//
+// 0.7.0 - DATA PIPELINE & IMPORT
+// TODO(0.7.0): Faster file parsing for csv and geojson.
+// TODO(0.7.0): Batch import with progress tracking and error recovery.
+// TODO(0.7.0): Repair tools for malformed files.
+// TODO(0.7.0): Full GPX/TCX round-trip preservation (no data loss).
+//
+// 0.8.0 - ANALYTICS FOUNDATION
+// TODO(0.8.0): Route/segment matching.
+// TODO(0.8.0): Merge multiple activities.
+// TODO(0.8.0): Power zone analysis (FTP, time-in-zone).
+// TODO(0.8.0): Heart rate zone analysis (LTHR, zones).
+//
+// 0.9.0 - ADVANCED ANALYTICS
+// TODO(0.9.0): Advanced threshold detection (FTP, LTHR, critical power).
+// TODO(0.9.0): HRV metrics for recovery tracking.
+// TODO(0.9.0): Automatic segment detection (climbs, intervals, rest).
+// TODO(0.9.0): Detect and flag bad data (GPS errors, sensor spikes).
+//
 class ActivityFiles {
   const ActivityFiles._();
 
@@ -52,6 +82,9 @@ class ActivityFiles {
   /// When [format] is omitted the loader will attempt to detect it from file
   /// extensions or by inspecting the payload. Specify [format] when the input
   /// is ambiguous (e.g. a FIT payload provided as a base64 string).
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
+  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
   static Future<ActivityLoadResult> load(
     Object source, {
     ActivityFileFormat? format,
@@ -59,20 +92,41 @@ class ActivityFiles {
     Encoding encoding = utf8,
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) async {
     final resolved = await _resolveSource(
       source,
       allowFilePaths: allowFilePaths,
     );
-    _enforcePayloadLimit(
-      resolved.detectionBytes ?? resolved.payload,
-      encoding: encoding,
-      limit: _defaultStreamBufferLimitBytes,
-    );
-    final detected = format ?? _detectFormat(resolved, encoding: encoding);
+    if (maxPayloadBytes != null) {
+      _enforcePayloadLimit(
+        resolved.detectionBytes ?? resolved.payload,
+        encoding: encoding,
+        limit: maxPayloadBytes,
+      );
+    }
+    final detected =
+        format ??
+        _detectFormat(
+          resolved,
+          encoding: encoding,
+          maxPayloadBytes: maxPayloadBytes,
+        );
     if (detected == null) {
       throw ArgumentError(
-        'Unable to infer activity format. Provide format explicitly.',
+        'Unable to infer activity format from source. The format must be specified explicitly.\n'
+        '\n'
+        'To fix this, try one of the following:\n'
+        '  1. Provide the format parameter: load(source, format: ActivityFileFormat.gpx)\n'
+        '  2. Use a file with a recognized extension (.gpx, .tcx, .fit)\n'
+        '  3. If passing a filesystem path as a String, enable: load(source, allowFilePaths: true)\n'
+        '\n'
+        'Tips for common formats:\n'
+        '  • GPX/TCX: Usually detected automatically from file extension\n'
+        '  • FIT (binary): For base64-encoded FIT data, use load(bytes, format: ActivityFileFormat.fit)\n'
+        '  • Inline content: Always specify format for text passed as a String\n'
+        '\n'
+        'Received: ${resolved.description} (extension: ${resolved.fileExtension ?? "none"})',
       );
     }
     ActivityParseResult parseResult;
@@ -82,6 +136,7 @@ class ActivityFiles {
         detected,
         useIsolate: useIsolate,
         encoding: encoding,
+        maxPayloadBytes: maxPayloadBytes,
       );
     } on FormatException catch (error) {
       parseResult = _failedParseResult(format: detected, error: error);
@@ -91,7 +146,20 @@ class ActivityFiles {
       parseResult.diagnostics,
       strictFitIntegrity,
     )) {
-      throw FormatException('FIT integrity check failed.');
+      final diagnosticInfo = parseResult.diagnostics.isEmpty
+          ? ''
+          : '\nDiagnostics: ${parseResult.diagnostics.map((d) => "${d.code} (${d.severity.name})").join(", ")}\n';
+      throw FormatException(
+        'FIT integrity check failed. The file may be corrupted or incomplete.$diagnosticInfo'
+        '\n'
+        'Troubleshooting steps:\n'
+        '  1. Verify the file is complete (not truncated during transfer)\n'
+        '  2. Check that header/trailer CRCs are valid using FIT tools\n'
+        '  3. Try loading with strictFitIntegrity: false to recover partial data\n'
+        '  4. If the file was downloaded/transferred, retry the transfer\n'
+        '\n'
+        'If you need to proceed despite errors, use: load(source, format: ActivityFileFormat.fit, strictFitIntegrity: false)',
+      );
     }
     final payloadForResult = await _materializePayload(resolved.payload);
     return ActivityLoadResult._(
@@ -103,6 +171,34 @@ class ActivityFiles {
     );
   }
 
+  /// Export an activity to CSV format.
+  static String exportToCsv(RawActivity activity) =>
+      CsvEncoder.encode(activity);
+
+  /// Export multiple activities to CSV format.
+  static String exportToCsvMultiple(List<RawActivity> activities) =>
+      CsvEncoder.encodeMultiple(activities);
+
+  /// Import a CSV payload into a [RawActivity].
+  static ActivityParseResult importFromCsv(String input) =>
+      const CsvParser().parse(input);
+
+  /// Export an activity to GeoJSON FeatureCollection (LineString).
+  static String exportToGeojson(RawActivity activity) =>
+      GeojsonEncoder.encode(activity);
+
+  /// Export an activity to GeoJSON Point FeatureCollection.
+  static String exportToGeojsonPoints(
+    RawActivity activity, {
+    bool includeChannels = false,
+  }) => includeChannels
+      ? GeojsonEncoder.encodeAsPointsWithChannels(activity)
+      : GeojsonEncoder.encodeAsPoints(activity);
+
+  /// Import a GeoJSON payload into a [RawActivity].
+  static ActivityParseResult importFromGeojson(String input) =>
+      const GeojsonParser().parse(input);
+
   /// Converts [source] to [to], optionally inferring the source format.
   ///
   /// The returned [ActivityConversionResult] exposes the normalized activity,
@@ -113,6 +209,9 @@ class ActivityFiles {
   /// isolate while keeping parsing control via [useIsolate]. Enable
   /// [runValidation] when you want the conversion to append structural
   /// validation diagnostics/results without invoking the export pipeline again.
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
+  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
   static Future<ActivityConversionResult> convert({
     required Object source,
     required ActivityFileFormat to,
@@ -125,6 +224,7 @@ class ActivityFiles {
     bool exportInIsolate = false,
     bool runValidation = false,
     bool strictFitIntegrity = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) async {
     final loadResult = await load(
       source,
@@ -133,6 +233,7 @@ class ActivityFiles {
       encoding: encoding,
       allowFilePaths: allowFilePaths,
       strictFitIntegrity: strictFitIntegrity,
+      maxPayloadBytes: maxPayloadBytes,
     );
     var activity = loadResult.activity;
     NormalizationStats? normalizationStats;
@@ -147,9 +248,7 @@ class ActivityFiles {
       normalizationStats = normalized.stats;
     }
     var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
-    // TODO(0.6.0)(perf): After channel-cursor + distance lookup optimizations
-    // ship, run large GPX/FIT export benchmarks to quantify the win and detect
-    // regressions in conversion hot paths.
+    // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
     final exportActivity = normalize
         ? activity
         : _ensureOrderedForExport(activity);
@@ -247,11 +346,7 @@ class ActivityFiles {
     String? creator,
     ActivityDeviceMetadata? device,
   }) {
-    // TODO(0.7.0)(feature): Support asynchronous/streamed iterables so extremely
-    // large exports don't require the entire location/channel data in memory.
-    // Consider adding a stream-to-tempfile fallback (or disk-backed buffer)
-    // for builders/parsers so callers can process payloads larger than the
-    // in-memory limits (default: `ActivityFiles.defaultMaxPayloadBytes`).
+    // TODO(0.7.0): Async/streamed iterables for large file handling.
     final decode = timestampConverter ?? _defaultTimestampDecoder;
     final rawBuilder = ActivityFiles.builder();
     if (sport != null) {
@@ -299,8 +394,6 @@ class ActivityFiles {
     bool sortAndDedup = true,
     bool trimInvalid = true,
   }) => _normalize(
-    // TODO(0.5.0)(perf): Short-circuit when the caller already normalized the
-    // data to avoid redundant cloning in UI hot paths.
     activity,
     sortAndDedup: sortAndDedup,
     trimInvalid: trimInvalid,
@@ -349,6 +442,26 @@ class ActivityFiles {
           : null;
       return (activity: activity, stats: stats);
     }
+    // Short-circuit when data is already normalized to avoid redundant cloning
+    // in UI hot paths (performance optimization).
+    if (_isAlreadyNormalized(activity, sortAndDedup, trimInvalid)) {
+      if (!captureStats) {
+        return (activity: activity, stats: null);
+      }
+      final stopwatch = Stopwatch()..start();
+      // Still count as "applied" since normalization was requested and ran,
+      // even though no changes were needed.
+      stopwatch.stop();
+      final stats = NormalizationStats(
+        applied: true,
+        pointsBefore: activity.points.length,
+        pointsAfter: activity.points.length,
+        totalSamplesBefore: _totalSamples(activity),
+        totalSamplesAfter: _totalSamples(activity),
+        duration: stopwatch.elapsed,
+      );
+      return (activity: activity, stats: stats);
+    }
     final beforePoints = captureStats ? activity.points.length : 0;
     final beforeSamples = captureStats ? _totalSamples(activity) : 0;
     final stopwatch = captureStats ? Stopwatch() : null;
@@ -374,6 +487,75 @@ class ActivityFiles {
       duration: stopwatch.elapsed,
     );
     return (activity: normalized, stats: stats);
+  }
+
+  /// Checks if the activity data is already normalized based on requested operations.
+  static bool _isAlreadyNormalized(
+    RawActivity activity,
+    bool checkSortAndDedup,
+    bool checkTrimInvalid,
+  ) {
+    if (checkSortAndDedup) {
+      // Check if points are sorted and have no duplicates
+      final pointsSorted = _isSortedAndUnique(activity.points, (p) => p.time);
+      if (!pointsSorted) return false;
+
+      // Check if all channels are sorted and have no duplicates
+      for (final entry in activity.channels.entries) {
+        final channelSorted = _isSortedAndUnique(entry.value, (s) => s.time);
+        if (!channelSorted) return false;
+      }
+
+      // Check if laps are sorted
+      final lapsSorted = _isSortedAndUnique(activity.laps, (l) => l.startTime);
+      if (!lapsSorted) return false;
+    }
+
+    if (checkTrimInvalid) {
+      // Check if all points have valid coordinates
+      for (final point in activity.points) {
+        final latOk =
+            point.latitude.isFinite &&
+            point.latitude >= -90 &&
+            point.latitude <= 90;
+        final lonOk =
+            point.longitude.isFinite &&
+            point.longitude >= -180 &&
+            point.longitude <= 180;
+        if (!latOk || !lonOk) return false;
+      }
+
+      // Check if channels are within point time range
+      if (activity.points.isNotEmpty) {
+        final start = activity.points.first.time;
+        final end = activity.points.last.time;
+        for (final entry in activity.channels.entries) {
+          for (final sample in entry.value) {
+            if (sample.time.isBefore(start) || sample.time.isAfter(end)) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /// Checks if a list is sorted by time and has no duplicate timestamps.
+  static bool _isSortedAndUnique<T>(
+    List<T> items,
+    DateTime Function(T) timeOf,
+  ) {
+    for (var i = 1; i < items.length; i++) {
+      final previous = timeOf(items[i - 1]).toUtc();
+      final current = timeOf(items[i]).toUtc();
+      // Must be strictly after (no duplicates, must be sorted)
+      if (!current.isAfter(previous)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   static RawActivity _ensureOrderedForExport(RawActivity activity) {
@@ -420,6 +602,220 @@ class ActivityFiles {
     RawActivity activity, {
     Duration maxDelta = const Duration(seconds: 5),
   }) => ChannelMapper.mapAt(timestamp, activity.channels, maxDelta: maxDelta);
+
+  /// Merges multiple activities into a single unified activity.
+  ///
+  /// Combines GPS points, sensor channels, and laps from all activities.
+  /// The resulting activity will have:
+  /// - All points merged and sorted by timestamp (when [normalize] is true)
+  /// - All sensor channel samples combined
+  /// - All laps preserved with their original sport values
+  /// - Sport from the first activity as the overall sport
+  /// - Optional custom [creator] metadata
+  ///
+  /// Set [preserveSportPerLap] to true to retain each source activity's sport
+  /// on its laps, enabling multi-sport merges (e.g., combining separate swim/
+  /// bike/run files into a triathlon). When false, lap sports remain as defined
+  /// in the source activities.
+  ///
+  /// Enable [normalize] (default: true) to automatically sort and deduplicate
+  /// the merged data.
+  ///
+  /// Example:
+  /// ```dart
+  /// final swim = await ActivityFiles.load(File('swim.gpx'));
+  /// final bike = await ActivityFiles.load(File('bike.gpx'));
+  /// final run = await ActivityFiles.load(File('run.gpx'));
+  ///
+  /// final triathlon = ActivityFiles.merge(
+  ///   [swim.activity, bike.activity, run.activity],
+  ///   preserveSportPerLap: true,
+  ///   creator: 'my_triathlon_app',
+  /// );
+  /// ```
+  static RawActivity merge(
+    List<RawActivity> activities, {
+    bool preserveSportPerLap = false,
+    bool normalize = true,
+    String? creator,
+  }) {
+    if (activities.isEmpty) {
+      throw ArgumentError(
+        'Cannot merge activities: the input list is empty.\n'
+        '\n'
+        'You must provide at least one activity to merge:\n'
+        '  final merged = ActivityFiles.merge(activities);\n'
+        '\n'
+        'To combine multiple activities, ensure the list contains at least one element.\n'
+        'To split a multi-sport activity instead, use: ActivityFiles.splitBySport(activity)',
+      );
+    }
+    if (activities.length == 1) {
+      return activities.first;
+    }
+
+    // Combine all points
+    final allPoints = <GeoPoint>[];
+    for (final activity in activities) {
+      allPoints.addAll(activity.points);
+    }
+
+    // Merge channels - combine samples from all activities
+    final mergedChannels = <Channel, List<Sample>>{};
+    for (final activity in activities) {
+      for (final entry in activity.channels.entries) {
+        mergedChannels
+            .putIfAbsent(entry.key, () => <Sample>[])
+            .addAll(entry.value);
+      }
+    }
+
+    // Combine laps, optionally preserving source activity sport
+    final allLaps = <Lap>[];
+    for (final activity in activities) {
+      for (final lap in activity.laps) {
+        if (preserveSportPerLap && lap.sport == null) {
+          // Assign this activity's sport to the lap if it doesn't have one
+          allLaps.add(lap.copyWith(sport: activity.sport));
+        } else {
+          allLaps.add(lap);
+        }
+      }
+    }
+
+    var merged = RawActivity(
+      points: allPoints,
+      channels: mergedChannels,
+      laps: allLaps,
+      sport: activities.first.sport,
+      creator: creator ?? activities.first.creator,
+      device: activities.first.device,
+    );
+
+    if (normalize) {
+      merged = normalizeActivity(merged);
+    }
+
+    return merged;
+  }
+
+  /// Splits a multi-sport activity into separate activities by sport type.
+  ///
+  /// Each returned activity contains only the points, channels, and laps
+  /// that fall within the time range of laps with that sport. Useful for
+  /// splitting triathlon files into individual swim/bike/run activities.
+  ///
+  /// Returns a map from [Sport] to [RawActivity]. Laps without an explicit
+  /// sport are grouped under the activity's overall sport.
+  ///
+  /// Enable [normalize] (default: true) to automatically sort and deduplicate
+  /// each split activity's data.
+  ///
+  /// Example:
+  /// ```dart
+  /// final triathlon = await ActivityFiles.load(File('triathlon.tcx'));
+  /// final splits = ActivityFiles.splitBySport(triathlon.activity);
+  ///
+  /// // Export each sport separately
+  /// for (final entry in splits.entries) {
+  ///   final filename = '${entry.key.name}.gpx';
+  ///   final export = await ActivityFiles.export(
+  ///     activity: entry.value,
+  ///     to: ActivityFileFormat.gpx,
+  ///   );
+  ///   await File(filename).writeAsString(export.asString());
+  /// }
+  /// ```
+  static Map<Sport, RawActivity> splitBySport(
+    RawActivity activity, {
+    bool normalize = true,
+  }) {
+    if (activity.laps.isEmpty) {
+      // No laps - return entire activity under its overall sport
+      return {activity.sport: activity};
+    }
+
+    // Group laps by sport
+    final lapsBySport = <Sport, List<Lap>>{};
+    for (final lap in activity.laps) {
+      final sport = lap.sport ?? activity.sport;
+      lapsBySport.putIfAbsent(sport, () => []).add(lap);
+    }
+
+    if (lapsBySport.length == 1) {
+      // Single sport - return as-is
+      return {lapsBySport.keys.first: activity};
+    }
+
+    // Create separate activities for each sport
+    final result = <Sport, RawActivity>{};
+
+    for (final entry in lapsBySport.entries) {
+      final sport = entry.key;
+      final laps = entry.value;
+
+      // Find time range for this sport's laps
+      final startTime = laps
+          .map((lap) => lap.startTime)
+          .reduce((a, b) => a.isBefore(b) ? a : b);
+      final endTime = laps
+          .map((lap) => lap.endTime)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+
+      // Filter points to this time range
+      final sportPoints = activity.points
+          .where((p) => !p.time.isBefore(startTime) && !p.time.isAfter(endTime))
+          .toList();
+
+      // Filter channels to this time range
+      final sportChannels = <Channel, List<Sample>>{};
+      for (final channelEntry in activity.channels.entries) {
+        final samples = channelEntry.value
+            .where(
+              (s) => !s.time.isBefore(startTime) && !s.time.isAfter(endTime),
+            )
+            .toList();
+        if (samples.isNotEmpty) {
+          sportChannels[channelEntry.key] = samples;
+        }
+      }
+
+      // Strip sport from laps since they all have the same sport now
+      final normalizedLaps = laps
+          .map(
+            (lap) => Lap(
+              startTime: lap.startTime,
+              endTime: lap.endTime,
+              distanceMeters: lap.distanceMeters,
+              name: lap.name,
+              // Intentionally omit sport - all laps in this split have same sport
+            ),
+          )
+          .toList();
+
+      var sportActivity = RawActivity(
+        points: sportPoints,
+        channels: sportChannels,
+        laps: normalizedLaps,
+        sport: sport,
+        creator: activity.creator,
+        device: activity.device,
+        gpxMetadataName: activity.gpxMetadataName,
+        gpxMetadataDescription: activity.gpxMetadataDescription,
+        gpxTrackName: activity.gpxTrackName,
+        gpxTrackDescription: activity.gpxTrackDescription,
+        gpxTrackType: activity.gpxTrackType,
+      );
+
+      if (normalize) {
+        sportActivity = normalizeActivity(sportActivity);
+      }
+
+      result[sport] = sportActivity;
+    }
+
+    return result;
+  }
 
   /// Creates a GPX extension node representing an activity label.
   static GpxExtensionNode gpxActivityLabelNode(
@@ -810,6 +1206,9 @@ class ActivityFiles {
   ///
   /// Parsing occurs via [ActivityParser.parseStream]. Toggle [parseInIsolate]
   /// and [exportInIsolate] to control isolate offloading for parse and export.
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for buffered
+  /// streams. Pass `null` to disable the limit.
   static Future<ActivityExportResult> convertAndExportStream({
     required Stream<List<int>> source,
     required ActivityFileFormat from,
@@ -821,6 +1220,7 @@ class ActivityFiles {
     Encoding encoding = utf8,
     bool runValidation = false,
     bool strictFitIntegrity = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _runPipeline(
     ActivityExportRequest.fromStream(
       stream: source,
@@ -833,6 +1233,7 @@ class ActivityFiles {
       runValidation: runValidation,
       encoding: encoding,
       strictFitIntegrity: strictFitIntegrity,
+      maxPayloadBytes: maxPayloadBytes,
     ),
   );
 
@@ -844,6 +1245,9 @@ class ActivityFiles {
   /// When [runValidation] is `true`, the normalized activity is validated and
   /// findings are appended to the diagnostics collection. Set [exportInIsolate]
   /// to `true` to offload encoding work to an isolate, matching [convert].
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
+  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
   static Future<ActivityExportResult> convertAndExport({
     Object? source,
     Iterable<LocationStreamSample>? location,
@@ -873,17 +1277,50 @@ class ActivityFiles {
     bool runValidation = false,
     bool exportInIsolate = false,
     bool strictFitIntegrity = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) {
     final hasSource = source != null;
     final hasStreams = location != null;
     if (hasSource && hasStreams) {
       throw ArgumentError(
-        'Provide exactly one input when converting: use source (file/bytes/stream) or location/channels, not both.',
+        'Cannot specify both source and location/channels inputs.\n'
+        '\n'
+        'Choose one input method:\n'
+        '\n'
+        'Option A: Convert from file/bytes\n'
+        '  convertAndExport(source: File("activity.gpx"), to: ActivityFileFormat.tcx)\n'
+        '\n'
+        'Option B: Build from location and channel data\n'
+        '  convertAndExport(\n'
+        '    location: [LocationStreamSample(...)],\n'
+        '    channels: {Channel.heartRate: [ChannelStreamSample(...)]},\n'
+        '    to: ActivityFileFormat.gpx,\n'
+        '  )\n'
+        '\n'
+        'You specified both source and location. Please use only one.',
       );
     }
     if (!hasSource && !hasStreams) {
       throw ArgumentError(
-        'Missing input: supply source (file/bytes/stream) or location/channels when converting.',
+        'No input provided to convertAndExport. You must specify either source or location/channels.\n'
+        '\n'
+        'Example 1: Convert a file\n'
+        '  final result = await convertAndExport(\n'
+        '    source: File("activity.gpx"),\n'
+        '    to: ActivityFileFormat.fit,\n'
+        '  );\n'
+        '\n'
+        'Example 2: Convert from raw sensor data\n'
+        '  final result = await convertAndExport(\n'
+        '    location: gpsPoints,\n'
+        '    channels: {\n'
+        '      Channel.heartRate: heartRateSamples,\n'
+        '      Channel.cadence: cadenceSamples,\n'
+        '    },\n'
+        '    to: ActivityFileFormat.gpx,\n'
+        '  );\n'
+        '\n'
+        'Please provide one of: source (File, bytes, Stream) or location + channels.',
       );
     }
 
@@ -901,6 +1338,7 @@ class ActivityFiles {
           exportInIsolate: exportInIsolate,
           allowFilePaths: allowFilePaths,
           strictFitIntegrity: strictFitIntegrity,
+          maxPayloadBytes: maxPayloadBytes,
         ),
       );
     }
@@ -966,9 +1404,7 @@ class ActivityFiles {
   static Future<ActivityExportResult> _runPipeline(
     ActivityExportRequest request,
   ) async {
-    // TODO(0.6.0)(refactor): Break this branching logic into focused helpers so
-    // new request types (e.g. async streams) can plug in without growing the
-    // nested conditionals.
+    // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
     if (request.activity != null) {
       final diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
       if (request.exportInIsolate) {
@@ -1001,7 +1437,7 @@ class ActivityFiles {
           request.from!,
           useIsolate: request.parseInIsolate,
           encoding: request.encoding,
-          maxBytes: _defaultStreamBufferLimitBytes,
+          maxBytes: request.maxPayloadBytes,
         );
       } on FormatException catch (error) {
         parseResult = _failedParseResult(format: request.from!, error: error);
@@ -1042,6 +1478,7 @@ class ActivityFiles {
         exportInIsolate: request.exportInIsolate,
         runValidation: request.runValidation,
         strictFitIntegrity: request.strictFitIntegrity,
+        maxPayloadBytes: request.maxPayloadBytes,
       );
       var mergedDiagnostics = <ParseDiagnostic>[
         ...conversion.diagnostics,
@@ -1075,14 +1512,19 @@ class ActivityFiles {
   ///
   /// This helper is useful when you want to branch your own logic based on
   /// format before calling [load] or [convert].
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit; pass `null`
+  /// to disable the limit.
   static ActivityFileFormat? detectFormat(
     Object source, {
     Encoding encoding = utf8,
     bool allowFilePaths = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _detectFormatSync(
     source,
     encoding: encoding,
     allowFilePaths: allowFilePaths,
+    maxPayloadBytes: maxPayloadBytes,
   );
 
   static Future<_ResolvedSource> _resolveSource(
@@ -1166,18 +1608,33 @@ class ActivityFiles {
       }
       return _ResolvedSource(payload: source, description: 'inline');
     }
-    throw ArgumentError('Unsupported source type ${source.runtimeType}.');
+    throw ArgumentError(
+      'Unsupported source type: ${source.runtimeType}.\n'
+      '\n'
+      'Supported input types:\n'
+      '  • String: inline text content or filesystem path (with allowFilePaths: true)\n'
+      '  • File: dart:io File instance\n'
+      '  • List<int> or Uint8List: raw binary data\n'
+      '  • Stream<List<int>>: chunked/streaming data\n'
+      '\n'
+      'For filesystem paths passed as String, enable: load(source, allowFilePaths: true)\n'
+      '\n'
+      'Received: ${source.runtimeType}',
+    );
   }
 
   static ActivityFileFormat? _detectFormat(
     _ResolvedSource resolved, {
     required Encoding encoding,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) {
-    _enforcePayloadLimit(
-      resolved.detectionBytes ?? resolved.payload,
-      encoding: encoding,
-      limit: _defaultStreamBufferLimitBytes,
-    );
+    if (maxPayloadBytes != null) {
+      _enforcePayloadLimit(
+        resolved.detectionBytes ?? resolved.payload,
+        encoding: encoding,
+        limit: maxPayloadBytes,
+      );
+    }
     final detectedFromExt = _detectFromExtension(resolved.fileExtension);
     if (detectedFromExt != null) {
       return detectedFromExt;
@@ -1204,7 +1661,14 @@ class ActivityFiles {
         encoding: encoding,
       ),
       _ => throw ArgumentError(
-        'Unsupported payload type ${payload.runtimeType}; expected String or List<int>.',
+        'Unsupported payload type in parser: ${payload.runtimeType}.\n'
+        '\n'
+        'Expected: String or List<int> (bytes)\n'
+        '\n'
+        'If using a Stream, parse with parseStream() instead:\n'
+        '  ActivityParser.parseStream(stream, format)\n'
+        '\n'
+        'Received type: ${payload.runtimeType}',
       ),
     };
   }
@@ -1214,11 +1678,10 @@ class ActivityFiles {
     ActivityFileFormat format, {
     bool useIsolate = true,
     Encoding encoding = utf8,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) async {
     if (payload is _ReplayableStreamPayload) {
-      final bytes = await payload.materialize(
-        maxBytes: _defaultStreamBufferLimitBytes,
-      );
+      final bytes = await payload.materialize(maxBytes: maxPayloadBytes);
       return isolate_runner.runWithIsolation(
         () => _parseBytesWithBom(bytes, format, encoding),
         useIsolate: useIsolate,
@@ -1230,14 +1693,12 @@ class ActivityFiles {
         format,
         useIsolate: useIsolate,
         encoding: encoding,
-        maxBytes: _defaultStreamBufferLimitBytes,
+        maxBytes: maxPayloadBytes,
       );
     }
-    _enforcePayloadLimit(
-      payload,
-      encoding: encoding,
-      limit: _defaultStreamBufferLimitBytes,
-    );
+    if (maxPayloadBytes != null) {
+      _enforcePayloadLimit(payload, encoding: encoding, limit: maxPayloadBytes);
+    }
     return isolate_runner.runWithIsolation(
       () => _parseSync(payload, format, encoding),
       useIsolate: useIsolate,
@@ -1257,7 +1718,8 @@ class ActivityFiles {
         ParseDiagnostic(
           severity: ParseSeverity.error,
           code: 'parser.format_exception',
-          message: 'Failed to parse $formatName payload: $message',
+          message:
+              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`load(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
           node: ParseNodeReference(path: '${format.name}.document'),
         ),
       ],
@@ -1281,20 +1743,25 @@ class ActivityFiles {
     Object source, {
     required Encoding encoding,
     required bool allowFilePaths,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) {
     if (source is _ResolvedSource) {
-      _enforcePayloadLimit(
-        source.detectionBytes ?? source.payload,
+      if (maxPayloadBytes != null) {
+        _enforcePayloadLimit(
+          source.detectionBytes ?? source.payload,
+          encoding: encoding,
+          limit: maxPayloadBytes,
+        );
+      }
+      return _detectFormat(
+        source,
         encoding: encoding,
-        limit: _defaultStreamBufferLimitBytes,
+        maxPayloadBytes: maxPayloadBytes,
       );
-      return _detectFormat(source, encoding: encoding);
     }
-    _enforcePayloadLimit(
-      source,
-      encoding: encoding,
-      limit: _defaultStreamBufferLimitBytes,
-    );
+    if (maxPayloadBytes != null) {
+      _enforcePayloadLimit(source, encoding: encoding, limit: maxPayloadBytes);
+    }
     final filePath = file_system.platformFilePath(source);
     if (filePath != null) {
       return _detectFromExtension(_extensionForPath(filePath));
@@ -1712,8 +2179,7 @@ class ActivityLoadResult with _DiagnosticSummaryMixin {
     required this.sourceDescription,
     required this.payload,
   }) : diagnostics = List.unmodifiable(diagnostics);
-  // TODO(0.6.0)(perf): Share payload/diagnostic views when possible instead of
-  // cloning large buffers for every load result.
+  // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
   ///
   /// Parse or validation failures never throw; they are recorded in
   /// [diagnostics]. Inspect [hasErrors], [diagnostics], or
@@ -1755,8 +2221,7 @@ class ActivityExportResult with _DiagnosticSummaryMixin {
     this.processingStats = const ActivityProcessingStats(),
   }) : _binary = binary != null ? Uint8List.fromList(binary) : null,
        diagnostics = List.unmodifiable(List<ParseDiagnostic>.from(diagnostics));
-  // TODO(0.6.0)(perf): Avoid double-copying FIT binaries/diagnostics when
-  // callers already hand over owned buffers.
+  // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
 
   /// Normalized activity that was encoded.
   final RawActivity activity;
@@ -2221,7 +2686,9 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
     }
     final bytes = _bytes ?? _buffer.takeBytes();
     if (maxBytes != null && bytes.length > maxBytes) {
-      throw FormatException('Stream payload exceeds $maxBytes bytes.');
+      throw FormatException(
+        'Stream payload exceeds $maxBytes bytes. Hint: prefer streamed workflows (`ActivityParser.parseStream`, `convertAndExportStream`) or raise `maxPayloadBytes` for `load`/`convert`/`export`.',
+      );
     }
     return bytes;
   }
@@ -2229,7 +2696,9 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
   void _addChunk(List<int> chunk, {int? limit}) {
     final threshold = limit ?? bufferLimit;
     if (threshold != null && _bufferedBytes + chunk.length > threshold) {
-      throw FormatException('Stream payload exceeds $threshold bytes.');
+      throw FormatException(
+        'Stream payload exceeds $threshold bytes. Hint: increase buffer limit via `maxPayloadBytes` or switch to processing pipelines that don’t require full buffering.',
+      );
     }
     _buffer.add(chunk);
     _bufferedBytes += chunk.length;
@@ -2266,6 +2735,8 @@ void _enforcePayloadLimit(
     return;
   }
   if (sizeBytes > limit) {
-    throw FormatException('Payload exceeds $limit bytes.');
+    throw FormatException(
+      'Payload exceeds $limit bytes. Hint: use streaming APIs (`ActivityParser.parseStream`, `convertAndExportStream`) or increase `maxPayloadBytes` on `load`/`convert`/`export`. Pass `null` to disable the limit if you fully trust the input size.',
+    );
   }
 }

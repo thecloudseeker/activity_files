@@ -6,12 +6,26 @@ import 'activity_parser.dart';
 import 'parse_result.dart';
 
 /// Parser for the TCX file format.
-// TODO(0.7.0)(feature): Support multi-activity TCX files by preserving and
-// parsing all top-level <Activity> elements instead of only using the first
-// one. Add an option/flag to preserve per-activity metadata and return a
-// multi-activity model or diagnostics when multiple activities are present.
+///
+/// Supports multi-sport activities (e.g., triathlons) by parsing all
+/// `<Activity>` elements and merging them into a single [RawActivity] with
+/// sport-specific laps.
+// TODO(0.7.0): TCX: Support courses, workouts, and extensions round-trip.
+// TODO(0.5.5)(perf): Limit or scope XML lookup caches to avoid retaining parsed documents.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
+
+  static final _sportCache = <String, Sport>{};
+  static const _sportMap = {
+    'running': Sport.running,
+    'biking': Sport.cycling,
+    'cycling': Sport.cycling,
+    'bike': Sport.cycling,
+    'swimming': Sport.swimming,
+    'swim': Sport.swimming,
+    'walking': Sport.walking,
+    'other': Sport.other,
+  };
   @override
   ActivityParseResult parse(String input) {
     final diagnostics = <ParseDiagnostic>[];
@@ -55,240 +69,273 @@ class TcxParser implements ActivityFormatParser {
         diagnostics: diagnostics,
       );
     }
-    final activityElement = activities.first;
-    final sport = _sportFromString(activityElement.getAttribute('Sport'));
-    final points = <GeoPoint>[];
-    final hrSamples = <Sample>[];
-    final cadenceSamples = <Sample>[];
-    final distanceSamples = <Sample>[];
-    final laps = <Lap>[];
+
+    // Parse all activities for multi-sport support (e.g., triathlons)
+    final allPoints = <GeoPoint>[];
+    final allHrSamples = <Sample>[];
+    final allCadenceSamples = <Sample>[];
+    final allDistanceSamples = <Sample>[];
+    final allLaps = <Lap>[];
     final metadataExtensions = <GpxExtensionNode>[];
     final trackExtensions = <GpxExtensionNode>[];
-    for (final extensions
-        in activityElement.children.whereType<XmlElement>().where(
-          (e) => e.name.local == 'Extensions',
-        )) {
-      metadataExtensions.addAll(_parseExtensionChildren(extensions));
+    Sport? overallSport;
+    String? creator;
+    ActivityDeviceMetadata? device;
+
+    if (activities.length > 1) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'tcx.multi_activity',
+          message:
+              'Multi-activity TCX file detected (${activities.length} activities); merging into single activity with sport-specific laps.',
+          node: const ParseNodeReference(path: 'tcx.activities'),
+        ),
+      );
     }
-    for (final lapElement in _childElements(activityElement, 'Lap')) {
-      final lapStartAttribute = lapElement.getAttribute('StartTime');
-      DateTime? lapStart;
-      if (lapStartAttribute != null) {
-        try {
-          lapStart = DateTime.parse(lapStartAttribute).toUtc();
-        } catch (_) {
+
+    for (final activityElement in activities) {
+      final activitySport = _sportFromString(
+        activityElement.getAttribute('Sport'),
+      );
+      overallSport ??= activitySport;
+
+      for (final child in activityElement.childElements) {
+        if (child.name.local == 'Extensions') {
+          metadataExtensions.addAll(_parseExtensionChildren(child));
+        }
+      }
+
+      final creatorInfo = _extractCreatorInfo(activityElement);
+      creator ??= creatorInfo.creator;
+      device ??= creatorInfo.device;
+
+      for (final lapElement in _childElements(activityElement, 'Lap')) {
+        final lapStartAttribute = lapElement.getAttribute('StartTime');
+        DateTime? lapStart;
+        if (lapStartAttribute != null) {
+          try {
+            lapStart = DateTime.parse(lapStartAttribute).toUtc();
+          } catch (_) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.lap.invalid_start_time',
+                message:
+                    'Invalid Lap StartTime "$lapStartAttribute"; lap ignored.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap',
+                  description: lapStartAttribute,
+                ),
+              ),
+            );
+            continue;
+          }
+        }
+        final lapDistanceText = _firstText(lapElement, 'DistanceMeters');
+        final lapDistance = lapDistanceText != null
+            ? double.tryParse(lapDistanceText)
+            : null;
+        final track = _childElements(lapElement, 'Track').firstOrNull;
+        if (track == null) {
           diagnostics.add(
             ParseDiagnostic(
               severity: ParseSeverity.warning,
-              code: 'tcx.lap.invalid_start_time',
-              message:
-                  'Invalid Lap StartTime "$lapStartAttribute"; lap ignored.',
-              node: ParseNodeReference(
-                path: 'tcx.activities.activity.lap',
-                description: lapStartAttribute,
-              ),
+              code: 'tcx.lap.missing_track',
+              message: 'Lap missing Track element; skipped.',
+              node: ParseNodeReference(path: 'tcx.activities.activity.lap'),
             ),
           );
           continue;
         }
-      }
-      final lapDistanceText = _firstText(lapElement, 'DistanceMeters');
-      final lapDistance = lapDistanceText != null
-          ? double.tryParse(lapDistanceText)
-          : null;
-      final track = _childElements(lapElement, 'Track').firstOrNull;
-      if (track == null) {
-        diagnostics.add(
-          ParseDiagnostic(
-            severity: ParseSeverity.warning,
-            code: 'tcx.lap.missing_track',
-            message: 'Lap missing Track element; skipped.',
-            node: ParseNodeReference(path: 'tcx.activities.activity.lap'),
-          ),
-        );
-        continue;
-      }
-      DateTime? firstTime;
-      DateTime? lastTime;
-      for (final extensions in track.children.whereType<XmlElement>().where(
-        (e) => e.name.local == 'Extensions',
-      )) {
-        trackExtensions.addAll(_parseExtensionChildren(extensions));
-      }
-      for (final trackpoint in _childElements(track, 'Trackpoint')) {
-        final timeText = _firstText(trackpoint, 'Time');
-        if (timeText == null) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.missing_time',
-              message: 'Trackpoint without Time skipped.',
-              node: ParseNodeReference(
-                path: 'tcx.activities.activity.lap.track.trackpoint',
+        DateTime? firstTime;
+        DateTime? lastTime;
+        for (final child in track.childElements) {
+          if (child.name.local == 'Extensions') {
+            trackExtensions.addAll(_parseExtensionChildren(child));
+          }
+        }
+        for (final trackpoint in _childElements(track, 'Trackpoint')) {
+          final timeText = _firstText(trackpoint, 'Time');
+          if (timeText == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.missing_time',
+                message: 'Trackpoint without Time skipped.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap.track.trackpoint',
+                ),
               ),
+            );
+            continue;
+          }
+          DateTime time;
+          try {
+            time = DateTime.parse(timeText).toUtc();
+          } catch (_) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.invalid_time',
+                message: 'Invalid Time "$timeText"; trackpoint skipped.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap.track.trackpoint',
+                  description: timeText,
+                ),
+              ),
+            );
+            continue;
+          }
+          final position = _firstChild(trackpoint, 'Position');
+          final latText = position != null
+              ? _firstText(position, 'LatitudeDegrees')
+              : null;
+          final lonText = position != null
+              ? _firstText(position, 'LongitudeDegrees')
+              : null;
+          final lat = latText != null ? double.tryParse(latText) : null;
+          final lon = lonText != null ? double.tryParse(lonText) : null;
+          if (lat == null || lon == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.missing_coordinates',
+                message:
+                    'Trackpoint at $time missing coordinates; GPS point skipped.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap.track.trackpoint',
+                  description: time.toIso8601String(),
+                ),
+              ),
+            );
+          }
+          final altText = _firstText(trackpoint, 'AltitudeMeters');
+          final altitude = altText != null ? double.tryParse(altText) : null;
+          if (altText != null && altitude == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.invalid_altitude',
+                message:
+                    'Invalid AltitudeMeters "$altText" at $time; using null.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap.track.trackpoint',
+                  description: time.toIso8601String(),
+                ),
+              ),
+            );
+          }
+          if (lat != null && lon != null) {
+            allPoints.add(
+              GeoPoint(
+                latitude: lat,
+                longitude: lon,
+                elevation: altitude,
+                time: time,
+              ),
+            );
+          }
+          final hrNode = _firstChild(trackpoint, 'HeartRateBpm');
+          final hrValueText = hrNode != null
+              ? _firstText(hrNode, 'Value')
+              : null;
+          final hrValue = hrValueText != null
+              ? double.tryParse(hrValueText)
+              : null;
+          if (hrValueText != null && hrValue == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.invalid_heartrate',
+                message: 'Invalid HeartRate "$hrValueText" at $time.',
+                node: ParseNodeReference(
+                  path:
+                      'tcx.activities.activity.lap.track.trackpoint.HeartRateBpm',
+                  description: time.toIso8601String(),
+                ),
+              ),
+            );
+          } else if (hrValue != null) {
+            allHrSamples.add(Sample(time: time, value: hrValue));
+          }
+          final cadenceText = _firstText(trackpoint, 'Cadence');
+          final cadenceValue = cadenceText != null
+              ? double.tryParse(cadenceText)
+              : null;
+          if (cadenceText != null && cadenceValue == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.invalid_cadence',
+                message: 'Invalid Cadence "$cadenceText" at $time.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap.track.trackpoint.Cadence',
+                  description: time.toIso8601String(),
+                ),
+              ),
+            );
+          } else if (cadenceValue != null) {
+            allCadenceSamples.add(Sample(time: time, value: cadenceValue));
+          }
+          final distanceText = _firstText(trackpoint, 'DistanceMeters');
+          final distanceValue = distanceText != null
+              ? double.tryParse(distanceText)
+              : null;
+          if (distanceText != null && distanceValue == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.trackpoint.invalid_distance',
+                message: 'Invalid DistanceMeters "$distanceText" at $time.',
+                node: ParseNodeReference(
+                  path:
+                      'tcx.activities.activity.lap.track.trackpoint.DistanceMeters',
+                  description: time.toIso8601String(),
+                ),
+              ),
+            );
+          } else if (distanceValue != null) {
+            allDistanceSamples.add(Sample(time: time, value: distanceValue));
+          }
+          firstTime ??= time;
+          lastTime = time;
+        }
+        final first = firstTime;
+        final last = lastTime;
+        if (first != null && last != null) {
+          final start = lapStart ?? first;
+          allLaps.add(
+            Lap(
+              startTime: start,
+              endTime: last,
+              distanceMeters: lapDistance,
+              name: 'Lap ${allLaps.length + 1}',
+              sport: activitySport,
             ),
           );
-          continue;
         }
-        DateTime time;
-        try {
-          time = DateTime.parse(timeText).toUtc();
-        } catch (_) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.invalid_time',
-              message: 'Invalid Time "$timeText"; trackpoint skipped.',
-              node: ParseNodeReference(
-                path: 'tcx.activities.activity.lap.track.trackpoint',
-                description: timeText,
-              ),
-            ),
-          );
-          continue;
-        }
-        final position = _firstChild(trackpoint, 'Position');
-        final latText = position != null
-            ? _firstText(position, 'LatitudeDegrees')
-            : null;
-        final lonText = position != null
-            ? _firstText(position, 'LongitudeDegrees')
-            : null;
-        final lat = latText != null ? double.tryParse(latText) : null;
-        final lon = lonText != null ? double.tryParse(lonText) : null;
-        if (lat == null || lon == null) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.missing_coordinates',
-              message: 'Trackpoint at $time missing coordinates; skipped.',
-              node: ParseNodeReference(
-                path: 'tcx.activities.activity.lap.track.trackpoint',
-                description: time.toIso8601String(),
-              ),
-            ),
-          );
-          continue;
-        }
-        final altText = _firstText(trackpoint, 'AltitudeMeters');
-        final altitude = altText != null ? double.tryParse(altText) : null;
-        if (altText != null && altitude == null) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.invalid_altitude',
-              message:
-                  'Invalid AltitudeMeters "$altText" at $time; using null.',
-              node: ParseNodeReference(
-                path: 'tcx.activities.activity.lap.track.trackpoint',
-                description: time.toIso8601String(),
-              ),
-            ),
-          );
-        }
-        points.add(
-          GeoPoint(
-            latitude: lat,
-            longitude: lon,
-            elevation: altitude,
-            time: time,
-          ),
-        );
-        final hrNode = _firstChild(trackpoint, 'HeartRateBpm');
-        final hrValueText = hrNode != null ? _firstText(hrNode, 'Value') : null;
-        final hrValue = hrValueText != null
-            ? double.tryParse(hrValueText)
-            : null;
-        if (hrValueText != null && hrValue == null) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.invalid_heartrate',
-              message: 'Invalid HeartRate "$hrValueText" at $time.',
-              node: ParseNodeReference(
-                path:
-                    'tcx.activities.activity.lap.track.trackpoint.HeartRateBpm',
-                description: time.toIso8601String(),
-              ),
-            ),
-          );
-        } else if (hrValue != null) {
-          hrSamples.add(Sample(time: time, value: hrValue));
-        }
-        final cadenceText = _firstText(trackpoint, 'Cadence');
-        final cadenceValue = cadenceText != null
-            ? double.tryParse(cadenceText)
-            : null;
-        if (cadenceText != null && cadenceValue == null) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.invalid_cadence',
-              message: 'Invalid Cadence "$cadenceText" at $time.',
-              node: ParseNodeReference(
-                path: 'tcx.activities.activity.lap.track.trackpoint.Cadence',
-                description: time.toIso8601String(),
-              ),
-            ),
-          );
-        } else if (cadenceValue != null) {
-          cadenceSamples.add(Sample(time: time, value: cadenceValue));
-        }
-        final distanceText = _firstText(trackpoint, 'DistanceMeters');
-        final distanceValue = distanceText != null
-            ? double.tryParse(distanceText)
-            : null;
-        if (distanceText != null && distanceValue == null) {
-          diagnostics.add(
-            ParseDiagnostic(
-              severity: ParseSeverity.warning,
-              code: 'tcx.trackpoint.invalid_distance',
-              message: 'Invalid DistanceMeters "$distanceText" at $time.',
-              node: ParseNodeReference(
-                path:
-                    'tcx.activities.activity.lap.track.trackpoint.DistanceMeters',
-                description: time.toIso8601String(),
-              ),
-            ),
-          );
-        } else if (distanceValue != null) {
-          distanceSamples.add(Sample(time: time, value: distanceValue));
-        }
-        firstTime ??= time;
-        lastTime = time;
-      }
-      final first = firstTime;
-      final last = lastTime;
-      if (first != null && last != null) {
-        final start = lapStart ?? first;
-        laps.add(
-          Lap(
-            startTime: start,
-            endTime: last,
-            distanceMeters: lapDistance,
-            name: 'Lap ${laps.length + 1}',
-          ),
-        );
       }
     }
-    final creatorInfo = _extractCreatorInfo(activityElement);
+
+    // Build final activity from merged data
     final channelMap = <Channel, Iterable<Sample>>{};
-    if (hrSamples.isNotEmpty) {
-      channelMap[Channel.heartRate] = hrSamples;
+    if (allHrSamples.isNotEmpty) {
+      channelMap[Channel.heartRate] = allHrSamples;
     }
-    if (cadenceSamples.isNotEmpty) {
-      channelMap[Channel.cadence] = cadenceSamples;
+    if (allCadenceSamples.isNotEmpty) {
+      channelMap[Channel.cadence] = allCadenceSamples;
     }
-    if (distanceSamples.isNotEmpty) {
-      channelMap[Channel.distance] = distanceSamples;
+    if (allDistanceSamples.isNotEmpty) {
+      channelMap[Channel.distance] = allDistanceSamples;
     }
     final activity = RawActivity(
-      points: points,
+      points: allPoints,
       channels: channelMap,
-      laps: laps,
-      sport: sport,
-      creator: creatorInfo.creator,
-      device: creatorInfo.device,
+      laps: allLaps,
+      sport: overallSport ?? Sport.unknown,
+      creator: creator,
+      device: device,
       gpxMetadataExtensions: metadataExtensions,
       gpxTrackExtensions: trackExtensions,
     );
@@ -296,17 +343,23 @@ class TcxParser implements ActivityFormatParser {
   }
 
   Sport _sportFromString(String? sport) {
-    if (sport == null) {
+    if (sport == null || sport.isEmpty) {
       return Sport.unknown;
     }
+
+    // Check cache first
+    final cached = TcxParser._sportCache[sport];
+    if (cached != null) {
+      return cached;
+    }
+
     final normalized = sport.trim().toLowerCase();
-    return switch (normalized) {
-      'running' => Sport.running,
-      'biking' || 'cycling' || 'bike' => Sport.cycling,
-      'walking' => Sport.walking,
-      'other' => Sport.other,
-      _ => Sport.unknown,
-    };
+    final result = TcxParser._sportMap[normalized] ?? Sport.unknown;
+
+    // Cache for future lookups
+    TcxParser._sportCache[sport] = result;
+
+    return result;
   }
 
   ({String? creator, ActivityDeviceMetadata? device}) _extractCreatorInfo(
@@ -316,21 +369,36 @@ class TcxParser implements ActivityFormatParser {
     if (creatorElement == null) {
       return (creator: null, device: null);
     }
-    final name = _firstText(creatorElement, 'Name');
-    final manufacturer = _firstText(creatorElement, 'Manufacturer');
-    final product =
-        _firstText(creatorElement, 'ProductID') ??
-        _firstText(creatorElement, 'Product');
-    final serial =
-        _firstText(creatorElement, 'UnitId') ??
-        _firstText(creatorElement, 'SerialNumber');
+
+    // Batch lookup: fetch all needed fields in one pass
+    final creatorTexts = _batchTexts(creatorElement, [
+      'Name',
+      'Manufacturer',
+      'ProductID',
+      'Product',
+      'UnitId',
+      'SerialNumber',
+    ]);
+
+    final name = creatorTexts['Name'];
+    final manufacturer = creatorTexts['Manufacturer'];
+    final product = creatorTexts['ProductID'] ?? creatorTexts['Product'];
+    final serial = creatorTexts['UnitId'] ?? creatorTexts['SerialNumber'];
+
     String? version;
     final versionElement = _firstChild(creatorElement, 'Version');
     if (versionElement != null) {
-      final major = _firstText(versionElement, 'VersionMajor');
-      final minor = _firstText(versionElement, 'VersionMinor');
-      final buildMajor = _firstText(versionElement, 'BuildMajor');
-      final buildMinor = _firstText(versionElement, 'BuildMinor');
+      final versionTexts = _batchTexts(versionElement, [
+        'VersionMajor',
+        'VersionMinor',
+        'BuildMajor',
+        'BuildMinor',
+      ]);
+      final major = versionTexts['VersionMajor'];
+      final minor = versionTexts['VersionMinor'];
+      final buildMajor = versionTexts['BuildMajor'];
+      final buildMinor = versionTexts['BuildMinor'];
+
       final coreParts = [
         if (major != null && major.isNotEmpty) major,
         if (minor != null && minor.isNotEmpty) minor,
@@ -347,6 +415,7 @@ class TcxParser implements ActivityFormatParser {
         version = version == null ? build : '$version+$build';
       }
     }
+
     final device = ActivityDeviceMetadata(
       manufacturer: manufacturer,
       model: name,
@@ -354,6 +423,7 @@ class TcxParser implements ActivityFormatParser {
       serialNumber: serial,
       softwareVersion: version,
     );
+
     var creatorLabel = name?.trim();
     if (creatorLabel == null || creatorLabel.isEmpty) {
       final raw = (creatorElement.value ?? "").trim().trim();
@@ -367,27 +437,75 @@ class TcxParser implements ActivityFormatParser {
   }
 }
 
-Iterable<XmlElement> _childElements(XmlElement element, String localName) =>
-    element.children.whereType<XmlElement>().where(
-      (child) => child.name.local == localName,
-    );
+/// Cache for frequent element lookups to avoid repeated traversals
+/// Maps element identity to a map of child elements by local name
+final _elementCache = <XmlElement, Map<String, XmlElement>>{};
+final _textCache = <XmlElement, Map<String, String?>>{};
 
-XmlElement? _firstChild(XmlElement element, String localName) =>
-    _childElements(element, localName).firstOrNull;
+/// Batch-retrieves child elements by local name. Faster than repeated _firstChild calls.
+/// Use this when you need multiple children from the same element.
+Map<String, XmlElement> _batchChildElements(XmlElement element) {
+  // Check cache first
+  final cached = _elementCache[element];
+  if (cached != null) {
+    return cached;
+  }
 
-String? _firstText(XmlElement element, String localName) {
-  for (final child in _childElements(element, localName)) {
-    final text = child.innerText.trim();
-    if (text.isNotEmpty) {
-      return text;
+  // Build cache on first access
+  final children = <String, XmlElement>{};
+  for (final child in element.childElements) {
+    final localName = child.name.local;
+    // Keep first occurrence of each name
+    children.putIfAbsent(localName, () => child);
+  }
+
+  _elementCache[element] = children;
+  return children;
+}
+
+/// Batch-retrieves text values for multiple child elements.
+/// Faster than multiple _firstText calls.
+Map<String, String?> _batchTexts(XmlElement element, List<String> localNames) {
+  // Check cache first
+  final cached = _textCache[element];
+  if (cached != null) {
+    return cached;
+  }
+
+  final texts = <String, String?>{};
+  final childMap = _batchChildElements(element);
+
+  for (final localName in localNames) {
+    final child = childMap[localName];
+    if (child != null) {
+      final text = child.innerText.trim();
+      texts[localName] = text.isEmpty ? null : text;
     }
   }
-  return null;
+
+  _textCache[element] = texts;
+  return texts;
+}
+
+Iterable<XmlElement> _childElements(XmlElement element, String localName) {
+  // Direct iteration without whereType is faster
+  return element.childElements.where((child) => child.name.local == localName);
+}
+
+XmlElement? _firstChild(XmlElement element, String localName) =>
+    _batchChildElements(element)[localName];
+
+String? _firstText(XmlElement element, String localName) {
+  final child = _firstChild(element, localName);
+  if (child == null) return null;
+  final text = child.innerText.trim();
+  return text.isEmpty ? null : text;
 }
 
 List<GpxExtensionNode> _parseExtensionChildren(XmlElement extensionsElement) {
+  // Use childElements directly instead of children.whereType for efficiency
   final nodes = <GpxExtensionNode>[];
-  for (final child in extensionsElement.children.whereType<XmlElement>()) {
+  for (final child in extensionsElement.childElements) {
     nodes.add(_extensionNodeFromXml(child));
   }
   return nodes;
@@ -401,19 +519,22 @@ GpxExtensionNode _extensionNodeFromXml(XmlElement element) {
               : attribute.name.local:
           attribute.value,
   };
-  final textContent = element.children
-      .whereType<XmlText>()
-      .map((node) => node.value.trim())
-      .where((value) => value.isNotEmpty)
-      .join();
+  // Optimize text content extraction
+  String? textContent;
+  for (final child in element.children) {
+    if (child is XmlText) {
+      final trimmed = child.value.trim();
+      if (trimmed.isNotEmpty) {
+        textContent = (textContent ?? '') + trimmed;
+      }
+    }
+  }
   return GpxExtensionNode(
     name: element.name.local,
     namespacePrefix: element.name.prefix,
     namespaceUri: element.name.namespaceUri,
-    value: textContent.isEmpty ? null : textContent,
+    value: textContent,
     attributes: attributes,
-    children: element.children.whereType<XmlElement>().map(
-      _extensionNodeFromXml,
-    ),
+    children: element.childElements.map(_extensionNodeFromXml),
   );
 }

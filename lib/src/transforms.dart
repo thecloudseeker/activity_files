@@ -3,6 +3,7 @@
 import 'dart:math' as math;
 
 import 'models.dart';
+import 'validation.dart';
 
 part 'transforms/transform_utils.dart';
 part 'transforms/raw_transforms.dart';

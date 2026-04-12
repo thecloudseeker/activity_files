@@ -16,7 +16,8 @@ Future<({Uint8List bytes, String path})?> readPlatformFile(Object? file) async {
     return null;
   }
   final bytes = await file.readAsBytes();
-  return (bytes: Uint8List.fromList(bytes), path: file.path);
+  // File.readAsBytes() already returns Uint8List
+  return (bytes: bytes, path: file.path);
 }
 
 /// Determines whether [path] refers to an existing file.
@@ -24,4 +25,4 @@ bool platformPathExists(String path) => File(path).existsSync();
 
 /// Reads bytes from [path].
 Future<Uint8List> readPlatformPath(String path) async =>
-    Uint8List.fromList(await File(path).readAsBytes());
+    await File(path).readAsBytes(); // Already returns Uint8List
