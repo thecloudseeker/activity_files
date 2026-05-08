@@ -110,26 +110,35 @@ void main() {
       );
     });
 
-    test('sundaygreenloop FIT fails gracefully with a clear error', () async {
-      // TODO(0.5.5)(fit): Upgrade this regression to assert best-effort point/channel extraction once redefinition timeline decoding lands.
-      final file = File('scripts/test_files/user_data/sundaygreenloop.fit');
-      final bytes = await file.readAsBytes();
+    final sundaygreenloopFixture = File(
+      'dev/fixtures/user_data/sundaygreenloop.fit',
+    );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    test(
+      'sundaygreenloop FIT fails gracefully with a clear error',
+      () async {
+        // TODO(0.5.5)(fit): Upgrade this regression to assert best-effort point/channel extraction once redefinition timeline decoding lands.
+        final bytes = await sundaygreenloopFixture.readAsBytes();
 
-      expect(result.activity.points, isEmpty);
-      expect(
-        result.diagnostics.where((d) => d.severity == ParseSeverity.error),
-        isNotEmpty,
-      );
-      expect(
-        result.diagnostics.any(
-          (d) =>
-              d.code == 'fit.no_usable_data' ||
-              d.code == 'fit.data.unknown_definition',
-        ),
-        isTrue,
-      );
-    });
+        final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+        expect(result.activity.points, isEmpty);
+        expect(
+          result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+          isNotEmpty,
+        );
+        expect(
+          result.diagnostics.any(
+            (d) =>
+                d.code == 'fit.no_usable_data' ||
+                d.code == 'fit.data.unknown_definition',
+          ),
+          isTrue,
+        );
+      },
+      skip: sundaygreenloopFixture.existsSync()
+          ? false
+          : 'Fixture missing: dev/fixtures/user_data/sundaygreenloop.fit',
+    );
   });
 }

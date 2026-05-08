@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+### Changed
+- Upgraded dependencies 
+- Minor Fixes
+
 ## 0.5.0
 
 ### Migration

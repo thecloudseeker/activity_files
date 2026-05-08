@@ -369,7 +369,7 @@ void _printDiagnostics(
     final nodeLabel = diagnostic.node?.format();
     final codeLabel = diagnostic.code;
     final severityLabel = diagnostic.severity.name.toUpperCase();
-    final context = [if (nodeLabel != null) nodeLabel, codeLabel].join(' • ');
+    final context = [?nodeLabel, codeLabel].join(' • ');
     stdout.writeln(
       '  - $severityLabel${context.isNotEmpty ? ' $context' : ''}',
     );
