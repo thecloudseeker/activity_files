@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'models.dart';
 
-// TODO(0.6.0): Validation auto-corrections (timestamp gaps, sensor drift, invalid coordinates).
-// TODO(0.6.0): Actionable error messages with recovery suggestions and warning prioritization.
+// TODO(0.10.0): Validation auto-corrections (timestamp gaps, sensor drift, invalid coordinates).
+// TODO(0.7.0): Actionable error messages with recovery suggestions and warning prioritization.
 
 /// Outcome of activity validation.
 class ValidationResult {
@@ -24,7 +24,6 @@ class ValidationResult {
 ///
 /// Used to detect lap timing mismatches after compound edits like crop,
 /// trim, or downsample operations.
-// TODO(0.5.5)(refactor): Reuse shared lap boundary logic from RawEditor.
 class LapValidationResult {
   LapValidationResult({Iterable<String>? errors, Iterable<String>? warnings})
     : errors = List.unmodifiable(errors ?? const <String>[]),
@@ -41,6 +40,64 @@ class LapValidationResult {
 
   /// Whether there are any issues (errors or warnings).
   bool get hasIssues => errors.isNotEmpty || warnings.isNotEmpty;
+}
+
+LapValidationResult validateLapBoundariesList(
+  List<Lap> laps, {
+  DateTime? pointsStart,
+  DateTime? pointsEnd,
+  bool warnWhenNoPoints = false,
+}) {
+  final errors = <String>[];
+  final warnings = <String>[];
+
+  if (warnWhenNoPoints &&
+      pointsStart == null &&
+      pointsEnd == null &&
+      laps.isNotEmpty) {
+    warnings.add('Activity has ${laps.length} lap(s) but no GPS points');
+    return LapValidationResult(errors: errors, warnings: warnings);
+  }
+
+  Lap? previous;
+  for (var i = 0; i < laps.length; i++) {
+    final lap = laps[i];
+    final label = 'Lap ${i + 1}';
+    final start = lap.startTime;
+    final end = lap.endTime;
+    if (!end.isAfter(start)) {
+      errors.add(
+        '$label ends at ${end.toIso8601String()} which is not after its start ${start.toIso8601String()}',
+      );
+    }
+    final prev = previous;
+    if (prev != null) {
+      final prevStart = prev.startTime;
+      final prevEnd = prev.endTime;
+      if (start.isBefore(prevStart)) {
+        errors.add(
+          '$label starts before the previous lap (${prevStart.toIso8601String()}); ensure laps are ordered chronologically.',
+        );
+      } else if (start.isBefore(prevEnd)) {
+        errors.add(
+          '$label starts before the previous lap ended at ${prevEnd.toIso8601String()}',
+        );
+      }
+    }
+    if (pointsStart != null && start.isBefore(pointsStart)) {
+      warnings.add(
+        '$label starts before the first point (${pointsStart.toIso8601String()}); lap timings may not align with the trajectory.',
+      );
+    }
+    if (pointsEnd != null && end.isAfter(pointsEnd)) {
+      warnings.add(
+        '$label ends after the last point (${pointsEnd.toIso8601String()}); lap timings may not align with the trajectory.',
+      );
+    }
+    previous = lap;
+  }
+
+  return LapValidationResult(errors: errors, warnings: warnings);
 }
 
 /// Runs a set of structural checks over [activity].
@@ -132,44 +189,13 @@ ValidationResult validateRawActivity(
   }
 
   void checkLaps() {
-    Lap? previous;
-    for (var i = 0; i < activity.laps.length; i++) {
-      final lap = activity.laps[i];
-      final label = 'Lap ${i + 1}';
-      // Lap times are always UTC (from Lap constructor)
-      final start = lap.startTime;
-      final end = lap.endTime;
-      if (!end.isAfter(start)) {
-        errors.add(
-          '$label ends at ${end.toIso8601String()} which is not after its start ${start.toIso8601String()}',
-        );
-      }
-      final prev = previous;
-      if (prev != null) {
-        final prevStart = prev.startTime;
-        final prevEnd = prev.endTime;
-        if (start.isBefore(prevStart)) {
-          errors.add(
-            '$label starts before the previous lap (${prevStart.toIso8601String()}); ensure laps are ordered chronologically.',
-          );
-        } else if (start.isBefore(prevEnd)) {
-          errors.add(
-            '$label starts before the previous lap ended at ${prevEnd.toIso8601String()}',
-          );
-        }
-      }
-      if (pointsStart != null && start.isBefore(pointsStart)) {
-        warnings.add(
-          '$label starts before the first point (${pointsStart.toIso8601String()}); lap timings may not align with the trajectory.',
-        );
-      }
-      if (pointsEnd != null && end.isAfter(pointsEnd)) {
-        warnings.add(
-          '$label ends after the last point (${pointsEnd.toIso8601String()}); lap timings may not align with the trajectory.',
-        );
-      }
-      previous = lap;
-    }
+    final lapValidation = validateLapBoundariesList(
+      activity.laps,
+      pointsStart: pointsStart,
+      pointsEnd: pointsEnd,
+    );
+    errors.addAll(lapValidation.errors);
+    warnings.addAll(lapValidation.warnings);
   }
 
   void checkChannelCoverage() {

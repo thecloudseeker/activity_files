@@ -10,8 +10,7 @@ import 'parse_result.dart';
 /// Supports multi-sport activities (e.g., triathlons) by parsing all
 /// `<Activity>` elements and merging them into a single [RawActivity] with
 /// sport-specific laps.
-// TODO(0.7.0): TCX: Support courses, workouts, and extensions round-trip.
-// TODO(0.5.5)(perf): Limit or scope XML lookup caches to avoid retaining parsed documents.
+// TODO(0.8.0): TCX: Support courses, workouts, and extensions round-trip.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
 
@@ -437,10 +436,10 @@ class TcxParser implements ActivityFormatParser {
   }
 }
 
-/// Cache for frequent element lookups to avoid repeated traversals
-/// Maps element identity to a map of child elements by local name
-final _elementCache = <XmlElement, Map<String, XmlElement>>{};
-final _textCache = <XmlElement, Map<String, String?>>{};
+/// Cache for frequent element lookups to avoid repeated traversals.
+/// Uses Expando so cache keys are weak and don't retain parsed XML trees.
+final _elementCache = Expando<Map<String, XmlElement>>('tcx_element_cache');
+final _textCache = Expando<Map<String, String?>>('tcx_text_cache');
 
 /// Batch-retrieves child elements by local name. Faster than repeated _firstChild calls.
 /// Use this when you need multiple children from the same element.
@@ -466,16 +465,13 @@ Map<String, XmlElement> _batchChildElements(XmlElement element) {
 /// Batch-retrieves text values for multiple child elements.
 /// Faster than multiple _firstText calls.
 Map<String, String?> _batchTexts(XmlElement element, List<String> localNames) {
-  // Check cache first
-  final cached = _textCache[element];
-  if (cached != null) {
-    return cached;
-  }
-
-  final texts = <String, String?>{};
+  final texts = _textCache[element] ?? <String, String?>{};
   final childMap = _batchChildElements(element);
 
   for (final localName in localNames) {
+    if (texts.containsKey(localName)) {
+      continue;
+    }
     final child = childMap[localName];
     if (child != null) {
       final text = child.innerText.trim();

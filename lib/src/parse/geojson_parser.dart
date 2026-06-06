@@ -4,6 +4,11 @@ import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
 
+final DateTime _geojsonFallbackTimestamp = DateTime.fromMillisecondsSinceEpoch(
+  0,
+  isUtc: true,
+);
+
 /// Parser for GeoJSON format activity files
 /// Supports single Feature and FeatureCollection geometries
 class GeojsonParser implements ActivityFormatParser {
@@ -284,8 +289,7 @@ class GeojsonParser implements ActivityFormatParser {
           timestamp = DateTime.parse(properties['timestamp'].toString());
         } catch (_) {}
       }
-      // TODO(0.5.5)(determinism): Avoid DateTime.now() fallback for missing timestamps.
-      timestamp ??= DateTime.now().toUtc();
+      timestamp ??= _geojsonFallbackTimestamp;
 
       final point = GeoPoint(
         latitude: latitude,

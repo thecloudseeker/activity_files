@@ -6,6 +6,7 @@ import '../encode/encoder_options.dart';
 import '../models.dart';
 import '../parse/parse_result.dart';
 import '../validation.dart';
+import 'pipeline_options.dart';
 
 /// Declarative description of an export pipeline for [ActivityFiles].
 class ActivityExportRequest {
@@ -23,6 +24,8 @@ class ActivityExportRequest {
     required this.encoding,
     required this.allowFilePaths,
     required this.strictFitIntegrity,
+    required this.fitCorruptionHandling,
+    required this.autoFix,
     required Iterable<ParseDiagnostic> diagnostics,
     this.validation,
     this.maxPayloadBytes,
@@ -39,6 +42,9 @@ class ActivityExportRequest {
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     ValidationResult? validation,
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
   }) => ActivityExportRequest._(
     activity: activity,
     to: to,
@@ -50,6 +56,8 @@ class ActivityExportRequest {
     encoding: utf8,
     allowFilePaths: false,
     strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    autoFix: autoFix,
     diagnostics: diagnostics,
     validation: validation,
     maxPayloadBytes: null,
@@ -69,6 +77,9 @@ class ActivityExportRequest {
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = 64 * 1024 * 1024,
   }) => ActivityExportRequest._(
     source: source,
@@ -82,6 +93,8 @@ class ActivityExportRequest {
     encoding: encoding,
     allowFilePaths: allowFilePaths,
     strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    autoFix: autoFix,
     diagnostics: diagnostics,
     validation: null,
     maxPayloadBytes: maxPayloadBytes,
@@ -99,6 +112,9 @@ class ActivityExportRequest {
     Encoding encoding = utf8,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = 64 * 1024 * 1024,
   }) => ActivityExportRequest._(
     stream: stream,
@@ -112,6 +128,8 @@ class ActivityExportRequest {
     encoding: encoding,
     allowFilePaths: false,
     strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    autoFix: autoFix,
     diagnostics: diagnostics,
     validation: null,
     maxPayloadBytes: maxPayloadBytes,
@@ -156,6 +174,12 @@ class ActivityExportRequest {
   /// Whether FIT integrity failures (CRC/size) should throw instead of only
   /// surfacing diagnostics.
   final bool strictFitIntegrity;
+
+  /// Policy for handling corrupted FIT payloads.
+  final FitCorruptionHandling fitCorruptionHandling;
+
+  /// Auto-fix options applied before export.
+  final ActivityAutoFixOptions autoFix;
 
   /// Maximum bytes allowed for inline strings/bytes and buffered streams.
   /// When null, no limit is enforced.

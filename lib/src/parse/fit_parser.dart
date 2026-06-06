@@ -5,10 +5,11 @@ import 'dart:typed_data';
 import '../fit/fit_crc.dart';
 import '../models.dart';
 import 'activity_parser.dart';
+import 'integrity_mode.dart';
 import 'parse_result.dart';
 
 /// Parser for FIT binary payloads (limited profile support).
-// TODO(0.7.0)(feature): Handle developer fields and broader Garmin SDK profile coverage.
+/// Decodes numeric developer values and maps known fields to semantic channel names.
 ///
 /// The decoder focuses on the subset of the FIT profile required to populate
 /// the unified [RawActivity] model: geographic points, heart-rate/cadence/power
@@ -26,6 +27,27 @@ class FitParser implements ActivityFormatParser {
 
   ActivityParseResult parseBytes(Uint8List payload) {
     return _parsePayload(payload, <ParseDiagnostic>[]);
+  }
+
+  /// Parse FIT bytes with configurable integrity handling.
+  ///
+  /// Use [integrityConfig] to control how CRC mismatches and truncation issues
+  /// are handled:
+  /// * [IntegrityMode.strict]: Throws on any issue (fail-fast)
+  /// * [IntegrityMode.report]: Logs issues as diagnostics, continues (default)
+  /// * [IntegrityMode.silent]: Ignores all issues silently
+  ///
+  /// When [IntegrityConfig.collectStats] is true, detailed statistics about
+  /// issues are collected and exposed in the result.
+  ActivityParseResult parseBytesWithIntegrity(
+    Uint8List payload, {
+    IntegrityConfig integrityConfig = const IntegrityConfig(),
+  }) {
+    return _parsePayloadWithIntegrity(
+      payload,
+      <ParseDiagnostic>[],
+      integrityConfig: integrityConfig,
+    );
   }
 
   ActivityParseResult _parsePayload(
@@ -108,84 +130,11 @@ class FitParser implements ActivityFormatParser {
     }
     final dataLimit = header.headerSize + header.dataSize;
 
-    // Pass 1: Collect all message definitions WITHOUT processing data messages.
-    // This ensures definitions are available before decoding data.
-    // TODO(0.5.5)(fit): Replace static local->definition snapshots with definition timelines so local redefinitions decode against the active schema at each message offset.
+    // Keep definition state in-order as records appear in the stream.
     final definitions = <int, _FitMessageDefinition>{};
-    pass1Reader.position = header.headerSize;
-    while (pass1Reader.position < dataLimit &&
-        pass1Reader.position < payload.length) {
-      final recordHeader = pass1Reader.readUint8();
-      final isCompressed = (recordHeader & 0x80) != 0;
-      final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
-      final hasDeveloper = !isCompressed && (recordHeader & 0x20) != 0;
-      var localType = recordHeader & 0x0F;
-      if (isCompressed) {
-        localType = (recordHeader >> 5) & 0x03;
-      }
-
-      if (isDefinition) {
-        final def = _FitMessageDefinition.read(
-          pass1Reader,
-          localType,
-          hasDeveloper: hasDeveloper,
-        );
-        if (def != null && def.fields.isNotEmpty) {
-          // Preserve record definitions from being overwritten
-          final existing = definitions[localType];
-          final isRecord = def.globalId == 20;
-          final hasExistingRecord = existing != null && existing.globalId == 20;
-          if (!hasExistingRecord || isRecord) {
-            definitions[localType] = def;
-          }
-        }
-      } else {
-        // Skip data message payload using known definition
-        final def = definitions[localType];
-        if (def != null) {
-          pass1Reader.skip(def.dataSize(compressedTimestamp: isCompressed));
-        }
-        // If definition not yet known, cannot skip correctly - handle in pass 2.
-      }
-    }
-
-    // Pass 1b: For swimming files with data before definitions, do a second scan
-    // to collect any definitions we missed due to early data messages.
-    pass1Reader.position = header.headerSize;
-    while (pass1Reader.position < dataLimit &&
-        pass1Reader.position < payload.length) {
-      final recordHeader = pass1Reader.readUint8();
-      final isCompressed = (recordHeader & 0x80) != 0;
-      final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
-      final hasDeveloper = !isCompressed && (recordHeader & 0x20) != 0;
-      var localType = recordHeader & 0x0F;
-      if (isCompressed) {
-        localType = (recordHeader >> 5) & 0x03;
-      }
-
-      if (isDefinition) {
-        final def = _FitMessageDefinition.read(
-          pass1Reader,
-          localType,
-          hasDeveloper: hasDeveloper,
-        );
-        if (def != null &&
-            def.fields.isNotEmpty &&
-            !definitions.containsKey(localType)) {
-          definitions[localType] = def;
-        }
-      } else {
-        // Skip data message
-        final def = definitions[localType];
-        if (def != null) {
-          pass1Reader.skip(def.dataSize(compressedTimestamp: isCompressed));
-        }
-      }
-    }
-
-    // Pass 2: Decode data messages using collected definitions
     final reader = _FitByteReader(payload)..position = header.headerSize;
     final lastTimestamps = <int, int>{};
+    int? lastKnownTimestamp;
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
     final cadenceSamples = <Sample>[];
@@ -196,6 +145,8 @@ class FitParser implements ActivityFormatParser {
     final extraSamples = <Channel, List<Sample>>{};
     final laps = <Lap>[];
     var sawDataMessage = false;
+    var unknownDefinitionCount = 0;
+    var recoveredTimestampCount = 0;
     Sport sport = Sport.unknown;
     String? creator;
     ActivityDeviceMetadata? deviceMetadata;
@@ -263,31 +214,61 @@ class FitParser implements ActivityFormatParser {
         }
       }
       if (isDefinition) {
-        // Skip definition processing in pass 2 - already collected in pass 1
-        // TODO(0.5.5)(fit): Apply in-stream definition updates in pass 2 (do not freeze to pass1) to support files that redefine record locals many times.
-        _FitMessageDefinition.read(
+        final definition = _FitMessageDefinition.read(
           reader,
           localType,
           hasDeveloper: hasDeveloper,
         );
+        if (definition != null) {
+          definitions[localType] = definition;
+        }
         continue;
       }
       sawDataMessage = true;
       var definition = definitions[localType];
       if (definition == null) {
-        diagnostics.add(
-          ParseDiagnostic(
-            severity: ParseSeverity.error,
-            code: 'fit.data.unknown_definition',
-            message:
-                'Data message references unknown definition #$localType; parsing stopped to avoid corrupt output.',
-            node: ParseNodeReference(
-              path: 'fit.message',
-              description: 'localType=$localType',
+        unknownDefinitionCount++;
+        if (unknownDefinitionCount <= 5) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'fit.data.unknown_definition',
+              message:
+                  'Data message references unknown definition #$localType; attempting stream resynchronization.',
+              node: ParseNodeReference(
+                path: 'fit.message',
+                description: 'localType=$localType',
+              ),
             ),
-          ),
+          );
+        }
+        final progressBeforeResync = reader.position;
+        final resynced = _resyncToDefinition(
+          payload,
+          reader,
+          math.min(dataLimit, payload.length),
+          definitions,
         );
-        break;
+        if (!resynced && reader.position <= progressBeforeResync) {
+          if (reader.position < dataLimit) {
+            reader.position = reader.position + 1;
+          }
+          if (unknownDefinitionCount <= 5) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'fit.data.resync_failed',
+                message:
+                    'Unable to resynchronize after unknown definition #$localType; skipping one byte to continue parsing.',
+                node: ParseNodeReference(
+                  path: 'fit.message',
+                  description: 'localType=$localType',
+                ),
+              ),
+            );
+          }
+        }
+        continue;
       }
       final values = definition.readValues(
         reader,
@@ -311,11 +292,151 @@ class FitParser implements ActivityFormatParser {
       if (compressedTimestamp != null) {
         values[253] = compressedTimestamp;
         lastTimestamps[localType] = compressedTimestamp;
+        lastKnownTimestamp = compressedTimestamp;
       } else {
         final rawTimestamp = values[253];
         if (rawTimestamp is num) {
           lastTimestamps[localType] = rawTimestamp.toInt();
+          lastKnownTimestamp = rawTimestamp.toInt();
         }
+      }
+      final isCanonicalRecord = definition.globalId == 20;
+      final isFallbackRecord =
+          !isCanonicalRecord && _looksLikeRecordDefinition(definition);
+      if (isCanonicalRecord || isFallbackRecord) {
+        DateTime? timestamp = _decodeTimestamp(values[253]);
+        if (timestamp == null) {
+          final recoveredSeconds =
+              lastTimestamps[localType] ?? lastKnownTimestamp;
+          if (recoveredSeconds != null) {
+            timestamp = DateTime.utc(
+              1989,
+              12,
+              31,
+            ).add(Duration(seconds: recoveredSeconds));
+            recoveredTimestampCount++;
+            if (recoveredTimestampCount <= 5) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'fit.record.recovered_timestamp',
+                  message:
+                      'Record timestamp missing; reused recent timestamp context for best-effort extraction.',
+                  node: ParseNodeReference(
+                    path: 'fit.record',
+                    description: 'localType=$localType',
+                  ),
+                ),
+              );
+            }
+          }
+        }
+        if (timestamp == null) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'fit.record.missing_timestamp',
+              message: 'Record without timestamp skipped.',
+              node: ParseNodeReference(
+                path: 'fit.record',
+                description: 'localType=$localType',
+              ),
+            ),
+          );
+          continue;
+        }
+        final recordTime = timestamp;
+        void addSample(Channel channel, num? value) {
+          if (value == null) return;
+          (extraSamples[channel] ??= <Sample>[]).add(
+            Sample(time: recordTime, value: value.toDouble()),
+          );
+        }
+
+        void addVendorField(int field) {
+          addSample(
+            Channel.custom('fit_field_$field'),
+            _asNumber(values[field]),
+          );
+        }
+
+        final lat = _decodeSemicircles(values[0]);
+        final lon = _decodeSemicircles(values[1]);
+        if (isFallbackRecord && (lat == null || lon == null)) {
+          continue;
+        }
+        final altitude = _decodeAltitude(values[2]);
+        if (lat != null && lon != null) {
+          points.add(
+            GeoPoint(
+              latitude: lat,
+              longitude: lon,
+              elevation: altitude,
+              time: recordTime,
+            ),
+          );
+        }
+        final hr = _asNumber(values[3]);
+        if (hr != null) {
+          hrSamples.add(Sample(time: recordTime, value: hr.toDouble()));
+        }
+        final cadence = _asNumber(values[4]);
+        if (cadence != null) {
+          cadenceSamples.add(
+            Sample(time: recordTime, value: cadence.toDouble()),
+          );
+        }
+        final distance = _asNumber(values[5]);
+        if (distance != null) {
+          distanceSamples.add(
+            Sample(time: recordTime, value: distance.toDouble() / 100.0),
+          );
+        }
+        final speed = _asNumber(values[6]);
+        if (speed != null) {
+          speedSamples.add(
+            Sample(time: recordTime, value: speed.toDouble() / 1000.0),
+          );
+        }
+        final power = _asNumber(values[7]);
+        if (power != null) {
+          powerSamples.add(Sample(time: recordTime, value: power.toDouble()));
+        }
+        final temp = _asNumber(values[13]);
+        if (temp != null) {
+          tempSamples.add(Sample(time: recordTime, value: temp.toDouble()));
+        }
+        addSample(Channel.custom('grade'), _decodeFitScaled(values[78], 100));
+        addSample(Channel.custom('left_right_balance'), _asNumber(values[120]));
+        addVendorField(53);
+        addVendorField(73);
+        addVendorField(87);
+        addVendorField(107);
+        addVendorField(134);
+        addVendorField(135);
+        addVendorField(136);
+        addVendorField(143);
+        for (final entry in values.entries) {
+          if (!_isDeveloperFieldKey(entry.key)) {
+            continue;
+          }
+          final numeric = _asNumber(entry.value);
+          if (numeric == null) {
+            continue;
+          }
+          final developerIndex = _developerIndexFromKey(entry.key);
+          final developerFieldNumber = _developerFieldNumberFromKey(entry.key);
+          addSample(
+            Channel.custom(
+              _developerChannelName(
+                developerIndex: developerIndex,
+                fieldNumber: developerFieldNumber,
+              ),
+            ),
+            numeric,
+          );
+        }
+        continue;
       }
       switch (definition.globalId) {
         case 0: // file_id
@@ -399,91 +520,61 @@ class FitParser implements ActivityFormatParser {
             );
           }
           break;
-        case 20: // record
-          final timestamp = _decodeTimestamp(values[253]);
-          if (timestamp == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'fit.record.missing_timestamp',
-                message: 'Record without timestamp skipped.',
-                node: ParseNodeReference(
-                  path: 'fit.record',
-                  description: 'localType=$localType',
-                ),
-              ),
-            );
-            // TODO(0.5.5)(fit): Add bounded timestamp recovery fallback (compressed offset/history) before dropping records from valid containers with variant layouts.
-            continue;
-          }
-          void addSample(Channel channel, num? value) {
-            if (value == null) return;
-            (extraSamples[channel] ??= <Sample>[]).add(
-              Sample(time: timestamp, value: value.toDouble()),
-            );
-          }
-          void addVendorField(int field) {
-            addSample(
-              Channel.custom('fit_field_$field'),
-              _asNumber(values[field]),
-            );
-          }
-          final lat = _decodeSemicircles(values[0]);
-          final lon = _decodeSemicircles(values[1]);
-          final altitude = _decodeAltitude(values[2]);
-          if (lat != null && lon != null) {
-            points.add(
-              GeoPoint(
-                latitude: lat,
-                longitude: lon,
-                elevation: altitude,
-                time: timestamp,
-              ),
-            );
-          }
-          final hr = _asNumber(values[3]);
-          if (hr != null) {
-            hrSamples.add(Sample(time: timestamp, value: hr.toDouble()));
-          }
-          final cadence = _asNumber(values[4]);
-          if (cadence != null) {
-            cadenceSamples.add(
-              Sample(time: timestamp, value: cadence.toDouble()),
-            );
-          }
-          final distance = _asNumber(values[5]);
-          if (distance != null) {
-            distanceSamples.add(
-              Sample(time: timestamp, value: distance.toDouble() / 100.0),
-            );
-          }
-          final speed = _asNumber(values[6]);
-          if (speed != null) {
-            speedSamples.add(
-              Sample(time: timestamp, value: speed.toDouble() / 1000.0),
-            );
-          }
-          final power = _asNumber(values[7]);
-          if (power != null) {
-            powerSamples.add(Sample(time: timestamp, value: power.toDouble()));
-          }
-          final temp = _asNumber(values[13]);
-          if (temp != null) {
-            tempSamples.add(Sample(time: timestamp, value: temp.toDouble()));
-          }
-          addSample(Channel.custom('grade'), _decodeFitScaled(values[78], 100));
-          addSample(
-            Channel.custom('left_right_balance'),
-            _asNumber(values[120]),
+        case 23: // device_info
+          final manufacturerId = _asNumber(values[3])?.toInt();
+          final serialId = _asNumber(values[4])?.toInt();
+          final productId = _asNumber(values[5])?.toInt();
+          final softwareVersion = _formatFitSoftwareVersion(values[6]);
+          final manufacturerName = manufacturerId != null
+              ? fitManufacturerNames[manufacturerId] ??
+                    'manufacturer_$manufacturerId'
+              : null;
+          final previous = deviceMetadata;
+          deviceMetadata = ActivityDeviceMetadata(
+            manufacturer: manufacturerName ?? previous?.manufacturer,
+            model: previous?.model,
+            product: productId?.toString() ?? previous?.product,
+            serialNumber: serialId?.toString() ?? previous?.serialNumber,
+            softwareVersion: softwareVersion ?? previous?.softwareVersion,
+            fitManufacturerId: manufacturerId ?? previous?.fitManufacturerId,
+            fitProductId: productId ?? previous?.fitProductId,
           );
-          addVendorField(53);
-          addVendorField(73);
-          addVendorField(87);
-          addVendorField(107);
-          addVendorField(134);
-          addVendorField(135);
-          addVendorField(136);
-          addVendorField(143);
+          break;
+        case 34: // activity — field 0 is total_timer_time only; no elapsed_time field in this message
+          final totalTimer = _decodeFitDuration(values[0]);
+          if (totalTimer != null) {
+            summary = (summary ?? const ActivitySummary()).copyWith(
+              timerTime: summary?.timerTime ?? totalTimer,
+            );
+          }
+          break;
+        case 49: // file_creator
+          final softwareVersion = _formatFitSoftwareVersion(values[0]);
+          final previous = deviceMetadata;
+          if (softwareVersion != null) {
+            deviceMetadata = ActivityDeviceMetadata(
+              manufacturer: previous?.manufacturer,
+              model: previous?.model,
+              product: previous?.product,
+              serialNumber: previous?.serialNumber,
+              softwareVersion: softwareVersion,
+              fitManufacturerId: previous?.fitManufacturerId,
+              fitProductId: previous?.fitProductId,
+            );
+          }
+          if (creator == null || creator.trim().isEmpty) {
+            final hwVersion = _asNumber(values[1])?.toInt();
+            final details = <String>[];
+            if (softwareVersion != null) {
+              details.add('sw$softwareVersion');
+            }
+            if (hwVersion != null) {
+              details.add('hw$hwVersion');
+            }
+            creator = details.isEmpty
+                ? 'FIT FileCreator'
+                : 'FIT FileCreator ${details.join(' ')}';
+          }
           break;
         default:
           // Skip unhandled message types.
@@ -522,6 +613,17 @@ class FitParser implements ActivityFormatParser {
         ),
       );
     }
+    if (unknownDefinitionCount > 5) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.data.unknown_definition.summary',
+          message:
+              'Encountered ${unknownDefinitionCount - 5} additional unknown-definition messages while resynchronizing FIT stream.',
+          node: const ParseNodeReference(path: 'fit.file'),
+        ),
+      );
+    }
     final activity = RawActivity(
       points: filteredPoints,
       channels: channels,
@@ -535,6 +637,116 @@ class FitParser implements ActivityFormatParser {
     );
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
+
+  /// Enhanced payload parsing with integrity configuration support.
+  ///
+  /// Wraps [_parsePayload] and adds integrity statistics collection when enabled.
+  ActivityParseResult _parsePayloadWithIntegrity(
+    Uint8List payload,
+    List<ParseDiagnostic> diagnostics, {
+    required IntegrityConfig integrityConfig,
+  }) {
+    // Collect stats if enabled
+    final stats = integrityConfig.collectStats ? IntegrityStats() : null;
+
+    final result = _parsePayload(payload, diagnostics);
+
+    if (stats != null) {
+      for (final diag in result.diagnostics) {
+        if (diag.code == 'fit.header.crc_mismatch') {
+          stats.headerCrcMismatches++;
+          stats.crcMismatches++;
+        } else if (diag.code == 'fit.trailer.crc_mismatch') {
+          stats.trailerCrcMismatches++;
+          stats.crcMismatches++;
+        } else if (diag.code == 'fit.trailer.truncated' ||
+            diag.code == 'fit.header.size_mismatch') {
+          stats.truncatedSections++;
+        }
+      }
+    }
+
+    switch (integrityConfig.mode) {
+      case IntegrityMode.strict:
+        final integrityDiags = result.diagnostics.where(
+          (d) =>
+              d.code.startsWith('fit.header') ||
+              d.code.startsWith('fit.trailer'),
+        );
+        if (integrityDiags.isNotEmpty) {
+          final info = integrityDiags
+              .map((d) => '${d.code}: ${d.message}')
+              .join('\n  ');
+          throw FormatException(
+            'FIT integrity check failed (strict mode).\n  $info',
+          );
+        }
+      case IntegrityMode.silent:
+        return ActivityParseResult(
+          activity: result.activity,
+          diagnostics: const [],
+          integrityStats: stats,
+          integrityMode: integrityConfig.mode,
+        );
+      case IntegrityMode.report:
+        break;
+    }
+
+    return ActivityParseResult(
+      activity: result.activity,
+      diagnostics: result.diagnostics,
+      integrityStats: stats,
+      integrityMode: integrityConfig.mode,
+    );
+  }
+}
+
+bool _resyncToDefinition(
+  Uint8List payload,
+  _FitByteReader reader,
+  int dataLimit,
+  Map<int, _FitMessageDefinition> definitions,
+) {
+  final start = reader.position;
+  const maxScanBytes = 2048;
+  final scanEnd = math.min(dataLimit, start + maxScanBytes);
+  var cursor = start;
+  while (cursor < scanEnd - 6) {
+    final recordHeader = payload[cursor];
+    final isCompressed = (recordHeader & 0x80) != 0;
+    final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
+    if (!isDefinition) {
+      cursor++;
+      continue;
+    }
+    final hasDeveloper = (recordHeader & 0x20) != 0;
+    final localType = recordHeader & 0x0F;
+    final probe = _FitByteReader(payload)..position = cursor + 1;
+    final definition = _FitMessageDefinition.read(
+      probe,
+      localType,
+      hasDeveloper: hasDeveloper,
+    );
+    if (definition == null ||
+        definition.fields.isEmpty ||
+        probe.position > dataLimit) {
+      cursor++;
+      continue;
+    }
+    definitions[localType] = definition;
+    reader.position = probe.position;
+    return true;
+  }
+  return false;
+}
+
+bool _looksLikeRecordDefinition(_FitMessageDefinition definition) {
+  final fieldNumbers = definition.fields
+      .map((field) => field.fieldNumber)
+      .toSet();
+  return fieldNumbers.contains(253) &&
+      fieldNumbers.contains(0) &&
+      fieldNumbers.contains(1);
 }
 
 Uint8List _decodePayload(String input, List<ParseDiagnostic> diagnostics) {
@@ -556,6 +768,54 @@ int _applyCompressedTimestamp(int previous, int offset) {
     value += mask + 1;
   }
   return value & 0xFFFFFFFF;
+}
+
+const int _developerFieldKeyMask = 0x10000;
+
+int _developerFieldKey(int developerIndex, int fieldNumber) =>
+    _developerFieldKeyMask |
+    ((developerIndex & 0xFF) << 8) |
+    (fieldNumber & 0xFF);
+
+bool _isDeveloperFieldKey(int key) => (key & _developerFieldKeyMask) != 0;
+
+int _developerIndexFromKey(int key) => (key >> 8) & 0xFF;
+
+int _developerFieldNumberFromKey(int key) => key & 0xFF;
+
+const Map<(int, int), String> _knownDeveloperChannels = {
+  // Common developer-field convention in running power ecosystems.
+  (0, 0): 'running_power',
+};
+
+String _developerChannelName({
+  required int developerIndex,
+  required int fieldNumber,
+}) {
+  final known = _knownDeveloperChannels[(developerIndex, fieldNumber)];
+  if (known != null) {
+    return known;
+  }
+  return 'fit_dev_${developerIndex}_$fieldNumber';
+}
+
+String? _formatFitSoftwareVersion(Object? raw) {
+  final value = _asNumber(raw)?.toDouble();
+  if (value == null) {
+    return null;
+  }
+  final scaled = value / 100.0;
+  if (scaled.isNaN || !scaled.isFinite || scaled <= 0) {
+    return null;
+  }
+  final trimmed = scaled.toStringAsFixed(2);
+  if (trimmed.endsWith('00')) {
+    return scaled.toStringAsFixed(0);
+  }
+  if (trimmed.endsWith('0')) {
+    return scaled.toStringAsFixed(1);
+  }
+  return trimmed;
 }
 
 Sport _mapSport(int value) {
@@ -825,13 +1085,22 @@ class _FitMessageDefinition {
     required bool hasDeveloper,
   }) {
     try {
-      reader.readUint8(); // reserved
+      final reserved = reader.readUint8();
+      if (reserved != 0) {
+        return null;
+      }
       final architecture = reader.readUint8();
+      if (architecture != 0 && architecture != 1) {
+        return null;
+      }
       final littleEndian = architecture == 0;
       final globalMessage = reader.readUint16(
         endian: littleEndian ? Endian.little : Endian.big,
       );
       final fieldCount = reader.readUint8();
+      if (fieldCount > 96) {
+        return null;
+      }
       final fields = <_FitFieldDefinition>[];
       for (var i = 0; i < fieldCount; i++) {
         fields.add(
@@ -899,10 +1168,17 @@ class _FitMessageDefinition {
     }
     for (final developerField in developerFields) {
       if (developerField.size > 0) {
-        // TODO(0.7.0)(feature): Decode developer fields for known metrics
-        // instead of blindly discarding bytes so additional sensors (running
-        // power, cycling dynamics, etc.) survive parsing.
-        reader.skip(developerField.size);
+        final value = reader.readDeveloperValue(
+          developerField.size,
+          endian: isLittleEndian ? Endian.little : Endian.big,
+        );
+        if (value != null) {
+          values[_developerFieldKey(
+                developerField.developerIndex,
+                developerField.fieldNumber,
+              )] =
+              value;
+        }
       }
     }
     return values;
@@ -1068,5 +1344,46 @@ class _FitByteReader {
         break;
     }
     return value;
+  }
+
+  Object? readDeveloperValue(int size, {Endian endian = Endian.little}) {
+    if (size <= 0 || position >= bytes.length) {
+      position = bytes.length;
+      return null;
+    }
+    final available = bytes.length - position;
+    final safeSize = size > available ? available : size;
+    if (safeSize <= 0) {
+      position = bytes.length;
+      return null;
+    }
+    final data = bytes.buffer.asByteData();
+    switch (safeSize) {
+      case 1:
+        final raw = bytes[position];
+        position += 1;
+        return raw == 0xFF ? null : raw;
+      case 2:
+        final raw = data.getUint16(position, endian);
+        position += 2;
+        return raw == 0xFFFF ? null : raw;
+      case 3:
+        final a = bytes[position];
+        final b = bytes[position + 1];
+        final c = bytes[position + 2];
+        position += 3;
+        final raw = endian == Endian.little
+            ? (a | (b << 8) | (c << 16))
+            : ((a << 16) | (b << 8) | c);
+        return raw == 0xFFFFFF ? null : raw;
+      case 4:
+        final raw = data.getUint32(position, endian);
+        position += 4;
+        return raw == 0xFFFFFFFF ? null : raw;
+      default:
+        final raw = readBytes(safeSize);
+        final allInvalid = raw.every((byte) => byte == 0xFF);
+        return allInvalid ? null : raw;
+    }
   }
 }

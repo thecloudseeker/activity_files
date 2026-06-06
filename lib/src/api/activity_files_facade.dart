@@ -21,6 +21,7 @@ import '../validation.dart';
 import 'activity_export_request.dart';
 import 'export_serialization.dart';
 import 'export_stats.dart';
+import 'pipeline_options.dart';
 
 /// Callback used to translate arbitrary identifiers into [Sport] values.
 typedef SportMapper = Sport? Function(dynamic source);
@@ -33,27 +34,25 @@ const int _maxFormatDetectBytes = 128 * 1024;
 /// See ROADMAP.md for planned features and release timeline.
 ///
 // 0.6.0 - PERFORMANCE & ROBUSTNESS
-// TODO(0.6.0): Configurable handling of corrupted FIT files.
-// TODO(0.6.0): Auto-fix common data issues (gaps, drift, invalid GPS).
-// TODO(0.6.0): Test suite for malformed files.
+// Delivered: Configurable handling of corrupted FIT files.
+// Delivered: Auto-fix common data issues (gaps, drift, invalid GPS).
 //
-// 0.7.0 - DATA PIPELINE & IMPORT
-// TODO(0.7.0): Faster file parsing for csv and geojson.
-// TODO(0.7.0): Batch import with progress tracking and error recovery.
-// TODO(0.7.0): Repair tools for malformed files.
-// TODO(0.7.0): Full GPX/TCX round-trip preservation (no data loss).
+// 0.8.0 - DATA PIPELINE & IMPORT
+// TODO(0.8.0): Faster file parsing for csv and geojson.
+// TODO(0.8.0): Batch import with progress tracking and error recovery.
+// TODO(0.8.0): Repair tools for malformed files.
+// TODO(0.8.0): Full GPX/TCX round-trip preservation (no data loss).
 //
-// 0.8.0 - ANALYTICS FOUNDATION
-// TODO(0.8.0): Route/segment matching.
-// TODO(0.8.0): Merge multiple activities.
-// TODO(0.8.0): Power zone analysis (FTP, time-in-zone).
-// TODO(0.8.0): Heart rate zone analysis (LTHR, zones).
+// 0.9.0 - ANALYTICS FOUNDATION
+// TODO(0.9.0): Route/segment matching.
+// TODO(0.9.0): Power zone analysis (FTP, time-in-zone).
+// TODO(0.9.0): Heart rate zone analysis (LTHR, zones).
 //
-// 0.9.0 - ADVANCED ANALYTICS
-// TODO(0.9.0): Advanced threshold detection (FTP, LTHR, critical power).
-// TODO(0.9.0): HRV metrics for recovery tracking.
-// TODO(0.9.0): Automatic segment detection (climbs, intervals, rest).
-// TODO(0.9.0): Detect and flag bad data (GPS errors, sensor spikes).
+// 1.0.0 - ADVANCED ANALYTICS
+// TODO(1.0.0): Advanced threshold detection (FTP, LTHR, critical power).
+// TODO(1.0.0): HRV metrics for recovery tracking.
+// TODO(1.0.0): Automatic segment detection (climbs, intervals, rest).
+// TODO(1.0.0): Detect and flag bad data (GPS errors, sensor spikes).
 //
 class ActivityFiles {
   const ActivityFiles._();
@@ -92,6 +91,8 @@ class ActivityFiles {
     Encoding encoding = utf8,
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) async {
     final resolved = await _resolveSource(
@@ -118,12 +119,13 @@ class ActivityFiles {
         '\n'
         'To fix this, try one of the following:\n'
         '  1. Provide the format parameter: load(source, format: ActivityFileFormat.gpx)\n'
-        '  2. Use a file with a recognized extension (.gpx, .tcx, .fit)\n'
+        '  2. Use a file with a recognized extension (.gpx, .tcx, .fit, .csv, .geojson)\n'
         '  3. If passing a filesystem path as a String, enable: load(source, allowFilePaths: true)\n'
         '\n'
         'Tips for common formats:\n'
         '  • GPX/TCX: Usually detected automatically from file extension\n'
         '  • FIT (binary): For base64-encoded FIT data, use load(bytes, format: ActivityFileFormat.fit)\n'
+        '  • CSV/GeoJSON: Detectable from extension or content sniffing\n'
         '  • Inline content: Always specify format for text passed as a String\n'
         '\n'
         'Received: ${resolved.description} (extension: ${resolved.fileExtension ?? "none"})',
@@ -144,22 +146,12 @@ class ActivityFiles {
     if (_shouldFailFitIntegrity(
       detected,
       parseResult.diagnostics,
-      strictFitIntegrity,
+      _resolveStrictFitHandling(
+        strictFitIntegrity: strictFitIntegrity,
+        fitCorruptionHandling: fitCorruptionHandling,
+      ),
     )) {
-      final diagnosticInfo = parseResult.diagnostics.isEmpty
-          ? ''
-          : '\nDiagnostics: ${parseResult.diagnostics.map((d) => "${d.code} (${d.severity.name})").join(", ")}\n';
-      throw FormatException(
-        'FIT integrity check failed. The file may be corrupted or incomplete.$diagnosticInfo'
-        '\n'
-        'Troubleshooting steps:\n'
-        '  1. Verify the file is complete (not truncated during transfer)\n'
-        '  2. Check that header/trailer CRCs are valid using FIT tools\n'
-        '  3. Try loading with strictFitIntegrity: false to recover partial data\n'
-        '  4. If the file was downloaded/transferred, retry the transfer\n'
-        '\n'
-        'If you need to proceed despite errors, use: load(source, format: ActivityFileFormat.fit, strictFitIntegrity: false)',
-      );
+      throw _fitIntegrityFailure(parseResult.diagnostics);
     }
     final payloadForResult = await _materializePayload(resolved.payload);
     return ActivityLoadResult._(
@@ -207,8 +199,8 @@ class ActivityFiles {
   /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to encoding.
   /// Set [exportInIsolate] to `true` to offload encoding onto a background
   /// isolate while keeping parsing control via [useIsolate]. Enable
-  /// [runValidation] when you want the conversion to append structural
-  /// validation diagnostics/results without invoking the export pipeline again.
+  /// [runValidation] to append structural validation diagnostics/results;
+  /// disable it when conversion throughput matters more than validation output.
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
   /// strings/bytes and buffered streams. Pass `null` to disable the limit.
@@ -222,8 +214,11 @@ class ActivityFiles {
     Encoding encoding = utf8,
     bool allowFilePaths = false,
     bool exportInIsolate = false,
-    bool runValidation = false,
+    bool runValidation = true,
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) async {
     final loadResult = await load(
@@ -233,6 +228,7 @@ class ActivityFiles {
       encoding: encoding,
       allowFilePaths: allowFilePaths,
       strictFitIntegrity: strictFitIntegrity,
+      fitCorruptionHandling: fitCorruptionHandling,
       maxPayloadBytes: maxPayloadBytes,
     );
     var activity = loadResult.activity;
@@ -248,10 +244,18 @@ class ActivityFiles {
       normalizationStats = normalized.stats;
     }
     var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
-    // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
-    final exportActivity = normalize
+    // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
+    var exportActivity = normalize
         ? activity
         : _ensureOrderedForExport(activity);
+    if (autoFix.isEnabled) {
+      final fixed = _autoFixCommonIssues(exportActivity, autoFix);
+      diagnostics = [
+        ...diagnostics,
+        ..._autoFixDiagnostics(exportActivity, fixed),
+      ];
+      exportActivity = fixed;
+    }
     if (!exportInIsolate) {
       final encoded = ActivityEncoder.encode(
         exportActivity,
@@ -346,7 +350,7 @@ class ActivityFiles {
     String? creator,
     ActivityDeviceMetadata? device,
   }) {
-    // TODO(0.7.0): Async/streamed iterables for large file handling.
+    // TODO(0.8.0): Async/streamed iterables for large file handling.
     final decode = timestampConverter ?? _defaultTimestampDecoder;
     final rawBuilder = ActivityFiles.builder();
     if (sport != null) {
@@ -780,7 +784,7 @@ class ActivityFiles {
         }
       }
 
-      // Strip sport from laps since they all have the same sport now
+      // Strip sport from laps while preserving all lap metadata.
       final normalizedLaps = laps
           .map(
             (lap) => Lap(
@@ -788,7 +792,17 @@ class ActivityFiles {
               endTime: lap.endTime,
               distanceMeters: lap.distanceMeters,
               name: lap.name,
-              // Intentionally omit sport - all laps in this split have same sport
+              calories: lap.calories,
+              avgSpeed: lap.avgSpeed,
+              maxSpeed: lap.maxSpeed,
+              avgHeartRate: lap.avgHeartRate,
+              maxHeartRate: lap.maxHeartRate,
+              avgCadence: lap.avgCadence,
+              maxCadence: lap.maxCadence,
+              avgPower: lap.avgPower,
+              maxPower: lap.maxPower,
+              event: lap.event,
+              eventType: lap.eventType,
             ),
           )
           .toList();
@@ -1218,8 +1232,11 @@ class ActivityFiles {
     bool parseInIsolate = true,
     bool exportInIsolate = false,
     Encoding encoding = utf8,
-    bool runValidation = false,
+    bool runValidation = true,
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _runPipeline(
     ActivityExportRequest.fromStream(
@@ -1233,6 +1250,8 @@ class ActivityFiles {
       runValidation: runValidation,
       encoding: encoding,
       strictFitIntegrity: strictFitIntegrity,
+      fitCorruptionHandling: fitCorruptionHandling,
+      autoFix: autoFix,
       maxPayloadBytes: maxPayloadBytes,
     ),
   );
@@ -1242,9 +1261,10 @@ class ActivityFiles {
   ///
   /// Provide [source] to convert file/byte-backed content, or supply
   /// [location] (plus optional [channels]) to build from raw sensor streams.
-  /// When [runValidation] is `true`, the normalized activity is validated and
-  /// findings are appended to the diagnostics collection. Set [exportInIsolate]
-  /// to `true` to offload encoding work to an isolate, matching [convert].
+  /// The normalized activity is validated by default and findings are appended
+  /// to diagnostics; set [runValidation] to `false` to skip validation. Set
+  /// [exportInIsolate] to `true` to offload encoding work to an isolate,
+  /// matching [convert].
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
   /// strings/bytes and buffered streams. Pass `null` to disable the limit.
@@ -1274,9 +1294,12 @@ class ActivityFiles {
     bool useIsolate = true,
     Encoding encoding = utf8,
     bool allowFilePaths = false,
-    bool runValidation = false,
+    bool runValidation = true,
     bool exportInIsolate = false,
     bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) {
     final hasSource = source != null;
@@ -1338,6 +1361,8 @@ class ActivityFiles {
           exportInIsolate: exportInIsolate,
           allowFilePaths: allowFilePaths,
           strictFitIntegrity: strictFitIntegrity,
+          fitCorruptionHandling: fitCorruptionHandling,
+          autoFix: autoFix,
           maxPayloadBytes: maxPayloadBytes,
         ),
       );
@@ -1404,12 +1429,18 @@ class ActivityFiles {
   static Future<ActivityExportResult> _runPipeline(
     ActivityExportRequest request,
   ) async {
-    // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
+    // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
     if (request.activity != null) {
-      final diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
+      var activity = request.activity!;
+      var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
+      if (request.autoFix.isEnabled) {
+        final fixed = _autoFixCommonIssues(activity, request.autoFix);
+        diagnostics = [...diagnostics, ..._autoFixDiagnostics(activity, fixed)];
+        activity = fixed;
+      }
       if (request.exportInIsolate) {
         return exportAsync(
-          activity: request.activity!,
+          activity: activity,
           to: request.to,
           options: request.options,
           normalize: request.normalize,
@@ -1420,7 +1451,7 @@ class ActivityFiles {
         );
       }
       return _exportFromActivity(
-        activity: request.activity!,
+        activity: activity,
         to: request.to,
         options: request.options,
         normalize: request.normalize,
@@ -1445,16 +1476,31 @@ class ActivityFiles {
       if (_shouldFailFitIntegrity(
         request.from!,
         parseResult.diagnostics,
-        request.strictFitIntegrity,
+        _resolveStrictFitHandling(
+          strictFitIntegrity: request.strictFitIntegrity,
+          fitCorruptionHandling: request.fitCorruptionHandling,
+        ),
       )) {
-        throw FormatException('FIT integrity check failed.');
+        throw _fitIntegrityFailure(parseResult.diagnostics);
+      }
+      var parsedActivity = parseResult.activity;
+      var parseDiagnostics = List<ParseDiagnostic>.from(
+        parseResult.diagnostics,
+      );
+      if (request.autoFix.isEnabled) {
+        final fixed = _autoFixCommonIssues(parsedActivity, request.autoFix);
+        parseDiagnostics = [
+          ...parseDiagnostics,
+          ..._autoFixDiagnostics(parsedActivity, fixed),
+        ];
+        parsedActivity = fixed;
       }
       final downstreamDiagnostics = <ParseDiagnostic>[
-        ...parseResult.diagnostics,
+        ...parseDiagnostics,
         ...request.diagnostics,
       ];
       final downstreamRequest = ActivityExportRequest.fromActivity(
-        activity: parseResult.activity,
+        activity: parsedActivity,
         to: request.to,
         options: request.options,
         normalize: request.normalize,
@@ -1478,6 +1524,8 @@ class ActivityFiles {
         exportInIsolate: request.exportInIsolate,
         runValidation: request.runValidation,
         strictFitIntegrity: request.strictFitIntegrity,
+        fitCorruptionHandling: request.fitCorruptionHandling,
+        autoFix: request.autoFix,
         maxPayloadBytes: request.maxPayloadBytes,
       );
       var mergedDiagnostics = <ParseDiagnostic>[
@@ -1719,7 +1767,7 @@ class ActivityFiles {
           severity: ParseSeverity.error,
           code: 'parser.format_exception',
           message:
-              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`load(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
+              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`load(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
           node: ParseNodeReference(path: '${format.name}.document'),
         ),
       ],
@@ -1790,6 +1838,11 @@ class ActivityFiles {
         return ActivityFileFormat.tcx;
       case '.fit':
         return ActivityFileFormat.fit;
+      case '.csv':
+        return ActivityFileFormat.csv;
+      case '.geojson':
+      case '.json':
+        return ActivityFileFormat.geojson;
       default:
         return null;
     }
@@ -1881,6 +1934,17 @@ class ActivityFiles {
     if (trimmed.isEmpty) {
       return null;
     }
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      final lower = trimmed.toLowerCase();
+      if (lower.contains('"type"') &&
+          (lower.contains('"featurecollection"') ||
+              lower.contains('"feature"') ||
+              lower.contains('"linestring"') ||
+              lower.contains('"point"') ||
+              lower.contains('"multilinestring"'))) {
+        return ActivityFileFormat.geojson;
+      }
+    }
     if (trimmed.startsWith('<')) {
       final lower = trimmed.toLowerCase();
       if (lower.contains('<gpx')) {
@@ -1890,10 +1954,38 @@ class ActivityFiles {
         return ActivityFileFormat.tcx;
       }
     }
+    if (_looksCsv(trimmed, allowPartial: allowPartial)) {
+      return ActivityFileFormat.csv;
+    }
     if (_looksBase64(trimmed, allowPartial: allowPartial)) {
       return ActivityFileFormat.fit;
     }
     return null;
+  }
+
+  static bool _looksCsv(String text, {bool allowPartial = false}) {
+    final lines = text
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .take(3)
+        .toList(growable: false);
+    if (lines.isEmpty) {
+      return false;
+    }
+    final header = lines.first.toLowerCase();
+    if (!(header.contains('timestamp') &&
+        header.contains('latitude') &&
+        header.contains('longitude'))) {
+      return false;
+    }
+    if (allowPartial) {
+      return header.contains(',');
+    }
+    if (lines.length < 2) {
+      return false;
+    }
+    return lines.first.contains(',') && lines[1].contains(',');
   }
 
   static ({String text, bool truncated}) _sniffTextForDetection(
@@ -2048,6 +2140,217 @@ class ActivityFiles {
     }
     return false;
   }
+
+  static bool _resolveStrictFitHandling({
+    required bool strictFitIntegrity,
+    required FitCorruptionHandling fitCorruptionHandling,
+  }) =>
+      strictFitIntegrity ||
+      fitCorruptionHandling == FitCorruptionHandling.strict;
+
+  static RawActivity _autoFixCommonIssues(
+    RawActivity activity,
+    ActivityAutoFixOptions options,
+  ) {
+    var editor = RawEditor(activity).sortAndDedup();
+    if (options.fixInvalidGps || options.fixChannelDrift) {
+      editor = editor.trimInvalid();
+    }
+    if (options.fixDistanceDrift) {
+      editor = editor.recomputeDistanceAndSpeed();
+    }
+    var fixed = editor.activity;
+    if (options.fixTimestampGaps && options.maxInsertedGapPoints > 0) {
+      fixed = _fillTimestampGaps(
+        fixed,
+        options.gapThreshold,
+        maxInsertedPoints: options.maxInsertedGapPoints,
+      );
+    }
+    if (options.autoLapByDistance) {
+      // Generate auto-laps if:
+      // 1. autoLapOnlyWhenMissing is false (always generate), OR
+      // 2. autoLapOnlyWhenMissing is true AND laps are missing/placeholder
+
+      final hasPlaceholderLaps =
+          fixed.laps.isNotEmpty &&
+          fixed.laps.every(
+            (lap) =>
+                (lap.name?.startsWith('Segment') ?? false) ||
+                (lap.name?.startsWith('Split') ?? false),
+          );
+
+      final shouldGenerateLaps =
+          !options.autoLapOnlyWhenMissing ||
+          fixed.laps.isEmpty ||
+          hasPlaceholderLaps;
+
+      if (shouldGenerateLaps && fixed.points.length >= 2) {
+        // Always recompute distance for auto-lap to ensure accuracy
+        // (distance may be lost during format conversions like GPX->TCX roundtrip)
+        var lapSource = RawEditor(fixed).recomputeDistanceAndSpeed().activity;
+        final splitMeters = _autoLapDistanceForSport(lapSource.sport, options);
+        if (splitMeters > 0) {
+          fixed = RawEditor(lapSource).markLapsByDistance(splitMeters).activity;
+        }
+      }
+    }
+    return fixed;
+  }
+
+  static double _autoLapDistanceForSport(
+    Sport sport,
+    ActivityAutoFixOptions options,
+  ) {
+    final override = options.autoLapDistanceMeters;
+    if (override != null && override > 0) {
+      return override;
+    }
+    switch (sport) {
+      case Sport.running:
+      case Sport.walking:
+      case Sport.hiking:
+        return options.runningLapDistanceMeters;
+      case Sport.cycling:
+        return options.cyclingLapDistanceMeters;
+      default:
+        return options.defaultLapDistanceMeters;
+    }
+  }
+
+  static List<ParseDiagnostic> _autoFixDiagnostics(
+    RawActivity before,
+    RawActivity after,
+  ) {
+    final diagnostics = <ParseDiagnostic>[];
+    final removedPoints = before.points.length - after.points.length;
+    if (removedPoints > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'autofix.invalid_gps.trimmed',
+          message:
+              'Auto-fix removed $removedPoints invalid/out-of-range points.',
+        ),
+      );
+    }
+    final beforeSamples = _totalSamples(before);
+    final afterSamples = _totalSamples(after);
+    final deltaSamples = beforeSamples - afterSamples;
+    if (deltaSamples > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'autofix.channel_drift.trimmed',
+          message:
+              'Auto-fix removed $deltaSamples channel samples outside the valid trajectory window.',
+        ),
+      );
+    }
+    if (after.channels.containsKey(Channel.distance) &&
+        !before.channels.containsKey(Channel.distance)) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'autofix.distance.recomputed',
+          message:
+              'Auto-fix recomputed distance/speed channels from GPS points.',
+        ),
+      );
+    }
+    if (after.laps.length > before.laps.length) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'autofix.laps.auto_generated',
+          message:
+              'Auto-fix generated ${after.laps.length - before.laps.length} lap(s) from distance splits.',
+        ),
+      );
+    }
+    return diagnostics;
+  }
+
+  // Fills large timestamp gaps by linearly interpolating position and elevation.
+  // Channel samples (HR, power, cadence, etc.) are intentionally not interpolated;
+  // inserted points carry no sensor data and will appear as gaps in channel coverage.
+  static RawActivity _fillTimestampGaps(
+    RawActivity activity,
+    Duration threshold, {
+    required int maxInsertedPoints,
+  }) {
+    if (activity.points.length < 2 || threshold <= Duration.zero) {
+      return activity;
+    }
+    final output = <GeoPoint>[];
+    var inserted = 0;
+    for (var i = 0; i < activity.points.length - 1; i++) {
+      final current = activity.points[i];
+      final next = activity.points[i + 1];
+      output.add(current);
+      final gap = next.time.difference(current.time);
+      if (gap <= threshold || inserted >= maxInsertedPoints) {
+        continue;
+      }
+      final thresholdMicros = threshold.inMicroseconds;
+      if (thresholdMicros <= 0) {
+        continue;
+      }
+      final steps = gap.inMicroseconds ~/ thresholdMicros;
+      if (steps <= 1) {
+        continue;
+      }
+      for (var j = 1; j < steps; j++) {
+        if (inserted >= maxInsertedPoints) {
+          break;
+        }
+        final ratio = j / steps;
+        final time = current.time.add(
+          Duration(microseconds: (gap.inMicroseconds * ratio).round()),
+        );
+        final elevation = current.elevation != null && next.elevation != null
+            ? current.elevation! +
+                  (next.elevation! - current.elevation!) * ratio
+            : null;
+        output.add(
+          GeoPoint(
+            latitude:
+                current.latitude + (next.latitude - current.latitude) * ratio,
+            longitude:
+                current.longitude +
+                (next.longitude - current.longitude) * ratio,
+            elevation: elevation,
+            time: time,
+          ),
+        );
+        inserted++;
+      }
+    }
+    output.add(activity.points.last);
+    if (output.length == activity.points.length) {
+      return activity;
+    }
+    return activity.copyWith(points: output);
+  }
+
+  static FormatException _fitIntegrityFailure(
+    Iterable<ParseDiagnostic> diagnostics,
+  ) {
+    final diagnosticInfo = diagnostics.isEmpty
+        ? ''
+        : '\nDiagnostics: ${diagnostics.map((d) => "${d.code} (${d.severity.name})").join(", ")}\n';
+    return FormatException(
+      'FIT integrity check failed. The file may be corrupted or incomplete.$diagnosticInfo'
+      '\n'
+      'Troubleshooting steps:\n'
+      '  1. Verify the file is complete (not truncated during transfer)\n'
+      '  2. Check that header/trailer CRCs are valid using FIT tools\n'
+      '  3. Try loading with strictFitIntegrity: false to recover partial data\n'
+      '  4. If the file was downloaded/transferred, retry the transfer\n'
+      '\n'
+      'If you need to proceed despite errors, use strictFitIntegrity: false.',
+    );
+  }
 }
 
 Map<String, Object?> _encodeExportResult(ActivityExportResult result) => {
@@ -2179,7 +2482,7 @@ class ActivityLoadResult with _DiagnosticSummaryMixin {
     required this.sourceDescription,
     required this.payload,
   }) : diagnostics = List.unmodifiable(diagnostics);
-  // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
+  // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
   ///
   /// Parse or validation failures never throw; they are recorded in
   /// [diagnostics]. Inspect [hasErrors], [diagnostics], or
@@ -2221,7 +2524,7 @@ class ActivityExportResult with _DiagnosticSummaryMixin {
     this.processingStats = const ActivityProcessingStats(),
   }) : _binary = binary != null ? Uint8List.fromList(binary) : null,
        diagnostics = List.unmodifiable(List<ParseDiagnostic>.from(diagnostics));
-  // TODO(0.6.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
+  // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
 
   /// Normalized activity that was encoded.
   final RawActivity activity;

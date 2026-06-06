@@ -39,13 +39,21 @@ Future<void> main(List<String> arguments) async {
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show usage.');
 
   final convertParser = ArgParser()
-    ..addOption('from', allowed: ['gpx', 'tcx', 'fit'], help: 'Input format.')
-    ..addOption('to', allowed: ['gpx', 'tcx', 'fit'], help: 'Output format.')
+    ..addOption(
+      'from',
+      allowed: ['gpx', 'tcx', 'fit', 'csv', 'geojson'],
+      help: 'Input format.',
+    )
+    ..addOption(
+      'to',
+      allowed: ['gpx', 'tcx', 'fit', 'csv', 'geojson'],
+      help: 'Output format.',
+    )
     ..addOption('input', abbr: 'i', help: 'Input file path.')
     ..addOption('output', abbr: 'o', help: 'Output file path.')
     ..addOption(
       'encoding',
-      help: 'Text encoding for GPX/TCX inputs (default utf8).',
+      help: 'Text encoding for GPX/TCX/CSV/GeoJSON inputs (default utf8).',
       defaultsTo: 'utf8',
     )
     ..addOption(
@@ -92,7 +100,7 @@ Future<void> main(List<String> arguments) async {
   final validateParser = ArgParser()
     ..addOption(
       'format',
-      allowed: ['gpx', 'tcx', 'fit'],
+      allowed: ['gpx', 'tcx', 'fit', 'csv', 'geojson'],
       help: 'Format to validate.',
     )
     ..addOption('input', abbr: 'i', help: 'Input file path.')
@@ -293,6 +301,10 @@ ActivityFileFormat? _parseFormat(String? value) {
       return ActivityFileFormat.tcx;
     case 'fit':
       return ActivityFileFormat.fit;
+    case 'csv':
+      return ActivityFileFormat.csv;
+    case 'geojson':
+      return ActivityFileFormat.geojson;
     default:
       return null;
   }
@@ -349,7 +361,7 @@ EncoderOptions _buildEncoderOptions(ArgResults command) {
 void _printUsage(ArgParser parser) {
   stdout.writeln('Usage: activity_files <command> [arguments]');
   stdout.writeln('Commands:');
-  stdout.writeln('  convert   Convert between formats');
+  stdout.writeln('  convert   Convert between gpx/tcx/fit/csv/geojson');
   stdout.writeln('  validate  Validate an activity file');
   stdout.writeln('\nUse --help with a command to see additional options.');
 }

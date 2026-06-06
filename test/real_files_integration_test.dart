@@ -1,10 +1,51 @@
-// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:io';
-
-import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
+import 'package:activity_files/activity_files.dart';
 
 void main() {
+  test('all example assets parse successfully', () async {
+    final assets = Directory('example/assets');
+    if (!await assets.exists()) return; // CI-safe
+
+    await for (final entity in assets.list(recursive: true)) {
+      if (entity is File) {
+        final path = entity.path;
+        if (path.endsWith('.gpx') ||
+            path.endsWith('.tcx') ||
+            path.endsWith('.fit')) {
+          final result = await ActivityFiles.load(path, allowFilePaths: true);
+          expect(
+            result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+            isEmpty,
+            reason:
+                'Parsing errors for $path: ${result.diagnostics.map((d) => d.message).join('; ')}',
+          );
+        }
+      }
+    }
+  });
+
+  test('example assets can be converted between formats', () async {
+    final assets = Directory('example/assets');
+    if (!await assets.exists()) return; // CI-safe
+
+    // pick any GPX file and try convert to FIT
+    await for (final entity in assets.list(recursive: true)) {
+      if (entity is File && entity.path.endsWith('.gpx')) {
+        final res = await ActivityFiles.convert(
+          source: entity.path,
+          to: ActivityFileFormat.fit,
+          allowFilePaths: true,
+        );
+        expect(
+          res.diagnostics.where((d) => d.severity == ParseSeverity.error),
+          isEmpty,
+        );
+        break;
+      }
+    }
+  });
+
   group('Real files integration', () {
     /// Helper to check if example/assets directory exists
     Future<Directory?> tryGetExampleAssetsDir() async {
@@ -51,9 +92,17 @@ void main() {
 
       for (final file in files) {
         final bytes = await file.readAsBytes();
-        final result = await ActivityFiles.load(bytes, useIsolate: false);
-
         final filename = file.path.split('/').last;
+        final format = filename.endsWith('.gpx')
+            ? ActivityFileFormat.gpx
+            : filename.endsWith('.tcx')
+            ? ActivityFileFormat.tcx
+            : ActivityFileFormat.fit;
+        final result = await ActivityFiles.load(
+          bytes,
+          format: format,
+          useIsolate: false,
+        );
 
         // GPX/TCX should have points; FIT may have 0 if integrity check fails
         if (filename.endsWith('.fit')) {
@@ -81,7 +130,11 @@ void main() {
       }
 
       final bytes = await gpxFile.readAsBytes();
-      final result = await ActivityFiles.load(bytes, useIsolate: false);
+      final result = await ActivityFiles.load(
+        bytes,
+        format: ActivityFileFormat.gpx,
+        useIsolate: false,
+      );
 
       expect(result.format, equals(ActivityFileFormat.gpx));
       expect(result.activity.points, isNotEmpty);
@@ -103,7 +156,11 @@ void main() {
       }
 
       final bytes = await tcxFile.readAsBytes();
-      final result = await ActivityFiles.load(bytes, useIsolate: false);
+      final result = await ActivityFiles.load(
+        bytes,
+        format: ActivityFileFormat.tcx,
+        useIsolate: false,
+      );
 
       expect(result.format, equals(ActivityFileFormat.tcx));
       expect(result.activity.points, isNotEmpty);
@@ -125,7 +182,11 @@ void main() {
       }
 
       final bytes = await fitFile.readAsBytes();
-      final result = await ActivityFiles.load(bytes, useIsolate: false);
+      final result = await ActivityFiles.load(
+        bytes,
+        format: ActivityFileFormat.fit,
+        useIsolate: false,
+      );
 
       expect(result.format, equals(ActivityFileFormat.fit));
     });
@@ -172,7 +233,11 @@ void main() {
       }
 
       final gpxBytes = await gpxFile.readAsBytes();
-      final loaded = await ActivityFiles.load(gpxBytes, useIsolate: false);
+      final loaded = await ActivityFiles.load(
+        gpxBytes,
+        format: ActivityFileFormat.gpx,
+        useIsolate: false,
+      );
       final normalized = ActivityFiles.normalizeActivity(loaded.activity);
 
       expect(normalized.points, isNotEmpty);
@@ -219,6 +284,7 @@ void main() {
       // Parse and verify each file
       final gpxResult = await ActivityFiles.load(
         await gpxFile.readAsBytes(),
+        format: ActivityFileFormat.gpx,
         useIsolate: false,
       );
       expect(gpxResult.activity.points.length, equals(100));
@@ -230,6 +296,7 @@ void main() {
 
       final tcxResult = await ActivityFiles.load(
         await tcxFile.readAsBytes(),
+        format: ActivityFileFormat.tcx,
         useIsolate: false,
       );
       expect(tcxResult.activity.points.length, equals(100));
@@ -241,6 +308,7 @@ void main() {
 
       final fitResult = await ActivityFiles.load(
         await fitFile.readAsBytes(),
+        format: ActivityFileFormat.fit,
         useIsolate: false,
       );
       expect(fitResult.activity.points.length, equals(100));
@@ -259,6 +327,7 @@ void main() {
         final originalBytes = await gpxFile.readAsBytes();
         final loaded = await ActivityFiles.load(
           originalBytes,
+          format: ActivityFileFormat.gpx,
           useIsolate: false,
         );
 

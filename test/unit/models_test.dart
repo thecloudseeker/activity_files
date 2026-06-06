@@ -591,8 +591,8 @@ void main() {
       expect(ActivityFileFormat.fit, isNotNull);
     });
 
-    test('format enum has 3 values', () {
-      expect(ActivityFileFormat.values.length, 3);
+    test('format enum has 5 values', () {
+      expect(ActivityFileFormat.values.length, 5);
     });
   });
 }

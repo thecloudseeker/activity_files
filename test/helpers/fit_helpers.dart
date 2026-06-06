@@ -115,7 +115,11 @@ Uint8List buildCompressedFitSample() {
 }
 
 /// Builds a FIT file with developer data fields for testing.
-Uint8List buildFitFileWithDeveloperData() {
+Uint8List buildFitFileWithDeveloperData({
+  int developerFieldNumber = 1,
+  int developerIndex = 0,
+  List<int> developerFieldBytes = const [0x12, 0x34],
+}) {
   final definition = BytesBuilder();
   definition
     ..add([0x40 | 0x20, 0x00, 0x00])
@@ -125,7 +129,11 @@ Uint8List buildFitFileWithDeveloperData() {
     ..add([0x00, 0x04, 0x85])
     ..add([0x01, 0x04, 0x85])
     ..addByte(1)
-    ..add([0x01, 0x02, 0x00]);
+    ..add([
+      developerFieldNumber & 0xFF,
+      developerFieldBytes.length,
+      developerIndex & 0xFF,
+    ]);
 
   final record = BytesBuilder();
   record
@@ -133,7 +141,7 @@ Uint8List buildFitFileWithDeveloperData() {
     ..add(uint32LeBytes(1000))
     ..add(int32LeBytes(encodeSemicircles(0)))
     ..add(int32LeBytes(encodeSemicircles(0)))
-    ..add([0x12, 0x34]);
+    ..add(developerFieldBytes);
 
   final fullDataBuilder = BytesBuilder()
     ..add(definition.toBytes())

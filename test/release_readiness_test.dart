@@ -1,10 +1,28 @@
-// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:io';
-
-import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
+import 'package:yaml/yaml.dart';
+import 'package:activity_files/activity_files.dart';
 
 void main() {
+  test('pubspec.yaml has semantic version', () {
+    final pub = File('pubspec.yaml');
+    expect(pub.existsSync(), isTrue);
+    final content = pub.readAsStringSync();
+    final doc = loadYaml(content);
+    final version = doc['version'] as String?;
+    expect(version, isNotNull);
+    expect(RegExp(r'^\d+\.\d+\.\d+').hasMatch(version!), isTrue);
+  });
+
+  test('CHANGELOG.md exists and mentions current version', () {
+    final changelog = File('CHANGELOG.md');
+    expect(changelog.existsSync(), isTrue);
+    final pub = File('pubspec.yaml');
+    final version = loadYaml(pub.readAsStringSync())['version'] as String;
+    final text = changelog.readAsStringSync();
+    expect(text.contains(version), isTrue);
+  });
+
   group('Release readiness', () {
     test('pubspec.yaml has semantic version', () async {
       final pubspecFile = File('pubspec.yaml');
@@ -86,8 +104,17 @@ void main() {
         expect(bytes, isNotEmpty, reason: '$filename should not be empty');
 
         // Verify file is readable by the parser
-        final result = await ActivityFiles.load(bytes, useIsolate: false);
-        expect(result.format, isNotNull);
+        final format = filename.endsWith('.gpx')
+            ? ActivityFileFormat.gpx
+            : filename.endsWith('.tcx')
+            ? ActivityFileFormat.tcx
+            : ActivityFileFormat.fit;
+        final result = await ActivityFiles.load(
+          bytes,
+          format: format,
+          useIsolate: false,
+        );
+        expect(result.format, equals(format));
       }
     });
 

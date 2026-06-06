@@ -80,5 +80,22 @@ void main() {
       expect(hr.length, activity.channel(Channel.heartRate).length);
       expect(hr.first.value, activity.channel(Channel.heartRate).first.value);
     });
+
+    test('missing timestamp uses deterministic UTC epoch fallback', () {
+      const geojson =
+          '{"type":"Feature","geometry":{"type":"Point","coordinates":[13.405,52.52]},"properties":{"heart_rate":140}}';
+
+      final result = ActivityFiles.importFromGeojson(geojson);
+
+      expect(
+        result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isEmpty,
+      );
+      expect(result.activity.points, hasLength(1));
+      expect(
+        result.activity.points.first.time,
+        equals(DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)),
+      );
+    });
   });
 }

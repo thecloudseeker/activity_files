@@ -10,14 +10,14 @@
 
 Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
 
-A complete Dart toolkit for parsing, editing, validating, and converting workout activity files in GPX, TCX, FIT, GeoJSON, and CSV formats.
+A pure Dart toolkit for parsing, editing, validating, and converting workout activity files in GPX, TCX, FIT, GeoJSON, and CSV formats.
   
 ## Highlights
 
 - Format-agnostic `RawActivity` model with builders/editors for GPS points,
   laps, channels, and device metadata.
 - Ergonomic `ActivityFiles` facade plus CLI that load, normalize, validate, and
-  export GPX/TCX/FIT payloads in a handful of calls.
+  convert/export GPX/TCX/FIT/CSV/GeoJSON payloads in a handful of calls.
 - Stream-aware builders (`builderFromStreams`, `convertAndExport`) so servers
   can feed timestamp/value tuples directly without manual model wiring.
 - Diagnostics-first results with sport mappers, validation stats, and
@@ -35,11 +35,7 @@ performance notes.
 
 - [Usage guide (full README)](doc/usage_guide.md) – Flutter, CLI, streaming,
   and error-handling walkthroughs.
-- [**Roadmap**](ROADMAP.md) – Planned features and timeline to 1.0.0.
-- [Testing guide](doc/testing.md) – Running tests and writing new ones.
 - [Example app](example/main.dart) – minimal GPX round-trip.
-- [CLI reference](doc/usage_guide.md#cli-usage) – conversions/validation from
-  the terminal.
 - [CHANGELOG](CHANGELOG.md) – migration notes and release history.
 
 ## Getting started
@@ -48,7 +44,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.5.1
+  activity_files: ^0.6.0
 ```
 
 Then install dependencies:

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import '../models.dart';
+import 'csv_encoder.dart';
 import 'encoder_options.dart';
 import 'fit_encoder.dart';
+import 'geojson_encoder.dart';
 import 'gpx_encoder.dart';
 import 'tcx_encoder.dart';
 
@@ -20,11 +22,12 @@ class ActivityEncoder {
     ActivityFileFormat format, {
     EncoderOptions options = const EncoderOptions(),
   }) {
-    final encoder = switch (format) {
-      ActivityFileFormat.gpx => const GpxEncoder(),
-      ActivityFileFormat.tcx => const TcxEncoder(),
-      ActivityFileFormat.fit => const FitEncoder(),
+    return switch (format) {
+      ActivityFileFormat.gpx => const GpxEncoder().encode(activity, options),
+      ActivityFileFormat.tcx => const TcxEncoder().encode(activity, options),
+      ActivityFileFormat.fit => const FitEncoder().encode(activity, options),
+      ActivityFileFormat.csv => CsvEncoder.encode(activity),
+      ActivityFileFormat.geojson => GeojsonEncoder.encode(activity),
     };
-    return encoder.encode(activity, options);
   }
 }

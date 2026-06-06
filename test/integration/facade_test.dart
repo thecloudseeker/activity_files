@@ -69,7 +69,7 @@ void main() {
       final stats = conversion.processingStats;
       expect(stats.normalization, isNotNull);
       expect(stats.normalization!.applied, isTrue);
-      expect(stats.validationDuration, isNull);
+      expect(stats.validationDuration, isNotNull);
     });
 
     test(
@@ -294,10 +294,21 @@ void main() {
       expect(conversion.activity.points, isNotEmpty);
     });
 
-    test('convert skips validation unless requested', () async {
+    test('convert runs validation by default', () async {
       final conversion = await ActivityFiles.convert(
         source: sampleGpx,
         to: ActivityFileFormat.tcx,
+        useIsolate: false,
+      );
+      expect(conversion.validation, isNotNull);
+      expect(conversion.processingStats.validationDuration, isNotNull);
+    });
+
+    test('convert can skip validation when explicitly disabled', () async {
+      final conversion = await ActivityFiles.convert(
+        source: sampleGpx,
+        to: ActivityFileFormat.tcx,
+        runValidation: false,
         useIsolate: false,
       );
       expect(conversion.validation, isNull);
@@ -1554,12 +1565,16 @@ void main() {
           endTime: base.add(const Duration(minutes: 5)),
           sport: Sport.swimming,
           name: 'Swim',
+          avgHeartRate: 130,
+          event: 1,
         ),
         Lap(
           startTime: base.add(const Duration(minutes: 15)),
           endTime: base.add(const Duration(minutes: 20)),
           sport: Sport.cycling,
           name: 'Bike',
+          avgPower: 260,
+          eventType: 2,
         ),
       ];
       final channels = {
@@ -1588,6 +1603,8 @@ void main() {
       expect(swim.points.first.time, equals(base));
       expect(swim.laps.length, equals(1));
       expect(swim.laps.first.name, equals('Swim'));
+      expect(swim.laps.first.avgHeartRate, equals(130));
+      expect(swim.laps.first.event, equals(1));
       expect(swim.channel(Channel.heartRate).length, equals(2));
 
       final bike = splits[Sport.cycling]!;
@@ -1598,6 +1615,8 @@ void main() {
       );
       expect(bike.laps.length, equals(1));
       expect(bike.laps.first.name, equals('Bike'));
+      expect(bike.laps.first.avgPower, equals(260));
+      expect(bike.laps.first.eventType, equals(2));
     });
 
     test('splitBySport returns single-sport activity as-is', () {
@@ -1727,6 +1746,20 @@ void main() {
   });
 
   group('Format detection', () {
+    test('detectFormat identifies CSV from string content', () {
+      const csv =
+          'timestamp,latitude,longitude\n2025-01-01T10:00:00Z,52.52,13.405';
+      final format = ActivityFiles.detectFormat(csv);
+      expect(format, equals(ActivityFileFormat.csv));
+    });
+
+    test('detectFormat identifies GeoJSON from string content', () {
+      const geojson =
+          '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[13.405,52.52]},"properties":{"timestamp":"2025-01-01T10:00:00Z"}}]}';
+      final format = ActivityFiles.detectFormat(geojson);
+      expect(format, equals(ActivityFileFormat.geojson));
+    });
+
     test('detectFormat identifies GPX from string content', () {
       final format = ActivityFiles.detectFormat(sampleGpx);
       expect(format, equals(ActivityFileFormat.gpx));
@@ -1768,6 +1801,30 @@ void main() {
         Uint8List.fromList(withBom.toBytes()),
       );
       expect(format, equals(ActivityFileFormat.gpx));
+    });
+
+    test('load infers CSV format from inline content', () async {
+      const csv =
+          'timestamp,latitude,longitude,heart_rate\n2025-01-01T10:00:00Z,52.52,13.405,140';
+      final result = await ActivityFiles.load(csv, useIsolate: false);
+      expect(result.format, equals(ActivityFileFormat.csv));
+      expect(result.activity.points.length, equals(1));
+      expect(
+        result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isEmpty,
+      );
+    });
+
+    test('load infers GeoJSON format from inline content', () async {
+      const geojson =
+          '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[13.405,52.52]},"properties":{"timestamp":"2025-01-01T10:00:00Z"}}]}';
+      final result = await ActivityFiles.load(geojson, useIsolate: false);
+      expect(result.format, equals(ActivityFileFormat.geojson));
+      expect(result.activity.points.length, equals(1));
+      expect(
+        result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isEmpty,
+      );
     });
   });
 
@@ -1960,6 +2017,182 @@ void main() {
 
       expect(result.hasErrors, isTrue);
       expect(result.activity.points, isNotEmpty);
+    });
+
+    test(
+      'load with strict fitCorruptionHandling rejects corrupted FIT files',
+      () async {
+        final bytes = await File('example/assets/sample.fit').readAsBytes();
+        final corrupted = Uint8List.fromList(bytes);
+        corrupted[corrupted.length - 1] ^= 0xFF;
+
+        await expectLater(
+          () => ActivityFiles.load(
+            corrupted,
+            format: ActivityFileFormat.fit,
+            useIsolate: false,
+            fitCorruptionHandling: FitCorruptionHandling.strict,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      },
+    );
+
+    test(
+      'load with bestEffort fitCorruptionHandling keeps parse result',
+      () async {
+        final bytes = await File('example/assets/sample.fit').readAsBytes();
+        final corrupted = Uint8List.fromList(bytes);
+        corrupted[corrupted.length - 1] ^= 0xFF;
+
+        final result = await ActivityFiles.load(
+          corrupted,
+          format: ActivityFileFormat.fit,
+          useIsolate: false,
+          fitCorruptionHandling: FitCorruptionHandling.bestEffort,
+        );
+
+        expect(result.hasErrors, isTrue);
+        expect(result.activity.points, isNotEmpty);
+      },
+    );
+
+    test('convert applies auto-fix for invalid gps, drift, and gaps', () async {
+      final base = DateTime.utc(2025, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 52.52, longitude: 13.405, time: base),
+          GeoPoint(
+            latitude: 200,
+            longitude: 13.406,
+            time: base.add(const Duration(minutes: 5)),
+          ),
+          GeoPoint(
+            latitude: 52.53,
+            longitude: 13.41,
+            time: base.add(const Duration(minutes: 10)),
+          ),
+        ],
+        channels: {
+          Channel.heartRate: [
+            Sample(time: base.subtract(const Duration(minutes: 1)), value: 140),
+            Sample(time: base.add(const Duration(minutes: 11)), value: 142),
+          ],
+        },
+      );
+
+      final source = ActivityEncoder.encode(activity, ActivityFileFormat.gpx);
+      final result = await ActivityFiles.convert(
+        source: source,
+        from: ActivityFileFormat.gpx,
+        to: ActivityFileFormat.tcx,
+        useIsolate: false,
+        autoFix: const ActivityAutoFixOptions(
+          fixInvalidGps: true,
+          fixChannelDrift: true,
+          fixDistanceDrift: true,
+          fixTimestampGaps: true,
+          gapThreshold: Duration(minutes: 3),
+          maxInsertedGapPoints: 20,
+        ),
+      );
+
+      expect(result.activity.points.any((p) => p.latitude.abs() > 90), isFalse);
+      expect(result.activity.channel(Channel.heartRate), isEmpty);
+      expect(result.activity.channel(Channel.distance), isNotEmpty);
+      expect(result.activity.points.length, greaterThan(2));
+      expect(
+        result.diagnostics.any((d) => d.code.startsWith('autofix.')),
+        isTrue,
+      );
+    });
+
+    test('convert auto-fix can auto-generate laps by distance', () async {
+      final base = DateTime.utc(2025, 1, 2, 8);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0000, longitude: -105.0000, time: base),
+          GeoPoint(
+            latitude: 40.0090,
+            longitude: -105.0000,
+            time: base.add(const Duration(minutes: 5)),
+          ),
+          GeoPoint(
+            latitude: 40.0180,
+            longitude: -105.0000,
+            time: base.add(const Duration(minutes: 10)),
+          ),
+          GeoPoint(
+            latitude: 40.0240,
+            longitude: -105.0000,
+            time: base.add(const Duration(minutes: 15)),
+          ),
+        ],
+      );
+
+      final source = ActivityEncoder.encode(activity, ActivityFileFormat.gpx);
+      final result = await ActivityFiles.convert(
+        source: source,
+        from: ActivityFileFormat.gpx,
+        to: ActivityFileFormat.tcx,
+        useIsolate: false,
+        autoFix: const ActivityAutoFixOptions(
+          fixInvalidGps: false,
+          fixChannelDrift: false,
+          fixDistanceDrift: false,
+          fixTimestampGaps: false,
+          autoLapByDistance: true,
+          autoLapDistanceMeters: 100,
+        ),
+      );
+
+      expect(result.activity.laps.length, greaterThanOrEqualTo(2));
+      expect(
+        result.diagnostics.any((d) => d.code == 'autofix.laps.auto_generated'),
+        isTrue,
+      );
+    });
+
+    test('runPipeline fromActivity applies auto-lap autofix', () async {
+      final base = DateTime.utc(2025, 1, 3, 7);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.009,
+            longitude: -105.0,
+            time: base.add(const Duration(minutes: 5)),
+          ),
+          GeoPoint(
+            latitude: 40.018,
+            longitude: -105.0,
+            time: base.add(const Duration(minutes: 10)),
+          ),
+        ],
+        sport: Sport.running,
+      );
+
+      final request = ActivityExportRequest.fromActivity(
+        activity: activity,
+        to: ActivityFileFormat.gpx,
+        runValidation: false,
+        autoFix: const ActivityAutoFixOptions(
+          fixInvalidGps: false,
+          fixChannelDrift: false,
+          fixDistanceDrift: false,
+          fixTimestampGaps: false,
+          autoLapByDistance: true,
+          runningLapDistanceMeters: 1000,
+        ),
+      );
+
+      final result = await ActivityFiles.runPipeline(request);
+
+      expect(result.activity.laps, isNotEmpty);
+      expect(
+        result.diagnostics.any((d) => d.code == 'autofix.laps.auto_generated'),
+        isTrue,
+      );
     });
   });
 

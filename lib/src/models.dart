@@ -2,7 +2,7 @@
 import 'dart:math' as math;
 
 /// Supported file formats for activities.
-enum ActivityFileFormat { gpx, tcx, fit }
+enum ActivityFileFormat { gpx, tcx, fit, csv, geojson }
 
 /// Supported sports.
 enum Sport { unknown, running, cycling, swimming, hiking, walking, other }
@@ -488,7 +488,7 @@ class ActivitySummary {
 }
 
 /// Metadata describing the recording device or software.
-/// TODO(0.6.0): Validate device metadata and handle edge cases in channel mappings.
+/// TODO(0.7.0): Validate device metadata and handle edge cases in channel mappings.
 class ActivityDeviceMetadata {
   /// Creates metadata describing the originating device or software.
   const ActivityDeviceMetadata({

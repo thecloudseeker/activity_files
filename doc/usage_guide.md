@@ -6,7 +6,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.5.1
+  activity_files: ^0.6.0
 ```
 
 Then install dependencies:
@@ -326,7 +326,7 @@ Future<void> pipelineFromPath(String path) async {
   final result = await ActivityFiles.runPipeline(
     ActivityExportRequest.fromSource(
       source: File(path),
-      from: null, // auto-detects GPX/TCX/FIT
+      from: null, // auto-detects GPX/TCX/FIT/CSV/GeoJSON
       to: ActivityFileFormat.fit,
       runValidation: true,
       exportInIsolate: true,
@@ -702,6 +702,12 @@ dart run activity_files:activity_files.dart convert \
   --encoding latin1
 
 dart run activity_files:activity_files.dart convert \
+  --from csv --to geojson -i ride.csv -o ride.geojson
+
+dart run activity_files:activity_files.dart convert \
+  --from geojson --to fit -i ride.geojson -o ride.fit
+
+dart run activity_files:activity_files.dart convert \
   --from gpx --to gpx -i legacy.gpx -o legacy-1-0.gpx --gpx-version 1.0
 
 dart run activity_files:activity_files.dart convert \
@@ -709,12 +715,15 @@ dart run activity_files:activity_files.dart convert \
 
 dart run activity_files:activity_files.dart validate \
   --format gpx -i ride.gpx --gap-threshold 180
+
+dart run activity_files:activity_files.dart validate \
+  --format geojson -i ride.geojson --gap-threshold 180
 ```
 
 Prefer a global install? Activate the package once (`dart pub global activate activity_files`)
 and invoke it via `dart pub global run activity_files:activity_files.dart ...`.
 The CLI reports parser diagnostics, validation warnings, and exits with a non-zero
-status when conversion/validation errors occur. Use `--encoding` for non-UTF8 GPX/TCX
+status when conversion/validation errors occur. Use `--encoding` for non-UTF8 GPX/TCX/CSV/GeoJSON
 inputs. FIT inputs/outputs are handled as raw binary files by default (the string
 APIs only use base64).
 
@@ -729,7 +738,7 @@ APIs only use base64).
   ```dart
   final result = await ActivityFiles.load(
     source,
-    format: ActivityFileFormat.gpx,  // or tcx, fit
+    format: ActivityFileFormat.gpx,  // or tcx, fit, csv, geojson
   );
   ```
 - **For filesystem paths**: Enable `allowFilePaths` if you're passing a path string:
@@ -792,7 +801,7 @@ APIs only use base64).
   final result = await ActivityFiles.runPipeline(request);
   ```
 
-### Text encoding mismatch (GPX/TCX)
+### Text encoding mismatch (GPX/TCX/CSV/GeoJSON)
 
 **Cause**: The file is encoded in a non-UTF-8 format (e.g., ISO-8859-1, Windows-1252), but the loader expected UTF-8.
 
@@ -810,8 +819,9 @@ APIs only use base64).
   ```
 - **For CLI**: Use the `--encoding` flag:
   ```bash
-  dart pub global run activity_files convert \
-    --source activity.gpx \
+  dart pub global run activity_files:activity_files.dart convert \
+    --input activity.gpx \
+    --output activity.fit \
     --from gpx \
     --to fit \
     --encoding iso-8859-1

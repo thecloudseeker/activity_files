@@ -9,7 +9,7 @@ import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
 /// Encoder for FIT payloads (limited profile support).
-// TODO(0.7.0)(feature): Allow selecting FIT protocol/profile version when broader profile coverage is implemented.
+// TODO(0.8.0)(feature): Allow selecting FIT protocol/profile version when broader profile coverage is implemented.
 ///
 /// The emitted binary stream contains the following message sequence:
 /// * file_id (global 0)

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import '../models.dart';
+import 'integrity_mode.dart';
 
 /// Severity associated with a parsing diagnostic.
 enum ParseSeverity { info, warning, error }
@@ -139,6 +140,8 @@ class ActivityParseResult {
     required this.activity,
     Iterable<ParseDiagnostic>? diagnostics,
     @Deprecated('Use diagnostics instead.') Iterable<String>? warnings,
+    this.integrityStats,
+    this.integrityMode = IntegrityMode.report,
   }) : diagnostics = List.unmodifiable(
          _mergeDiagnostics(diagnostics, warnings),
        ),
@@ -148,6 +151,20 @@ class ActivityParseResult {
 
   /// The reconstructed activity.
   final RawActivity activity;
+
+  /// Integrity issues encountered during parsing (if stats collection was enabled).
+  ///
+  /// This is only populated when [IntegrityConfig.collectStats] is true.
+  /// Use this to understand what kind of data issues were found and how many
+  /// recovery attempts were made.
+  final IntegrityStats? integrityStats;
+
+  /// The integrity validation mode that was used for parsing.
+  ///
+  /// * [IntegrityMode.strict]: Parsing would have failed on first error
+  /// * [IntegrityMode.report]: Issues logged but parsing continued (default)
+  /// * [IntegrityMode.silent]: All issues silently ignored
+  final IntegrityMode integrityMode;
 
   /// Diagnostics encountered during parsing. Errors are still non-fatal.
   final List<ParseDiagnostic> diagnostics;

@@ -7,7 +7,7 @@ import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
 /// Encoder for the GPX file format.
-// TODO(0.7.0): GPX round-trip preservation - waypoints, routes, metadata, and multiple tracks (no data loss).
+// TODO(0.8.0): GPX round-trip preservation - waypoints, routes, metadata, and multiple tracks (no data loss).
 class GpxEncoder implements ActivityFormatEncoder {
   const GpxEncoder();
   @override

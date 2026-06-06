@@ -6,7 +6,7 @@ import 'activity_parser.dart';
 import 'parse_result.dart';
 
 /// Parser for the GPX file format.
-// TODO(0.7.0): GPX: Implement round-trip preservation for waypoints/routes/metadata and multiple tracks.
+// TODO(0.8.0): GPX: Implement round-trip preservation for waypoints/routes/metadata and multiple tracks.
 class GpxParser implements ActivityFormatParser {
   const GpxParser();
 
@@ -316,6 +316,110 @@ class GpxParser implements ActivityFormatParser {
               name: 'Segment ${laps.length + 1}',
             ),
           );
+        }
+      }
+    }
+    // Additionally parse root-level waypoints (wpt) and routes (rte/rtept)
+    for (final child in root.childElements) {
+      if (child.name.local == 'wpt') {
+        final latText = child.getAttribute('lat');
+        final lonText = child.getAttribute('lon');
+        final lat = latText != null ? double.tryParse(latText) : null;
+        final lon = lonText != null ? double.tryParse(lonText) : null;
+        if (lat != null && lon != null) {
+          String? timeText;
+          String? eleText;
+          for (final c in child.childElements) {
+            if (c.name.local == 'time') timeText ??= c.innerText.trim();
+            if (c.name.local == 'ele') eleText ??= c.innerText.trim();
+          }
+          DateTime? time;
+          if (timeText != null) {
+            try {
+              time = DateTime.parse(timeText).toUtc();
+            } catch (_) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'gpx.wpt.invalid_timestamp',
+                  message:
+                      'Invalid waypoint timestamp "$timeText"; waypoint ignored.',
+                  node: ParseNodeReference(path: 'gpx.wpt'),
+                ),
+              );
+            }
+          }
+          final elevation = eleText != null ? double.tryParse(eleText) : null;
+          if (time != null) {
+            points.add(
+              GeoPoint(
+                latitude: lat,
+                longitude: lon,
+                elevation: elevation,
+                time: time,
+              ),
+            );
+          } else {
+            points.add(
+              GeoPoint(
+                latitude: lat,
+                longitude: lon,
+                elevation: elevation,
+                time: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+              ),
+            );
+          }
+        }
+      } else if (child.name.local == 'rte') {
+        for (final rtept in child.childElements) {
+          if (rtept.name.local != 'rtept') continue;
+          final latText = rtept.getAttribute('lat');
+          final lonText = rtept.getAttribute('lon');
+          final lat = latText != null ? double.tryParse(latText) : null;
+          final lon = lonText != null ? double.tryParse(lonText) : null;
+          if (lat == null || lon == null) continue;
+          String? timeText;
+          String? eleText;
+          for (final c in rtept.childElements) {
+            if (c.name.local == 'time') timeText ??= c.innerText.trim();
+            if (c.name.local == 'ele') eleText ??= c.innerText.trim();
+          }
+          DateTime? time;
+          if (timeText != null) {
+            try {
+              time = DateTime.parse(timeText).toUtc();
+            } catch (_) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'gpx.rtept.invalid_timestamp',
+                  message:
+                      'Invalid routepoint timestamp "$timeText"; point ignored.',
+                  node: ParseNodeReference(path: 'gpx.rte.rtept'),
+                ),
+              );
+            }
+          }
+          final elevation = eleText != null ? double.tryParse(eleText) : null;
+          if (time != null) {
+            points.add(
+              GeoPoint(
+                latitude: lat,
+                longitude: lon,
+                elevation: elevation,
+                time: time,
+              ),
+            );
+          } else {
+            points.add(
+              GeoPoint(
+                latitude: lat,
+                longitude: lon,
+                elevation: elevation,
+                time: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+              ),
+            );
+          }
         }
       }
     }

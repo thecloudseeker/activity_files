@@ -1,4 +1,33 @@
 # Changelog
+## 0.6.0
+### Breaking
+- `ActivityFileFormat` now includes `csv` and `geojson`; exhaustive `switch` statements must handle the new enum values.
+- Facade conversion/export helpers now validate by default (`runValidation: true`). Set `runValidation: false` to keep previous behavior.
+
+### Added
+- FIT regression suite for problematic real-world files.
+- Additional integration coverage for CSV/GeoJSON conversion and format detection.
+- New pipeline option models: `FitCorruptionHandling` and `ActivityAutoFixOptions`.
+ - FIT Developer-Fields Support: decodes developer fields and exposes them as channels. (lib/src/parse/fit_parser.dart)
+ - Extended FIT Message Coverage: handlers for messages 23, 34, 49. (lib/src/parse/fit_parser.dart)
+ - Typed FIT Views: `asFitView()` typed accessors for session/lap/record data. (lib/src/fit/typed_views.dart)
+ - Auto-Lap Heuristics: `autoLapByDistance` option generates laps by distance with sport defaults. (lib/src/api/pipeline_options.dart, lib/src/api/activity_files_facade.dart)
+
+
+### Changed
+- CI workflows were consolidated and hardened
+- CSV/GeoJSON are now first-class in the unified `ActivityFileFormat` path (`detectFormat`, `load`, `convert`, `export`, parser/encoder routing, CLI options).
+- Shared lap-boundary validation logic is reused between `validateRawActivity()` and `RawEditor.validateLapBoundaries()`.
+ - GPX parser: more robust TrackPoint parsing and TrackPointExtension handling
+
+### Fixed
+ - Auto-Lap: regenerate placeholder laps and recompute distance before marking. (lib/src/api/activity_files_facade.dart)
+ - Autofix diagnostic `autofix.laps.auto_generated` is emitted when laps are generated. (lib/src/api/activity_files_facade.dart)
+ - FIT parser now performs best-effort extraction for problematic FIT variants by applying in-stream local-definition updates and bounded timestamp recovery (`fit.record.recovered_timestamp`) instead of returning empty output.
+- GeoJSON parser now uses a deterministic UTC-epoch fallback timestamp for points without `timestamp` instead of runtime-dependent `DateTime.now()`.
+- TCX parser cache lifecycle is now scoped with weak-key caching to avoid retaining parsed XML documents.
+- `ActivityFiles.splitBySport()` now preserves lap metadata fields (e.g. avg/max metrics, calories, FIT event fields) while removing per-lap sport in split outputs.
+- `strictFitIntegrity` now throws the same detailed troubleshooting `FormatException` across direct load and stream pipeline paths.
 
 ## 0.5.1
 ### Changed

@@ -5,7 +5,9 @@ import 'dart:typed_data';
 
 import '../models.dart';
 import '../platform/isolate_runner.dart' as isolate_runner;
+import 'csv_parser.dart';
 import 'fit_parser.dart';
+import 'geojson_parser.dart';
 import 'gpx_parser.dart';
 import 'parse_result.dart';
 import 'tcx_parser.dart';
@@ -30,6 +32,8 @@ class ActivityParser {
       ActivityFileFormat.gpx => const GpxParser(),
       ActivityFileFormat.tcx => const TcxParser(),
       ActivityFileFormat.fit => const FitParser(),
+      ActivityFileFormat.csv => const CsvParser(),
+      ActivityFileFormat.geojson => const GeojsonParser(),
     };
     return parser.parse(input);
   }
@@ -48,6 +52,8 @@ class ActivityParser {
       ActivityFileFormat.gpx => const GpxParser(),
       ActivityFileFormat.tcx => const TcxParser(),
       ActivityFileFormat.fit => const FitParser(),
+      ActivityFileFormat.csv => const CsvParser(),
+      ActivityFileFormat.geojson => const GeojsonParser(),
     };
     return switch (parser) {
       FitParser fit => fit.parseBytes(Uint8List.fromList(bytes)),
@@ -164,7 +170,7 @@ class ActivityParser {
           severity: ParseSeverity.error,
           code: 'parser.format_exception',
           message:
-              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes` instead of base64 text and verify integrity. If the input is ambiguous, provide `format` explicitly.',
+              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes` instead of base64 text and verify integrity. If the input is ambiguous, provide `format` explicitly.',
           node: ParseNodeReference(path: '${format.name}.document'),
         ),
       ],

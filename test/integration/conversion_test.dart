@@ -19,6 +19,57 @@ void main() {
   );
 
   group('Format interop', () {
+    test('convert supports GPX -> CSV via ActivityFileFormat', () async {
+      final result = await ActivityFiles.convert(
+        source: sampleGpx,
+        to: ActivityFileFormat.csv,
+        useIsolate: false,
+      );
+
+      expect(result.sourceFormat, equals(ActivityFileFormat.gpx));
+      expect(result.targetFormat, equals(ActivityFileFormat.csv));
+      expect(result.isBinary, isFalse);
+      expect(result.asString(), contains('timestamp,latitude,longitude'));
+
+      final reparsed = ActivityParser.parse(
+        result.asString(),
+        ActivityFileFormat.csv,
+      );
+      expect(
+        reparsed.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isEmpty,
+      );
+      expect(reparsed.activity.points, isNotEmpty);
+    });
+
+    test('convert supports CSV -> GeoJSON via ActivityFileFormat', () async {
+      final csv = ActivityEncoder.encode(
+        buildSampleActivity(),
+        ActivityFileFormat.csv,
+      );
+
+      final result = await ActivityFiles.convert(
+        source: csv,
+        to: ActivityFileFormat.geojson,
+        useIsolate: false,
+      );
+
+      expect(result.sourceFormat, equals(ActivityFileFormat.csv));
+      expect(result.targetFormat, equals(ActivityFileFormat.geojson));
+      expect(result.isBinary, isFalse);
+      expect(result.asString(), contains('"FeatureCollection"'));
+
+      final reparsed = ActivityParser.parse(
+        result.asString(),
+        ActivityFileFormat.geojson,
+      );
+      expect(
+        reparsed.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isEmpty,
+      );
+      expect(reparsed.activity.points, isNotEmpty);
+    });
+
     test('GPX → Raw → TCX preserves HR and cadence', () {
       final gpxResult = ActivityParser.parse(sampleGpx, ActivityFileFormat.gpx);
       expect(gpxResult.warningDiagnostics, isEmpty);
