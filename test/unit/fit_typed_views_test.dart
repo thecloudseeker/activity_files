@@ -113,5 +113,106 @@ void main() {
       );
       expect(lenient.records.first.heartRate, equals(150));
     });
+
+    test('sets forwards RawActivity.sets', () {
+      final s = WorkoutSet(
+        startTime: base,
+        endTime: base.add(const Duration(seconds: 45)),
+        isRest: false,
+        exerciseCategory: 'Squat',
+        repetitions: 10,
+        weightKg: 60.0,
+      );
+      final activity = buildActivity().copyWith(sets: [s]);
+      final view = activity.asFitView();
+      expect(view.sets, hasLength(1));
+      expect(view.sets.first.exerciseCategory, 'Squat');
+      expect(view.sets.first.repetitions, 10);
+      expect(view.sets.first.weightKg, 60.0);
+    });
+
+    test('sets is empty when activity has no sets', () {
+      final view = buildActivity().asFitView();
+      expect(view.sets, isEmpty);
+    });
+  });
+
+  group('FitSessionView swim fields', () {
+    final base = DateTime.utc(2024, 1, 1, 10, 0, 0);
+
+    RawActivity buildSwimActivity() {
+      return RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
+        sport: Sport.swimming,
+        summary: const ActivitySummary(
+          elapsedTime: Duration(minutes: 30),
+          poolLengthMeters: 50.0,
+          numActiveLengths: 40,
+          swimStroke: SwimStroke.freestyle,
+          subSport: 45,
+          totalCycles: 600,
+        ),
+      );
+    }
+
+    test('poolLengthMeters is forwarded from ActivitySummary', () {
+      final view = buildSwimActivity().asFitView();
+      expect(view.session.poolLengthMeters, equals(50.0));
+    });
+
+    test('numActiveLengths is forwarded from ActivitySummary', () {
+      final view = buildSwimActivity().asFitView();
+      expect(view.session.numActiveLengths, equals(40));
+    });
+
+    test('swimStroke is forwarded from ActivitySummary', () {
+      final view = buildSwimActivity().asFitView();
+      expect(view.session.swimStroke, equals(SwimStroke.freestyle));
+    });
+
+    test('swim fields are null when summary is absent', () {
+      final activity = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
+      );
+      final view = activity.asFitView();
+      expect(view.session.poolLengthMeters, isNull);
+      expect(view.session.numActiveLengths, isNull);
+      expect(view.session.swimStroke, isNull);
+    });
+  });
+
+  group('FitLapView swim fields', () {
+    final base = DateTime.utc(2024, 1, 1, 10, 0, 0);
+
+    test('swim fields are forwarded from Lap', () {
+      final activity = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
+        laps: [
+          Lap(
+            startTime: base,
+            endTime: base.add(const Duration(minutes: 10)),
+            numActiveLengths: 20,
+            swimStroke: SwimStroke.backstroke,
+          ),
+        ],
+        sport: Sport.swimming,
+      );
+      final view = activity.asFitView();
+      expect(view.laps, hasLength(1));
+      expect(view.laps.first.numActiveLengths, equals(20));
+      expect(view.laps.first.swimStroke, equals(SwimStroke.backstroke));
+    });
+
+    test('swim fields are null when lap has no swim data', () {
+      final activity = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
+        laps: [
+          Lap(startTime: base, endTime: base.add(const Duration(minutes: 5))),
+        ],
+      );
+      final view = activity.asFitView();
+      expect(view.laps.first.numActiveLengths, isNull);
+      expect(view.laps.first.swimStroke, isNull);
+    });
   });
 }

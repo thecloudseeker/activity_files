@@ -565,16 +565,6 @@ void main() {
   });
 
   group('Sport enum', () {
-    test('all sport values are defined', () {
-      expect(Sport.unknown, isNotNull);
-      expect(Sport.running, isNotNull);
-      expect(Sport.cycling, isNotNull);
-      expect(Sport.swimming, isNotNull);
-      expect(Sport.hiking, isNotNull);
-      expect(Sport.walking, isNotNull);
-      expect(Sport.other, isNotNull);
-    });
-
     test('sport enum has 7 values', () {
       expect(Sport.values.length, 7);
     });
@@ -585,14 +575,310 @@ void main() {
   });
 
   group('ActivityFileFormat enum', () {
-    test('all formats are defined', () {
-      expect(ActivityFileFormat.gpx, isNotNull);
-      expect(ActivityFileFormat.tcx, isNotNull);
-      expect(ActivityFileFormat.fit, isNotNull);
-    });
-
     test('format enum has 5 values', () {
       expect(ActivityFileFormat.values.length, 5);
+    });
+  });
+
+  group('SwimStroke enum', () {
+    test('has 7 values', () {
+      expect(SwimStroke.values.length, 7);
+    });
+  });
+
+  group('WorkoutSet', () {
+    final start = DateTime.utc(2024, 1, 1, 10, 0, 0);
+    final end = DateTime.utc(2024, 1, 1, 10, 0, 45);
+
+    test('constructor stores fields', () {
+      final s = WorkoutSet(
+        startTime: start,
+        endTime: end,
+        isRest: false,
+        exerciseCategory: 'Squat',
+        repetitions: 10,
+        weightKg: 80.0,
+      );
+      expect(s.startTime, start);
+      expect(s.endTime, end);
+      expect(s.isRest, isFalse);
+      expect(s.exerciseCategory, 'Squat');
+      expect(s.repetitions, 10);
+      expect(s.weightKg, 80.0);
+    });
+
+    test('times are normalised to UTC', () {
+      final localStart = DateTime(2024, 1, 1, 10, 0, 0);
+      final s = WorkoutSet(
+        startTime: localStart,
+        endTime: localStart.add(const Duration(seconds: 30)),
+        isRest: false,
+      );
+      expect(s.startTime.isUtc, isTrue);
+      expect(s.endTime.isUtc, isTrue);
+    });
+
+    test('elapsed computes duration', () {
+      final s = WorkoutSet(startTime: start, endTime: end, isRest: false);
+      expect(s.elapsed, const Duration(seconds: 45));
+    });
+
+    test('isRest can be true', () {
+      final s = WorkoutSet(startTime: start, endTime: end, isRest: true);
+      expect(s.isRest, isTrue);
+    });
+
+    test('copyWith overrides individual fields', () {
+      final s = WorkoutSet(
+        startTime: start,
+        endTime: end,
+        isRest: false,
+        exerciseCategory: 'Squat',
+        repetitions: 10,
+        weightKg: 80.0,
+      );
+      final copy = s.copyWith(repetitions: 12, weightKg: 90.0);
+      expect(copy.repetitions, 12);
+      expect(copy.weightKg, 90.0);
+      expect(copy.exerciseCategory, 'Squat');
+      expect(copy.isRest, isFalse);
+    });
+
+    test('copyWith can change isRest and startTime/endTime', () {
+      final s = WorkoutSet(startTime: start, endTime: end, isRest: false);
+      final newEnd = end.add(const Duration(seconds: 30));
+      final copy = s.copyWith(isRest: true, endTime: newEnd);
+      expect(copy.isRest, isTrue);
+      expect(copy.endTime, newEnd.toUtc());
+      expect(copy.startTime, start);
+    });
+
+    group('categoryLabel', () {
+      test('returns label for known values', () {
+        expect(WorkoutSet.categoryLabel(0), 'Bench Press');
+        expect(WorkoutSet.categoryLabel(28), 'Squat');
+        expect(WorkoutSet.categoryLabel(8), 'Deadlift');
+        expect(WorkoutSet.categoryLabel(17), 'Lunge');
+        expect(WorkoutSet.categoryLabel(32), 'Run');
+      });
+
+      test('returns null for null input', () {
+        expect(WorkoutSet.categoryLabel(null), isNull);
+      });
+
+      test('returns null for unknown values', () {
+        expect(WorkoutSet.categoryLabel(999), isNull);
+        expect(WorkoutSet.categoryLabel(-1), isNull);
+      });
+
+      test('covers all 33 entries (0-32)', () {
+        for (var i = 0; i <= 32; i++) {
+          expect(
+            WorkoutSet.categoryLabel(i),
+            isNotNull,
+            reason: 'Missing label for category $i',
+          );
+        }
+        expect(WorkoutSet.categoryLabel(33), isNull);
+      });
+    });
+  });
+
+  group('Lap swim fields', () {
+    final start = DateTime.utc(2024, 1, 1, 10, 0, 0);
+    final end = DateTime.utc(2024, 1, 1, 10, 5, 0);
+
+    test('swim fields default to null', () {
+      final lap = Lap(startTime: start, endTime: end);
+      expect(lap.numActiveLengths, isNull);
+      expect(lap.swimStroke, isNull);
+    });
+
+    test('constructor stores swim fields', () {
+      final lap = Lap(
+        startTime: start,
+        endTime: end,
+        numActiveLengths: 20,
+        swimStroke: SwimStroke.freestyle,
+      );
+      expect(lap.numActiveLengths, 20);
+      expect(lap.swimStroke, SwimStroke.freestyle);
+    });
+
+    test('copyWith propagates swim fields', () {
+      final lap = Lap(startTime: start, endTime: end);
+      final copy = lap.copyWith(
+        numActiveLengths: 10,
+        swimStroke: SwimStroke.backstroke,
+      );
+      expect(copy.numActiveLengths, 10);
+      expect(copy.swimStroke, SwimStroke.backstroke);
+    });
+
+    test('copyWith preserves swim fields when not overridden', () {
+      final lap = Lap(
+        startTime: start,
+        endTime: end,
+        numActiveLengths: 20,
+        swimStroke: SwimStroke.breaststroke,
+      );
+      final copy = lap.copyWith(distanceMeters: 500.0);
+      expect(copy.numActiveLengths, 20);
+      expect(copy.swimStroke, SwimStroke.breaststroke);
+    });
+
+    test('copyWithoutSport clears sport but keeps all other metadata', () {
+      final lap = Lap(
+        startTime: start,
+        endTime: end,
+        distanceMeters: 500.0,
+        name: 'Swim leg',
+        sport: Sport.swimming,
+        calories: 120,
+        avgHeartRate: 130,
+        maxHeartRate: 150,
+        event: 9,
+        eventType: 1,
+        numActiveLengths: 20,
+        swimStroke: SwimStroke.freestyle,
+      );
+      final copy = lap.copyWithoutSport();
+      expect(copy.sport, isNull);
+      expect(copy.startTime, lap.startTime);
+      expect(copy.endTime, lap.endTime);
+      expect(copy.distanceMeters, 500.0);
+      expect(copy.name, 'Swim leg');
+      expect(copy.calories, 120);
+      expect(copy.avgHeartRate, 130);
+      expect(copy.maxHeartRate, 150);
+      expect(copy.event, 9);
+      expect(copy.eventType, 1);
+      expect(copy.numActiveLengths, 20);
+      expect(copy.swimStroke, SwimStroke.freestyle);
+    });
+  });
+
+  group('ActivitySummary swim and fitness fields', () {
+    test('swim fields default to null', () {
+      const summary = ActivitySummary();
+      expect(summary.poolLengthMeters, isNull);
+      expect(summary.numActiveLengths, isNull);
+      expect(summary.swimStroke, isNull);
+      expect(summary.subSport, isNull);
+      expect(summary.totalCycles, isNull);
+    });
+
+    test('constructor stores swim and fitness fields', () {
+      const summary = ActivitySummary(
+        poolLengthMeters: 50.0,
+        numActiveLengths: 40,
+        swimStroke: SwimStroke.freestyle,
+        subSport: 45,
+        totalCycles: 200,
+      );
+      expect(summary.poolLengthMeters, 50.0);
+      expect(summary.numActiveLengths, 40);
+      expect(summary.swimStroke, SwimStroke.freestyle);
+      expect(summary.subSport, 45);
+      expect(summary.totalCycles, 200);
+    });
+
+    test('copyWith propagates swim fields', () {
+      const summary = ActivitySummary();
+      final copy = summary.copyWith(
+        poolLengthMeters: 25.0,
+        numActiveLengths: 80,
+        swimStroke: SwimStroke.butterfly,
+        subSport: 36,
+        totalCycles: 500,
+      );
+      expect(copy.poolLengthMeters, 25.0);
+      expect(copy.numActiveLengths, 80);
+      expect(copy.swimStroke, SwimStroke.butterfly);
+      expect(copy.subSport, 36);
+      expect(copy.totalCycles, 500);
+    });
+
+    test('copyWith preserves swim fields when not overridden', () {
+      const summary = ActivitySummary(
+        poolLengthMeters: 50.0,
+        swimStroke: SwimStroke.im,
+        numActiveLengths: 40,
+      );
+      final copy = summary.copyWith(calories: 300.0);
+      expect(copy.poolLengthMeters, 50.0);
+      expect(copy.swimStroke, SwimStroke.im);
+      expect(copy.numActiveLengths, 40);
+    });
+  });
+
+  group('RawActivity.sets', () {
+    final base = DateTime.utc(2024, 1, 1, 10, 0, 0);
+
+    test('sets defaults to empty list', () {
+      final activity = RawActivity();
+      expect(activity.sets, isEmpty);
+    });
+
+    test('sets is unmodifiable', () {
+      final activity = RawActivity();
+      expect(
+        () => (activity.sets as List<dynamic>).add(
+          WorkoutSet(
+            startTime: base,
+            endTime: base.add(const Duration(seconds: 30)),
+            isRest: false,
+          ),
+        ),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('constructor stores sets', () {
+      final sets = [
+        WorkoutSet(
+          startTime: base,
+          endTime: base.add(const Duration(seconds: 45)),
+          isRest: false,
+          exerciseCategory: 'Squat',
+          repetitions: 10,
+        ),
+        WorkoutSet(
+          startTime: base.add(const Duration(minutes: 1)),
+          endTime: base.add(const Duration(minutes: 2)),
+          isRest: true,
+        ),
+      ];
+      final activity = RawActivity(sets: sets);
+      expect(activity.sets, hasLength(2));
+      expect(activity.sets.first.exerciseCategory, 'Squat');
+      expect(activity.sets.last.isRest, isTrue);
+    });
+
+    test('copyWith propagates sets', () {
+      final original = RawActivity();
+      final sets = [
+        WorkoutSet(
+          startTime: base,
+          endTime: base.add(const Duration(seconds: 30)),
+          isRest: false,
+        ),
+      ];
+      final copy = original.copyWith(sets: sets);
+      expect(copy.sets, hasLength(1));
+    });
+
+    test('copyWith preserves sets when not overridden', () {
+      final sets = [
+        WorkoutSet(
+          startTime: base,
+          endTime: base.add(const Duration(seconds: 30)),
+          isRest: false,
+        ),
+      ];
+      final activity = RawActivity(sets: sets);
+      final copy = activity.copyWith(sport: Sport.running);
+      expect(copy.sets, hasLength(1));
     });
   });
 }
