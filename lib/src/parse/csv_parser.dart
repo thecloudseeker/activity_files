@@ -113,6 +113,19 @@ class CsvParser implements ActivityFormatParser {
           'distance',
           timestamp,
         );
+        // Unknown numeric columns are preserved as custom channels so our
+        // own format is lossless (Channel.custom normalizes the name, so a
+        // column matching a built-in channel id maps onto that channel).
+        for (final entry in headerMap.entries) {
+          if (_knownColumns.contains(entry.key)) continue;
+          final index = entry.value;
+          if (index >= row.length) continue;
+          final value = double.tryParse(row[index].trim());
+          if (value == null) continue;
+          channelMap
+              .putIfAbsent(Channel.custom(entry.key), () => [])
+              .add(Sample(time: timestamp, value: value));
+        }
       }
 
       if (points.isEmpty) {
@@ -150,6 +163,21 @@ class CsvParser implements ActivityFormatParser {
       );
     }
   }
+
+  /// Columns with dedicated parsing; all other columns become custom channels.
+  static const Set<String> _knownColumns = {
+    'timestamp',
+    'latitude',
+    'longitude',
+    'elevation',
+    'heart_rate',
+    'cadence',
+    'power',
+    'temperature',
+    'distance',
+    'speed',
+    'sport',
+  };
 
   /// Create mapping of header names to column indices
   static Map<String, int> _createHeaderMap(List<String> headers) {

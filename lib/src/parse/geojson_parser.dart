@@ -205,10 +205,18 @@ class GeojsonParser implements ActivityFormatParser {
     final channelMap = <Channel, List<Sample>>{};
 
     if (geomType == 'LineString') {
-      // LineString: array of [lon, lat, ...] coordinates
-      for (final coord in coordinates) {
+      // LineString: array of [lon, lat, ...] coordinates. Per-point times may
+      // be present as properties.coordinateProperties.times (togeojson/Mapbox
+      // convention), parallel to the coordinates array.
+      final times = _coordinateTimes(properties);
+      for (var i = 0; i < coordinates.length; i++) {
+        final coord = coordinates[i];
         if (coord is! List || coord.length < 2) continue;
-        final point = _coordinateToGeoPoint(coord, properties);
+        final point = _coordinateToGeoPoint(
+          coord,
+          properties,
+          timeOverride: times != null && i < times.length ? times[i] : null,
+        );
         if (point != null) {
           points.add(point);
           _collectChannelSamples(point.time, properties, channelMap);
@@ -233,6 +241,37 @@ class GeojsonParser implements ActivityFormatParser {
             _collectChannelSamples(point.time, properties, channelMap);
           }
         }
+      }
+    } else if (geomType == 'Polygon') {
+      // Polygon: [ exteriorRing, ...holes ]. The exterior ring becomes the
+      // track; interior rings (holes) are not part of an activity path.
+      final exterior = coordinates.isNotEmpty ? coordinates[0] : null;
+      if (exterior is List) {
+        final times = _coordinateTimes(properties);
+        for (var i = 0; i < exterior.length; i++) {
+          final coord = exterior[i];
+          if (coord is! List || coord.length < 2) continue;
+          final point = _coordinateToGeoPoint(
+            coord,
+            properties,
+            timeOverride: times != null && i < times.length ? times[i] : null,
+          );
+          if (point != null) {
+            points.add(point);
+            _collectChannelSamples(point.time, properties, channelMap);
+          }
+        }
+      }
+      if (coordinates.length > 1) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.polygon_holes_dropped',
+            message:
+                'Polygon has ${coordinates.length - 1} interior ring(s) '
+                '(holes) that are not representable as an activity track.',
+          ),
+        );
       }
     } else {
       diagnostics.add(
@@ -264,13 +303,46 @@ class GeojsonParser implements ActivityFormatParser {
       points: points,
       channels: channelMap.isEmpty ? null : channelMap,
       sport: sport,
+      metadata: _collectMetadata(properties),
     );
 
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
 
+  /// Captures all scalar feature properties (String/num/bool) as activity
+  /// metadata, so free-form properties — numeric and non-numeric — round-trip.
+  /// Structural nested objects/arrays (e.g. `coordinateProperties`) are skipped.
+  static Map<String, Object?> _collectMetadata(Map properties) {
+    final metadata = <String, Object?>{};
+    for (final entry in properties.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (key is! String || key == 'coordinateProperties') continue;
+      if (value == null || value is Map || value is List) continue;
+      metadata[key] = value;
+    }
+    return metadata;
+  }
+
+  /// Parses `properties.coordinateProperties.times` (per-point timestamps
+  /// parallel to the coordinates array), if present.
+  static List<DateTime?>? _coordinateTimes(Map properties) {
+    final coordinateProperties = properties['coordinateProperties'];
+    if (coordinateProperties is! Map) return null;
+    final times = coordinateProperties['times'];
+    if (times is! List) return null;
+    return [
+      for (final t in times)
+        t == null ? null : DateTime.tryParse(t.toString())?.toUtc(),
+    ];
+  }
+
   /// Convert GeoJSON coordinate to GeoPoint
-  static GeoPoint? _coordinateToGeoPoint(List coord, Map properties) {
+  static GeoPoint? _coordinateToGeoPoint(
+    List coord,
+    Map properties, {
+    DateTime? timeOverride,
+  }) {
     try {
       if (coord.length < 2) return null;
 
@@ -283,8 +355,8 @@ class GeojsonParser implements ActivityFormatParser {
       final altitude = coord.length > 2 ? _toDouble(coord[2]) : null;
 
       // Extract time from properties if available
-      DateTime? timestamp;
-      if (properties['timestamp'] != null) {
+      DateTime? timestamp = timeOverride;
+      if (timestamp == null && properties['timestamp'] != null) {
         try {
           timestamp = DateTime.parse(properties['timestamp'].toString());
         } catch (_) {}
@@ -304,71 +376,42 @@ class GeojsonParser implements ActivityFormatParser {
     }
   }
 
-  /// Collect channel samples from properties
+  /// Property keys that are activity metadata rather than channel values.
+  static const Set<String> _metaPropertyKeys = {
+    'timestamp',
+    'altitude',
+    'activity_type',
+    'start_time',
+    'duration',
+    'total_calories',
+    'total_steps',
+    'num_laps',
+    'avg_heart_rate',
+    'max_heart_rate',
+    'device_manufacturer',
+    'coordinateProperties',
+  };
+
+  /// Collect channel samples from properties.
+  ///
+  /// Every numeric property that is not a known metadata key becomes a
+  /// channel sample; `Channel.custom` normalizes the name, so known names
+  /// (heart_rate, cadence, power, …) map onto the built-in channels and
+  /// unknown names are preserved as custom channels.
   static void _collectChannelSamples(
     DateTime timestamp,
     Map properties,
     Map<Channel, List<Sample>> channelMap,
   ) {
-    if (properties['heart_rate'] is num) {
+    for (final entry in properties.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (value is! num || key is! String || _metaPropertyKeys.contains(key)) {
+        continue;
+      }
       channelMap
-          .putIfAbsent(Channel.heartRate, () => [])
-          .add(
-            Sample(
-              time: timestamp,
-              value: (properties['heart_rate'] as num).toDouble(),
-            ),
-          );
-    }
-    if (properties['cadence'] is num) {
-      channelMap
-          .putIfAbsent(Channel.cadence, () => [])
-          .add(
-            Sample(
-              time: timestamp,
-              value: (properties['cadence'] as num).toDouble(),
-            ),
-          );
-    }
-    if (properties['speed'] is num) {
-      channelMap
-          .putIfAbsent(Channel.speed, () => [])
-          .add(
-            Sample(
-              time: timestamp,
-              value: (properties['speed'] as num).toDouble(),
-            ),
-          );
-    }
-    if (properties['power'] is num) {
-      channelMap
-          .putIfAbsent(Channel.power, () => [])
-          .add(
-            Sample(
-              time: timestamp,
-              value: (properties['power'] as num).toDouble(),
-            ),
-          );
-    }
-    if (properties['temperature'] is num) {
-      channelMap
-          .putIfAbsent(Channel.temperature, () => [])
-          .add(
-            Sample(
-              time: timestamp,
-              value: (properties['temperature'] as num).toDouble(),
-            ),
-          );
-    }
-    if (properties['distance'] is num) {
-      channelMap
-          .putIfAbsent(Channel.distance, () => [])
-          .add(
-            Sample(
-              time: timestamp,
-              value: (properties['distance'] as num).toDouble(),
-            ),
-          );
+          .putIfAbsent(Channel.custom(key), () => [])
+          .add(Sample(time: timestamp, value: value.toDouble()));
     }
   }
 

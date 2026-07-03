@@ -1,59 +1,31 @@
 import '../models.dart';
+import 'encoder_utils.dart';
 
 /// Encodes activity data to CSV format
 /// Supports export of trackpoints with channel metrics
 class CsvEncoder {
+  static const String _header =
+      'timestamp,latitude,longitude,elevation,heart_rate,cadence,power,temperature,distance,speed,sport';
+
+  /// Channel columns in header order.
+  static const List<Channel> _channelColumns = [
+    Channel.heartRate,
+    Channel.cadence,
+    Channel.power,
+    Channel.temperature,
+    Channel.distance,
+    Channel.speed,
+  ];
+
   /// Encode single RawActivity to CSV format
   ///
   /// Returns CSV string with headers and trackpoint data
   static String encode(RawActivity activity) {
-    final buffer = StringBuffer();
-
-    // Write CSV header
-    buffer.writeln(
-      'timestamp,latitude,longitude,elevation,heart_rate,cadence,power,temperature,distance,speed,sport',
-    );
-
-    // Build channel lookup by timestamp
-    final channelsByTime = <DateTime, Map<Channel, double>>{};
-    for (final entry in activity.channels.entries) {
-      for (final sample in entry.value) {
-        final values = channelsByTime.putIfAbsent(sample.time, () => {});
-        values[entry.key] = sample.value;
-      }
-    }
-
-    // Write each point with channel data
-    for (final point in activity.points) {
-      final values = channelsByTime[point.time] ?? {};
-      final fields = [
-        _formatCsvField(point.time.toIso8601String()),
-        _formatCsvField(point.latitude.toString()),
-        _formatCsvField(point.longitude.toString()),
-        _formatCsvField(point.elevation?.toString() ?? ''),
-        _formatCsvField(
-          _getChannelValue(values, Channel.heartRate)?.toString() ?? '',
-        ),
-        _formatCsvField(
-          _getChannelValue(values, Channel.cadence)?.toString() ?? '',
-        ),
-        _formatCsvField(
-          _getChannelValue(values, Channel.power)?.toString() ?? '',
-        ),
-        _formatCsvField(
-          _getChannelValue(values, Channel.temperature)?.toString() ?? '',
-        ),
-        _formatCsvField(
-          _getChannelValue(values, Channel.distance)?.toString() ?? '',
-        ),
-        _formatCsvField(
-          _getChannelValue(values, Channel.speed)?.toString() ?? '',
-        ),
-        _formatCsvField(activity.sport.name),
-      ];
-      buffer.writeln(fields.join(','));
-    }
-
+    // CSV rows are a single flat stream; merge multi-track input.
+    final flat = activity.flattened();
+    final extras = _extraChannels([flat]);
+    final buffer = StringBuffer()..writeln(_headerWith(extras));
+    _writeRows(buffer, flat, extras);
     return buffer.toString();
   }
 
@@ -64,66 +36,48 @@ class CsvEncoder {
     if (activities.isEmpty) {
       return '';
     }
-
-    final buffer = StringBuffer();
-
-    // Write header
-    buffer.writeln(
-      'timestamp,latitude,longitude,elevation,heart_rate,cadence,power,temperature,distance,speed,sport',
-    );
-
-    // Write data from all activities
-    for (final activity in activities) {
-      // Build channel lookup by timestamp
-      final channelsByTime = <DateTime, Map<Channel, double>>{};
-      for (final entry in activity.channels.entries) {
-        for (final sample in entry.value) {
-          final values = channelsByTime.putIfAbsent(sample.time, () => {});
-          values[entry.key] = sample.value;
-        }
-      }
-
-      // Write each point
-      for (final point in activity.points) {
-        final values = channelsByTime[point.time] ?? {};
-        final fields = [
-          _formatCsvField(point.time.toIso8601String()),
-          _formatCsvField(point.latitude.toString()),
-          _formatCsvField(point.longitude.toString()),
-          _formatCsvField(point.elevation?.toString() ?? ''),
-          _formatCsvField(
-            _getChannelValue(values, Channel.heartRate)?.toString() ?? '',
-          ),
-          _formatCsvField(
-            _getChannelValue(values, Channel.cadence)?.toString() ?? '',
-          ),
-          _formatCsvField(
-            _getChannelValue(values, Channel.power)?.toString() ?? '',
-          ),
-          _formatCsvField(
-            _getChannelValue(values, Channel.temperature)?.toString() ?? '',
-          ),
-          _formatCsvField(
-            _getChannelValue(values, Channel.distance)?.toString() ?? '',
-          ),
-          _formatCsvField(
-            _getChannelValue(values, Channel.speed)?.toString() ?? '',
-          ),
-          _formatCsvField(activity.sport.name),
-        ];
-        buffer.writeln(fields.join(','));
-      }
+    final flats = [for (final activity in activities) activity.flattened()];
+    final extras = _extraChannels(flats);
+    final buffer = StringBuffer()..writeln(_headerWith(extras));
+    for (final flat in flats) {
+      _writeRows(buffer, flat, extras);
     }
-
     return buffer.toString();
   }
 
-  /// Get channel value from map, or null if not present
-  static double? _getChannelValue(
-    Map<Channel, double> values,
-    Channel channel,
+  /// Channels beyond the fixed columns, written as additional columns so no
+  /// channel data is lost. Sorted by id for deterministic output.
+  static List<Channel> _extraChannels(List<RawActivity> activities) => {
+    for (final activity in activities)
+      for (final channel in activity.channels.keys)
+        if (!_channelColumns.contains(channel)) channel,
+  }.toList()..sort((a, b) => a.id.compareTo(b.id));
+
+  static String _headerWith(List<Channel> extras) => extras.isEmpty
+      ? _header
+      : '$_header,${extras.map((c) => _formatCsvField(c.id)).join(',')}';
+
+  /// Write one CSV row per point, joining channel values by timestamp.
+  static void _writeRows(
+    StringBuffer buffer,
+    RawActivity activity,
+    List<Channel> extras,
   ) {
-    return values[channel];
+    final channelsByTime = channelValuesByTime(activity.channels);
+    for (final point in activity.points) {
+      final values = channelsByTime[point.time] ?? const {};
+      final fields = [
+        point.time.toIso8601String(),
+        point.latitude.toString(),
+        point.longitude.toString(),
+        point.elevation?.toString() ?? '',
+        for (final channel in _channelColumns)
+          values[channel]?.toString() ?? '',
+        activity.sport.name,
+        for (final channel in extras) values[channel]?.toString() ?? '',
+      ].map(_formatCsvField);
+      buffer.writeln(fields.join(','));
+    }
   }
 
   /// Format field for CSV (escape quotes and wrap if needed)

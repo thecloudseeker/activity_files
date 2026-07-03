@@ -415,7 +415,8 @@ void main() {
       // Verify all channels are preserved
       expect(encoded, contains('<gpxtpx:hr>145</gpxtpx:hr>'));
       expect(encoded, contains('<gpxtpx:cad>90</gpxtpx:cad>'));
-      expect(encoded, contains('<gpxtpx:atemp>28</gpxtpx:atemp>'));
+      // atemp is xsd:decimal in the TPX schema; written with one decimal.
+      expect(encoded, contains('<gpxtpx:atemp>28.0</gpxtpx:atemp>'));
       expect(encoded, contains('<gpxtpx:speed>'));
       expect(encoded, contains('<gpxtpx:course>'));
 
