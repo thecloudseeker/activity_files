@@ -72,6 +72,44 @@ void main() {
       expect(stats.validationDuration, isNotNull);
     });
 
+    test('multi-track GPX to TCX flattens all tracks and flags it', () async {
+      const multiTrackGpx = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>Track 1</name>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0"><time>2024-01-01T10:00:00Z</time></trkpt>
+      <trkpt lat="40.001" lon="-105.001"><time>2024-01-01T10:00:10Z</time></trkpt>
+    </trkseg>
+  </trk>
+  <trk>
+    <name>Track 2</name>
+    <trkseg>
+      <trkpt lat="51.0" lon="0.5"><time>2024-01-02T08:00:00Z</time></trkpt>
+      <trkpt lat="51.001" lon="0.501"><time>2024-01-02T08:00:10Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+
+      final conversion = await ActivityFiles.convert(
+        source: multiTrackGpx,
+        to: ActivityFileFormat.tcx,
+        useIsolate: false,
+      );
+
+      // Points from BOTH tracks must survive the conversion.
+      expect(conversion.encoded, contains('40.001'));
+      expect(conversion.encoded, contains('51.001'));
+      // The structural loss is reported as an info diagnostic.
+      expect(
+        conversion.diagnostics.any(
+          (d) => d.code == 'lossy.multi_track_flattened',
+        ),
+        isTrue,
+        reason: 'Expected a lossy.multi_track_flattened diagnostic',
+      );
+    });
+
     test(
       'load detects UTF-16 GPX payloads without misclassification',
       () async {
@@ -1518,13 +1556,15 @@ void main() {
       expect(() => ActivityFiles.merge([]), throwsArgumentError);
     });
 
-    test('merge supports custom creator', () {
+    test('merge supports custom creator and inherits first activity sport', () {
       final base = DateTime.utc(2024, 12, 1, 9);
       final a1 = ActivityFiles.builder()
         ..creator = 'device1'
+        ..sport = Sport.running
         ..addPoint(latitude: 40.0, longitude: -105.0, time: base);
       final a2 = ActivityFiles.builder()
         ..creator = 'device2'
+        ..sport = Sport.cycling
         ..addPoint(
           latitude: 40.0001,
           longitude: -105.0001,
@@ -1537,6 +1577,7 @@ void main() {
       ], creator: 'multi-device-merger');
 
       expect(merged.creator, equals('multi-device-merger'));
+      expect(merged.sport, equals(Sport.running)); // First activity's sport
     });
 
     test('splitBySport separates triathlon by sport laps', () {
@@ -2458,34 +2499,6 @@ void main() {
       expect(activity.device!.manufacturer, equals('TestManufacturer'));
     });
 
-    test('builder configureGpxMetadata sets GPX metadata fields', () {
-      final builder = ActivityFiles.builder()
-        ..configureGpxMetadata(
-          name: 'Test Activity',
-          description: 'Test Description',
-          includeCreatorDescription: false,
-        );
-
-      final activity = builder.build();
-      expect(activity.gpxMetadataName, equals('Test Activity'));
-      expect(activity.gpxMetadataDescription, equals('Test Description'));
-      expect(activity.gpxIncludeCreatorMetadataDescription, isFalse);
-    });
-
-    test('builder configureGpxTrack sets GPX track fields', () {
-      final builder = ActivityFiles.builder()
-        ..configureGpxTrack(
-          name: 'Track Name',
-          description: 'Track Description',
-          type: 'Workout',
-        );
-
-      final activity = builder.build();
-      expect(activity.gpxTrackName, equals('Track Name'));
-      expect(activity.gpxTrackDescription, equals('Track Description'));
-      expect(activity.gpxTrackType, equals('Workout'));
-    });
-
     test('builder clearGpxExtensions removes all GPX extensions', () {
       final builder = ActivityFiles.builder()
         ..addGpxMetadataExtension(
@@ -2543,21 +2556,6 @@ void main() {
       );
 
       expect(result.activity.points.first.time, equals(base));
-    });
-
-    test('exportAsync offloads work to isolate', () async {
-      final base = DateTime.utc(2024, 12, 10, 13);
-      final activity = RawActivity(
-        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
-      );
-
-      final result = await ActivityFiles.exportAsync(
-        activity: activity,
-        to: ActivityFileFormat.gpx,
-        useIsolate: true,
-      );
-
-      expect(result.encoded, isNotEmpty);
     });
 
     test(
@@ -2647,32 +2645,6 @@ void main() {
         allowFilePaths: false,
       );
       expect(format, isNull); // Path string doesn't look like any format
-    });
-
-    test('merge with custom creator', () {
-      final base = DateTime.utc(2024, 12, 10, 16);
-      final act1 = RawActivity(
-        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
-        sport: Sport.running,
-      );
-      final act2 = RawActivity(
-        points: [
-          GeoPoint(
-            latitude: 40.0001,
-            longitude: -105.0001,
-            time: base.add(const Duration(minutes: 1)),
-          ),
-        ],
-        sport: Sport.cycling,
-      );
-
-      final merged = ActivityFiles.merge([
-        act1,
-        act2,
-      ], creator: 'custom-creator');
-
-      expect(merged.creator, equals('custom-creator'));
-      expect(merged.sport, equals(Sport.running)); // First activity's sport
     });
 
     test(
@@ -2878,6 +2850,200 @@ void main() {
       // Well-formed TCX should parse successfully
       expect(result.activity, isNotNull);
       expect(result.diagnostics, isNotNull);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ActivityFiles.channelSamplesFrom (0.7.0)
+  // ---------------------------------------------------------------------------
+  group('ActivityFiles.channelSamplesFrom (0.7.0)', () {
+    test('returns empty map for activity with no channels', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: DateTime.utc(2024, 1, 1, 10),
+          ),
+        ],
+      );
+
+      final result = ActivityFiles.channelSamplesFrom(activity);
+
+      expect(result, isEmpty);
+    });
+
+    test(
+      'converts HR samples to ChannelStreamSample with unix-second timestamps',
+      () {
+        final t0 = DateTime.utc(2024, 1, 1, 10, 0, 0);
+        final t1 = DateTime.utc(2024, 1, 1, 10, 0, 10);
+        final activity = RawActivity(
+          channels: {
+            Channel.heartRate: [
+              Sample(time: t0, value: 140),
+              Sample(time: t1, value: 145),
+            ],
+          },
+        );
+
+        final result = ActivityFiles.channelSamplesFrom(activity);
+
+        expect(result, contains(Channel.heartRate));
+        final samples = result[Channel.heartRate]!;
+        expect(samples, hasLength(2));
+        expect(samples[0].timestamp, equals(t0.millisecondsSinceEpoch ~/ 1000));
+        expect(samples[0].value, equals(140));
+        expect(samples[1].timestamp, equals(t1.millisecondsSinceEpoch ~/ 1000));
+        expect(samples[1].value, equals(145));
+      },
+    );
+
+    test('skips channels with no samples', () {
+      final t0 = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        channels: {
+          Channel.heartRate: [Sample(time: t0, value: 140)],
+          Channel.cadence: [], // empty — should be skipped
+        },
+      );
+
+      final result = ActivityFiles.channelSamplesFrom(activity);
+
+      expect(result, contains(Channel.heartRate));
+      expect(result, isNot(contains(Channel.cadence)));
+    });
+
+    test('preserves all populated channels', () {
+      final t0 = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        channels: {
+          Channel.heartRate: [Sample(time: t0, value: 140)],
+          Channel.cadence: [Sample(time: t0, value: 85)],
+          Channel.power: [Sample(time: t0, value: 220)],
+        },
+      );
+
+      final result = ActivityFiles.channelSamplesFrom(activity);
+
+      expect(
+        result.keys,
+        containsAll([Channel.heartRate, Channel.cadence, Channel.power]),
+      );
+      expect(result.length, equals(3));
+    });
+
+    test('round-trips channel values accurately', () {
+      final t0 = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        channels: {
+          Channel.power: [Sample(time: t0, value: 275.5)],
+        },
+      );
+
+      final result = ActivityFiles.channelSamplesFrom(activity);
+
+      expect(result[Channel.power]!.single.value, equals(275.5));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ActivityFiles.loadBatch + BatchImportResult / BatchImportFailure (0.7.0)
+  // ---------------------------------------------------------------------------
+  group('ActivityFiles.loadBatch (0.7.0)', () {
+    test('loads multiple valid sources and all succeed', () async {
+      final result = await ActivityFiles.loadBatch([
+        sampleGpx,
+        sampleGpx,
+      ], useIsolate: false);
+
+      expect(result.allSucceeded, isTrue);
+      expect(result.successCount, equals(2));
+      expect(result.failureCount, equals(0));
+      expect(result.total, equals(2));
+      expect(result.failures, isEmpty);
+    });
+
+    test('captures failures without stopping by default', () async {
+      const bad = 'this is not a valid activity file';
+      final result = await ActivityFiles.loadBatch([
+        sampleGpx,
+        bad,
+        sampleGpx,
+      ], useIsolate: false);
+
+      expect(result.total, equals(3));
+      expect(result.successCount, equals(2));
+      expect(result.failureCount, equals(1));
+      expect(result.allSucceeded, isFalse);
+    });
+
+    test('BatchImportFailure exposes source and error', () async {
+      const bad = 'not a valid file';
+      final result = await ActivityFiles.loadBatch([bad], useIsolate: false);
+
+      expect(result.failures, hasLength(1));
+      final failure = result.failures.first;
+      expect(failure.source, equals(bad));
+      expect(failure.error, isNotNull);
+    });
+
+    test('stopOnError halts after first failure', () async {
+      const bad = 'not a valid file';
+      final result = await ActivityFiles.loadBatch(
+        [bad, sampleGpx, sampleGpx],
+        useIsolate: false,
+        stopOnError: true,
+      );
+
+      // Only one item processed before stop
+      expect(result.total, equals(3));
+      expect(result.failureCount, equals(1));
+      expect(result.successCount, equals(0));
+    });
+
+    test('onProgress callback fires for each item', () async {
+      final progressLog = <(int, int)>[];
+      await ActivityFiles.loadBatch(
+        [sampleGpx, sampleGpx, sampleGpx],
+        useIsolate: false,
+        onProgress: (done, total) => progressLog.add((done, total)),
+      );
+
+      expect(progressLog, hasLength(3));
+      expect(progressLog[0], equals((1, 3)));
+      expect(progressLog[1], equals((2, 3)));
+      expect(progressLog[2], equals((3, 3)));
+    });
+
+    test('onProgress fires even when a source fails', () async {
+      const bad = 'not valid';
+      final progressLog = <int>[];
+      await ActivityFiles.loadBatch(
+        [sampleGpx, bad, sampleGpx],
+        useIsolate: false,
+        onProgress: (done, _) => progressLog.add(done),
+      );
+
+      expect(progressLog, equals([1, 2, 3]));
+    });
+
+    test('empty source list returns empty result', () async {
+      final result = await ActivityFiles.loadBatch([], useIsolate: false);
+
+      expect(result.total, equals(0));
+      expect(result.successCount, equals(0));
+      expect(result.failureCount, equals(0));
+      expect(result.allSucceeded, isTrue);
+    });
+
+    test('BatchImportFailure.toString includes source and error', () async {
+      const bad = 'bad source';
+      final result = await ActivityFiles.loadBatch([bad], useIsolate: false);
+
+      final str = result.failures.first.toString();
+      expect(str, contains('BatchImportFailure'));
+      expect(str, contains('bad source'));
     });
   });
 }

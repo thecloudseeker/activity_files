@@ -30,30 +30,6 @@ const int _defaultStreamBufferLimitBytes = 64 * 1024 * 1024;
 const int _maxFormatDetectBytes = 128 * 1024;
 
 /// Top-level facade exposing ergonomic helpers for app integrations.
-///
-/// See ROADMAP.md for planned features and release timeline.
-///
-// 0.6.0 - PERFORMANCE & ROBUSTNESS
-// Delivered: Configurable handling of corrupted FIT files.
-// Delivered: Auto-fix common data issues (gaps, drift, invalid GPS).
-//
-// 0.8.0 - DATA PIPELINE & IMPORT
-// TODO(0.8.0): Faster file parsing for csv and geojson.
-// TODO(0.8.0): Batch import with progress tracking and error recovery.
-// TODO(0.8.0): Repair tools for malformed files.
-// TODO(0.8.0): Full GPX/TCX round-trip preservation (no data loss).
-//
-// 0.9.0 - ANALYTICS FOUNDATION
-// TODO(0.9.0): Route/segment matching.
-// TODO(0.9.0): Power zone analysis (FTP, time-in-zone).
-// TODO(0.9.0): Heart rate zone analysis (LTHR, zones).
-//
-// 1.0.0 - ADVANCED ANALYTICS
-// TODO(1.0.0): Advanced threshold detection (FTP, LTHR, critical power).
-// TODO(1.0.0): HRV metrics for recovery tracking.
-// TODO(1.0.0): Automatic segment detection (climbs, intervals, rest).
-// TODO(1.0.0): Detect and flag bad data (GPS errors, sensor spikes).
-//
 class ActivityFiles {
   const ActivityFiles._();
 
@@ -233,6 +209,7 @@ class ActivityFiles {
     );
     var activity = loadResult.activity;
     NormalizationStats? normalizationStats;
+    var repairDiagnostics = const <ValidationDiagnostic>[];
     if (normalize) {
       final normalized = _normalize(
         activity,
@@ -242,9 +219,10 @@ class ActivityFiles {
       );
       activity = normalized.activity;
       normalizationStats = normalized.stats;
+      repairDiagnostics = normalized.repairDiagnostics;
     }
     var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
-    // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
+    diagnostics.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
     var exportActivity = normalize
         ? activity
         : _ensureOrderedForExport(activity);
@@ -257,6 +235,7 @@ class ActivityFiles {
       exportActivity = fixed;
     }
     if (!exportInIsolate) {
+      diagnostics = [...diagnostics, ..._lossyDiagnostics(exportActivity, to)];
       final encoded = ActivityEncoder.encode(
         exportActivity,
         to,
@@ -312,6 +291,96 @@ class ActivityFiles {
     );
   }
 
+  /// Diagnostics for data an [activity] carries that the [to] format cannot
+  /// represent, so target-format loss is reported rather than silent.
+  ///
+  /// Only *full* drops are reported: features the target encoder writes in some
+  /// form (e.g. GPX channel extensions, GeoJSON lap aggregates) are not flagged.
+  static List<ParseDiagnostic> _lossyDiagnostics(
+    RawActivity activity,
+    ActivityFileFormat to,
+  ) {
+    final diagnostics = <ParseDiagnostic>[];
+    final format = to.name;
+    void add(String code, String message, {String? fix}) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: '${DiagnosticCategory.lossy}.$code',
+          message: message,
+          suggestedFix: fix,
+          priority: 4,
+        ),
+      );
+    }
+
+    const toFit = 'Export to FIT to preserve it.';
+    if (to != ActivityFileFormat.gpx && activity.additionalTracks.isNotEmpty) {
+      add(
+        'multi_track_flattened',
+        'Source contains ${activity.additionalTracks.length} additional '
+            'track(s); the $format format cannot represent multiple tracks, so '
+            'all tracks are merged into one during encoding.',
+        fix: 'Export to GPX to preserve the multi-track structure.',
+      );
+    }
+    // Sets, timer events, swim lengths, additional sessions, and the session
+    // summary are only representable in FIT.
+    if (to != ActivityFileFormat.fit) {
+      if (activity.sets.isNotEmpty) {
+        add(
+          'sets_dropped',
+          '${activity.sets.length} strength-training set(s) cannot be '
+              'represented in $format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.events.isNotEmpty) {
+        add(
+          'events_dropped',
+          '${activity.events.length} timer event(s) cannot be represented in '
+              '$format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.lengths.isNotEmpty) {
+        add(
+          'lengths_dropped',
+          '${activity.lengths.length} pool-swim length(s) cannot be '
+              'represented in $format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.additionalSessions.isNotEmpty) {
+        add(
+          'sessions_dropped',
+          '${activity.additionalSessions.length} additional session(s) cannot '
+              'be represented in $format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.summary?.isNotEmpty ?? false) {
+        add(
+          'summary_dropped',
+          'The session summary statistics are not written to $format.',
+          fix: toFit,
+        );
+      }
+    }
+    // Laps survive in TCX (native) and GeoJSON (aggregate properties); GPX and
+    // CSV keep no lap information.
+    const noLapFormats = {ActivityFileFormat.gpx, ActivityFileFormat.csv};
+    if (noLapFormats.contains(to) && activity.laps.isNotEmpty) {
+      add(
+        'laps_dropped',
+        '${activity.laps.length} lap(s) cannot be represented in $format and '
+            'are dropped.',
+        fix: 'Export to TCX or FIT to preserve laps.',
+      );
+    }
+    return diagnostics;
+  }
+
   /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
   /// last-in-first-out so callers can override earlier defaults.
   static void registerSportMapper(SportMapper mapper) {
@@ -350,7 +419,6 @@ class ActivityFiles {
     String? creator,
     ActivityDeviceMetadata? device,
   }) {
-    // TODO(0.8.0): Async/streamed iterables for large file handling.
     final decode = timestampConverter ?? _defaultTimestampDecoder;
     final rawBuilder = ActivityFiles.builder();
     if (sport != null) {
@@ -427,16 +495,121 @@ class ActivityFiles {
   static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
       RawEditor(activity).recomputeDistanceAndSpeed().activity;
 
-  static ({RawActivity activity, NormalizationStats? stats}) _normalize(
+  /// Returns all channels from [activity] as [ChannelStreamSample] lists,
+  /// ready to pass directly to [convertAndExport].
+  ///
+  /// This removes the per-channel reconstruction glue when re-exporting a
+  /// previously imported [RawActivity]. Note that [ChannelStreamSample]
+  /// timestamps have whole-second resolution, so sub-second sample timing
+  /// (recordings above 1 Hz) is truncated:
+  ///
+  /// ```dart
+  /// final channels = ActivityFiles.channelSamplesFrom(stored);
+  /// await ActivityFiles.convertAndExport(
+  ///   location: locationSamples,
+  ///   channels: channels,
+  ///   to: ActivityFileFormat.gpx,
+  /// );
+  /// ```
+  static Map<Channel, List<ChannelStreamSample>> channelSamplesFrom(
+    RawActivity activity,
+  ) {
+    final result = <Channel, List<ChannelStreamSample>>{};
+    for (final entry in activity.channels.entries) {
+      if (entry.value.isEmpty) continue;
+      result[entry.key] = [
+        for (final sample in entry.value)
+          (
+            timestamp: sample.time.millisecondsSinceEpoch ~/ 1000,
+            value: sample.value,
+          ),
+      ];
+    }
+    return result;
+  }
+
+  /// Imports multiple sources in sequence and returns a [BatchImportResult].
+  ///
+  /// Each [sources] element is forwarded to [ActivityFiles.load]. If a
+  /// source fails, the error is captured in [BatchImportResult.failures] and
+  /// processing continues unless [stopOnError] is `true`.
+  ///
+  /// [onProgress] is called after each source completes, whether or not it
+  /// succeeded, with the number of completed items and the total count.
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await ActivityFiles.loadBatch(
+  ///   files,
+  ///   onProgress: (done, total) => print('$done / $total'),
+  /// );
+  /// print('Imported ${result.successes.length}, failed ${result.failures.length}');
+  /// ```
+  static Future<BatchImportResult> loadBatch(
+    Iterable<Object> sources, {
+    ActivityFileFormat? format,
+    bool useIsolate = true,
+    void Function(int completed, int total)? onProgress,
+    bool stopOnError = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) async {
+    final sourceList = sources.toList();
+    final total = sourceList.length;
+    final successes = <ActivityLoadResult>[];
+    final failures = <BatchImportFailure>[];
+    var completed = 0;
+    for (final source in sourceList) {
+      try {
+        successes.add(
+          await load(
+            source,
+            format: format,
+            useIsolate: useIsolate,
+            maxPayloadBytes: maxPayloadBytes,
+          ),
+        );
+      } catch (error, stackTrace) {
+        failures.add(
+          BatchImportFailure(
+            source: source,
+            error: error,
+            stackTrace: stackTrace,
+          ),
+        );
+        if (stopOnError) break;
+      } finally {
+        // Runs before `break` exits the loop, so the aborted item still
+        // reports progress.
+        onProgress?.call(++completed, total);
+      }
+    }
+    return BatchImportResult(
+      successes: successes,
+      failures: failures,
+      total: total,
+    );
+  }
+
+  static ({
+    RawActivity activity,
+    NormalizationStats? stats,
+    List<ValidationDiagnostic> repairDiagnostics,
+  })
+  _normalize(
     RawActivity activity, {
     required bool sortAndDedup,
     required bool trimInvalid,
     required bool captureStats,
   }) {
-    if (!sortAndDedup && !trimInvalid) {
+    final requested = sortAndDedup || trimInvalid;
+    // Short-circuit when data is already normalized to avoid redundant cloning
+    // in UI hot paths (performance optimization). Still counts as "applied"
+    // when normalization was requested, even though no changes were needed.
+    if (!requested ||
+        _isAlreadyNormalized(activity, sortAndDedup, trimInvalid)) {
       final stats = captureStats
           ? NormalizationStats(
-              applied: false,
+              applied: requested,
               pointsBefore: activity.points.length,
               pointsAfter: activity.points.length,
               totalSamplesBefore: _totalSamples(activity),
@@ -444,32 +617,11 @@ class ActivityFiles {
               duration: Duration.zero,
             )
           : null;
-      return (activity: activity, stats: stats);
+      return (activity: activity, stats: stats, repairDiagnostics: const []);
     }
-    // Short-circuit when data is already normalized to avoid redundant cloning
-    // in UI hot paths (performance optimization).
-    if (_isAlreadyNormalized(activity, sortAndDedup, trimInvalid)) {
-      if (!captureStats) {
-        return (activity: activity, stats: null);
-      }
-      final stopwatch = Stopwatch()..start();
-      // Still count as "applied" since normalization was requested and ran,
-      // even though no changes were needed.
-      stopwatch.stop();
-      final stats = NormalizationStats(
-        applied: true,
-        pointsBefore: activity.points.length,
-        pointsAfter: activity.points.length,
-        totalSamplesBefore: _totalSamples(activity),
-        totalSamplesAfter: _totalSamples(activity),
-        duration: stopwatch.elapsed,
-      );
-      return (activity: activity, stats: stats);
-    }
-    final beforePoints = captureStats ? activity.points.length : 0;
+    final beforePoints = activity.points.length;
     final beforeSamples = captureStats ? _totalSamples(activity) : 0;
-    final stopwatch = captureStats ? Stopwatch() : null;
-    stopwatch?.start();
+    final stopwatch = Stopwatch()..start();
     var editor = RawEditor(activity);
     if (sortAndDedup) {
       editor = editor.sortAndDedup();
@@ -478,19 +630,21 @@ class ActivityFiles {
       editor = editor.trimInvalid();
     }
     final normalized = editor.activity;
-    if (!captureStats) {
-      return (activity: normalized, stats: null);
-    }
-    stopwatch!.stop();
-    final stats = NormalizationStats(
-      applied: true,
-      pointsBefore: beforePoints,
-      pointsAfter: normalized.points.length,
-      totalSamplesBefore: beforeSamples,
-      totalSamplesAfter: _totalSamples(normalized),
-      duration: stopwatch.elapsed,
+    stopwatch.stop();
+    return (
+      activity: normalized,
+      stats: captureStats
+          ? NormalizationStats(
+              applied: true,
+              pointsBefore: beforePoints,
+              pointsAfter: normalized.points.length,
+              totalSamplesBefore: beforeSamples,
+              totalSamplesAfter: _totalSamples(normalized),
+              duration: stopwatch.elapsed,
+            )
+          : null,
+      repairDiagnostics: editor.repairDiagnostics,
     );
-    return (activity: normalized, stats: stats);
   }
 
   /// Checks if the activity data is already normalized based on requested operations.
@@ -499,95 +653,54 @@ class ActivityFiles {
     bool checkSortAndDedup,
     bool checkTrimInvalid,
   ) {
-    if (checkSortAndDedup) {
-      // Check if points are sorted and have no duplicates
-      final pointsSorted = _isSortedAndUnique(activity.points, (p) => p.time);
-      if (!pointsSorted) return false;
-
-      // Check if all channels are sorted and have no duplicates
-      for (final entry in activity.channels.entries) {
-        final channelSorted = _isSortedAndUnique(entry.value, (s) => s.time);
-        if (!channelSorted) return false;
-      }
-
-      // Check if laps are sorted
-      final lapsSorted = _isSortedAndUnique(activity.laps, (l) => l.startTime);
-      if (!lapsSorted) return false;
+    if (checkSortAndDedup && !_isStrictlyOrderedActivity(activity)) {
+      return false;
     }
-
     if (checkTrimInvalid) {
-      // Check if all points have valid coordinates
-      for (final point in activity.points) {
-        final latOk =
-            point.latitude.isFinite &&
-            point.latitude >= -90 &&
-            point.latitude <= 90;
-        final lonOk =
-            point.longitude.isFinite &&
-            point.longitude >= -180 &&
-            point.longitude <= 180;
-        if (!latOk || !lonOk) return false;
-      }
-
-      // Check if channels are within point time range
+      final validCoordinates = activity.points.every(
+        (p) =>
+            p.latitude.isFinite &&
+            p.latitude >= -90 &&
+            p.latitude <= 90 &&
+            p.longitude.isFinite &&
+            p.longitude >= -180 &&
+            p.longitude <= 180,
+      );
+      if (!validCoordinates) return false;
       if (activity.points.isNotEmpty) {
         final start = activity.points.first.time;
         final end = activity.points.last.time;
-        for (final entry in activity.channels.entries) {
-          for (final sample in entry.value) {
-            if (sample.time.isBefore(start) || sample.time.isAfter(end)) {
-              return false;
-            }
-          }
-        }
-      }
-    }
-
-    return true;
-  }
-
-  /// Checks if a list is sorted by time and has no duplicate timestamps.
-  static bool _isSortedAndUnique<T>(
-    List<T> items,
-    DateTime Function(T) timeOf,
-  ) {
-    for (var i = 1; i < items.length; i++) {
-      final previous = timeOf(items[i - 1]).toUtc();
-      final current = timeOf(items[i]).toUtc();
-      // Must be strictly after (no duplicates, must be sorted)
-      if (!current.isAfter(previous)) {
-        return false;
+        final channelsInRange = activity.channels.values.every(
+          (samples) => samples.every(
+            (s) => !s.time.isBefore(start) && !s.time.isAfter(end),
+          ),
+        );
+        if (!channelsInRange) return false;
       }
     }
     return true;
   }
 
-  static RawActivity _ensureOrderedForExport(RawActivity activity) {
-    final pointsOrdered = _isStrictlyOrdered(
-      activity.points,
-      (point) => point.time,
-    );
-    final channelsOrdered = activity.channels.entries.every(
-      (entry) => _isStrictlyOrdered(entry.value, (sample) => sample.time),
-    );
-    final lapsOrdered = _isStrictlyOrdered(
-      activity.laps,
-      (lap) => lap.startTime,
-    );
-    if (pointsOrdered && channelsOrdered && lapsOrdered) {
-      return activity;
-    }
-    return RawEditor(activity).sortAndDedup().activity;
-  }
+  static bool _isStrictlyOrderedActivity(RawActivity activity) =>
+      _isStrictlyOrdered(activity.points, (p) => p.time) &&
+      activity.channels.values.every(
+        (samples) => _isStrictlyOrdered(samples, (s) => s.time),
+      ) &&
+      _isStrictlyOrdered(activity.laps, (l) => l.startTime);
 
+  static RawActivity _ensureOrderedForExport(RawActivity activity) =>
+      _isStrictlyOrderedActivity(activity)
+      ? activity
+      : RawEditor(activity).sortAndDedup().activity;
+
+  /// Checks if a list is sorted by time with no duplicate timestamps
+  /// (each entry strictly after its predecessor).
   static bool _isStrictlyOrdered<T>(
     List<T> items,
     DateTime Function(T) timeOf,
   ) {
     for (var i = 1; i < items.length; i++) {
-      final previous = timeOf(items[i - 1]).toUtc();
-      final current = timeOf(items[i]).toUtc();
-      if (!current.isAfter(previous)) {
+      if (!timeOf(items[i]).toUtc().isAfter(timeOf(items[i - 1]).toUtc())) {
         return false;
       }
     }
@@ -658,15 +771,10 @@ class ActivityFiles {
       return activities.first;
     }
 
-    // Combine all points
-    final allPoints = <GeoPoint>[];
-    for (final activity in activities) {
-      allPoints.addAll(activity.points);
-    }
-
-    // Merge channels - combine samples from all activities
+    // Flatten multi-track sources so additional-track data is not dropped.
+    final sources = [for (final activity in activities) activity.flattened()];
     final mergedChannels = <Channel, List<Sample>>{};
-    for (final activity in activities) {
+    for (final activity in sources) {
       for (final entry in activity.channels.entries) {
         mergedChannels
             .putIfAbsent(entry.key, () => <Sample>[])
@@ -674,33 +782,26 @@ class ActivityFiles {
       }
     }
 
-    // Combine laps, optionally preserving source activity sport
-    final allLaps = <Lap>[];
-    for (final activity in activities) {
-      for (final lap in activity.laps) {
-        if (preserveSportPerLap && lap.sport == null) {
-          // Assign this activity's sport to the lap if it doesn't have one
-          allLaps.add(lap.copyWith(sport: activity.sport));
-        } else {
-          allLaps.add(lap);
-        }
-      }
-    }
-
-    var merged = RawActivity(
-      points: allPoints,
+    final merged = RawActivity(
+      points: [for (final activity in sources) ...activity.points],
       channels: mergedChannels,
-      laps: allLaps,
-      sport: activities.first.sport,
-      creator: creator ?? activities.first.creator,
-      device: activities.first.device,
+      laps: [
+        // Assign the source activity's sport to laps that lack one so the
+        // per-lap sport survives multi-sport merges.
+        for (final activity in sources)
+          for (final lap in activity.laps)
+            preserveSportPerLap && lap.sport == null
+                ? lap.copyWith(sport: activity.sport)
+                : lap,
+      ],
+      sets: [for (final activity in sources) ...activity.sets],
+      events: [for (final activity in sources) ...activity.events],
+      lengths: [for (final activity in sources) ...activity.lengths],
+      sport: sources.first.sport,
+      creator: creator ?? sources.first.creator,
+      device: sources.first.device,
     );
-
-    if (normalize) {
-      merged = normalizeActivity(merged);
-    }
-
-    return merged;
+    return normalize ? normalizeActivity(merged) : merged;
   }
 
   /// Splits a multi-sport activity into separate activities by sport type.
@@ -785,27 +886,7 @@ class ActivityFiles {
       }
 
       // Strip sport from laps while preserving all lap metadata.
-      final normalizedLaps = laps
-          .map(
-            (lap) => Lap(
-              startTime: lap.startTime,
-              endTime: lap.endTime,
-              distanceMeters: lap.distanceMeters,
-              name: lap.name,
-              calories: lap.calories,
-              avgSpeed: lap.avgSpeed,
-              maxSpeed: lap.maxSpeed,
-              avgHeartRate: lap.avgHeartRate,
-              maxHeartRate: lap.maxHeartRate,
-              avgCadence: lap.avgCadence,
-              maxCadence: lap.maxCadence,
-              avgPower: lap.avgPower,
-              maxPower: lap.maxPower,
-              event: lap.event,
-              eventType: lap.eventType,
-            ),
-          )
-          .toList();
+      final normalizedLaps = [for (final lap in laps) lap.copyWithoutSport()];
 
       var sportActivity = RawActivity(
         points: sportPoints,
@@ -967,94 +1048,50 @@ class ActivityFiles {
     return null;
   }
 
-  static Sport? _inferSportPrimitive(dynamic source) {
-    if (source == null) {
-      return null;
-    }
-    if (source is Sport) {
-      return source;
-    }
-    if (source is String) {
-      final normalized = source.trim().toLowerCase();
-      if (normalized.isEmpty) {
-        return null;
-      }
-      final tokens = _tokenizeSportString(normalized);
-      if (_containsKeyword(tokens, _runningKeywords)) {
-        return Sport.running;
-      }
-      if (_containsKeyword(tokens, _cyclingKeywords)) {
-        return Sport.cycling;
-      }
-      if (_containsKeyword(tokens, _swimmingKeywords)) {
-        return Sport.swimming;
-      }
-      if (_containsKeyword(tokens, _walkingKeywords)) {
-        return Sport.walking;
-      }
-      if (_containsKeyword(tokens, _hikingKeywords)) {
-        return Sport.hiking;
-      }
-      if (_containsKeyword(tokens, _otherKeywords)) {
-        return Sport.other;
-      }
-      return null;
-    }
-    if (source is num) {
-      switch (source.toInt()) {
-        case 0:
-          return Sport.other;
-        case 1:
-          return Sport.running;
-        case 2:
-          return Sport.cycling;
-        case 3:
-          return Sport.swimming;
-        case 4:
-          return Sport.walking;
-        case 5:
-          return Sport.hiking;
-      }
-    }
-    return null;
-  }
+  static Sport? _inferSportPrimitive(dynamic source) => switch (source) {
+    null => null,
+    final Sport sport => sport,
+    final String text => _inferSportFromString(text),
+    final num value
+        when value.toInt() >= 0 && value.toInt() < _sportByNumericId.length =>
+      _sportByNumericId[value.toInt()],
+    _ => null,
+  };
 
   static final RegExp _sportDelimiter = RegExp(r'[^a-z0-9]+');
 
-  static const List<String> _runningKeywords = [
-    'run',
-    'running',
-    'jog',
-    'jogging',
+  /// Keyword matching order matters: earlier entries win on mixed labels.
+  static const Map<Sport, List<String>> _sportKeywords = {
+    Sport.running: ['run', 'running', 'jog', 'jogging'],
+    Sport.cycling: ['cycle', 'cycling', 'bike', 'biking', 'ride'],
+    Sport.swimming: ['swim', 'swimming'],
+    Sport.walking: ['walk', 'walking'],
+    Sport.hiking: ['hike', 'hiking'],
+    Sport.other: ['other'],
+  };
+
+  static const List<Sport> _sportByNumericId = [
+    Sport.other,
+    Sport.running,
+    Sport.cycling,
+    Sport.swimming,
+    Sport.walking,
+    Sport.hiking,
   ];
 
-  static const List<String> _cyclingKeywords = [
-    'cycle',
-    'cycling',
-    'bike',
-    'biking',
-    'ride',
-  ];
-
-  static const List<String> _swimmingKeywords = ['swim', 'swimming'];
-  static const List<String> _walkingKeywords = ['walk', 'walking'];
-  static const List<String> _hikingKeywords = ['hike', 'hiking'];
-  static const List<String> _otherKeywords = ['other'];
-
-  static Set<String> _tokenizeSportString(String value) {
-    return value
+  static Sport? _inferSportFromString(String text) {
+    final tokens = text
+        .trim()
+        .toLowerCase()
         .split(_sportDelimiter)
         .where((token) => token.isNotEmpty)
         .toSet();
-  }
-
-  static bool _containsKeyword(Set<String> tokens, List<String> keywords) {
-    for (final keyword in keywords) {
-      if (tokens.contains(keyword)) {
-        return true;
+    for (final entry in _sportKeywords.entries) {
+      if (entry.value.any(tokens.contains)) {
+        return entry.key;
       }
     }
-    return false;
+    return null;
   }
 
   /// Encodes an in-memory [activity] to [to], returning encoded payloads and
@@ -1088,6 +1125,7 @@ class ActivityFiles {
   }) {
     var working = activity;
     NormalizationStats? normalizationStats;
+    var repairDiagnostics = const <ValidationDiagnostic>[];
     if (!normalize) {
       working = _ensureOrderedForExport(working);
     }
@@ -1100,6 +1138,7 @@ class ActivityFiles {
       );
       working = normalized.activity;
       normalizationStats = normalized.stats;
+      repairDiagnostics = normalized.repairDiagnostics;
     }
     final encoded = ActivityEncoder.encode(working, to, options: options);
     final binary = to == ActivityFileFormat.fit
@@ -1122,6 +1161,8 @@ class ActivityFiles {
     }
     final mergedDiagnostics = <ParseDiagnostic>[
       ...diagnostics,
+      ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
+      ..._lossyDiagnostics(working, to),
       if (validationResult != null)
         ..._diagnosticsFromValidation(validationResult),
     ];
@@ -1429,7 +1470,6 @@ class ActivityFiles {
   static Future<ActivityExportResult> _runPipeline(
     ActivityExportRequest request,
   ) async {
-    // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
     if (request.activity != null) {
       var activity = request.activity!;
       var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
@@ -1623,12 +1663,6 @@ class ActivityFiles {
         ),
         description: 'stream',
         detectionBytes: sniffBytes,
-      );
-    }
-    if (source is Uint8List) {
-      return _ResolvedSource(
-        payload: Uint8List.fromList(source),
-        description: 'bytes',
       );
     }
     if (source is List<int>) {
@@ -1830,23 +1864,17 @@ class ActivityFiles {
     return null;
   }
 
-  static ActivityFileFormat? _detectFromExtension(String? ext) {
-    switch (ext) {
-      case '.gpx':
-        return ActivityFileFormat.gpx;
-      case '.tcx':
-        return ActivityFileFormat.tcx;
-      case '.fit':
-        return ActivityFileFormat.fit;
-      case '.csv':
-        return ActivityFileFormat.csv;
-      case '.geojson':
-      case '.json':
-        return ActivityFileFormat.geojson;
-      default:
-        return null;
-    }
-  }
+  static const Map<String, ActivityFileFormat> _formatByExtension = {
+    '.gpx': ActivityFileFormat.gpx,
+    '.tcx': ActivityFileFormat.tcx,
+    '.fit': ActivityFileFormat.fit,
+    '.csv': ActivityFileFormat.csv,
+    '.geojson': ActivityFileFormat.geojson,
+    '.json': ActivityFileFormat.geojson,
+  };
+
+  static ActivityFileFormat? _detectFromExtension(String? ext) =>
+      _formatByExtension[ext];
 
   static ActivityFileFormat? _detectFromPayload(
     Object payload, {
@@ -2113,33 +2141,22 @@ class ActivityFiles {
     return ActivityParser.parseBytes(bytes, format, encoding: encoding);
   }
 
-  static int _totalSamples(RawActivity activity) {
-    var total = 0;
-    for (final samples in activity.channels.values) {
-      total += samples.length;
-    }
-    return total;
-  }
+  static int _totalSamples(RawActivity activity) => activity.channels.values
+      .fold(0, (total, samples) => total + samples.length);
 
   static bool _shouldFailFitIntegrity(
     ActivityFileFormat format,
     Iterable<ParseDiagnostic> diagnostics,
     bool strict,
-  ) {
-    if (!strict || format != ActivityFileFormat.fit) {
-      return false;
-    }
-    for (final diagnostic in diagnostics) {
-      if (diagnostic.severity != ParseSeverity.error) {
-        continue;
-      }
-      final code = diagnostic.code;
-      if (code.startsWith('fit.header') || code.startsWith('fit.trailer')) {
-        return true;
-      }
-    }
-    return false;
-  }
+  ) =>
+      strict &&
+      format == ActivityFileFormat.fit &&
+      diagnostics.any(
+        (d) =>
+            d.severity == ParseSeverity.error &&
+            (d.code.startsWith('fit.header') ||
+                d.code.startsWith('fit.trailer')),
+      );
 
   static bool _resolveStrictFitHandling({
     required bool strictFitIntegrity,
@@ -2482,13 +2499,12 @@ class ActivityLoadResult with _DiagnosticSummaryMixin {
     required this.sourceDescription,
     required this.payload,
   }) : diagnostics = List.unmodifiable(diagnostics);
-  // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
+
+  /// Parsed activity.
   ///
   /// Parse or validation failures never throw; they are recorded in
   /// [diagnostics]. Inspect [hasErrors], [diagnostics], or
   /// [diagnosticsSummary] before trusting [activity].
-
-  /// Parsed activity.
   final RawActivity activity;
 
   @override
@@ -2524,7 +2540,6 @@ class ActivityExportResult with _DiagnosticSummaryMixin {
     this.processingStats = const ActivityProcessingStats(),
   }) : _binary = binary != null ? Uint8List.fromList(binary) : null,
        diagnostics = List.unmodifiable(List<ParseDiagnostic>.from(diagnostics));
-  // TODO(0.10.0): Channel lookup optimization (cursor indexing, distance lookup, reduce payload copying) — tracked centrally at ActivityFiles header; local hotspot here.
 
   /// Normalized activity that was encoded.
   final RawActivity activity;
@@ -3042,4 +3057,52 @@ void _enforcePayloadLimit(
       'Payload exceeds $limit bytes. Hint: use streaming APIs (`ActivityParser.parseStream`, `convertAndExportStream`) or increase `maxPayloadBytes` on `load`/`convert`/`export`. Pass `null` to disable the limit if you fully trust the input size.',
     );
   }
+}
+
+/// Result of [ActivityFiles.loadBatch].
+class BatchImportResult {
+  BatchImportResult({
+    required this.successes,
+    required this.failures,
+    required this.total,
+  });
+
+  /// Successfully loaded activities, in input order (skipping failed items).
+  final List<ActivityLoadResult> successes;
+
+  /// Sources that could not be loaded, in the order failures occurred.
+  final List<BatchImportFailure> failures;
+
+  /// Total number of sources that were attempted.
+  final int total;
+
+  /// Number of successfully loaded activities.
+  int get successCount => successes.length;
+
+  /// Number of sources that failed to load.
+  int get failureCount => failures.length;
+
+  /// Whether all sources were loaded without errors.
+  bool get allSucceeded => failures.isEmpty;
+}
+
+/// A single failure entry from [ActivityFiles.loadBatch].
+class BatchImportFailure {
+  BatchImportFailure({
+    required this.source,
+    required this.error,
+    this.stackTrace,
+  });
+
+  /// The source that failed (e.g. a [File] or [Uint8List]).
+  final Object source;
+
+  /// The error that was thrown.
+  final Object error;
+
+  /// Stack trace from the thrown error, if available.
+  final StackTrace? stackTrace;
+
+  @override
+  String toString() => 'BatchImportFailure(source: $source, error: $error)';
 }

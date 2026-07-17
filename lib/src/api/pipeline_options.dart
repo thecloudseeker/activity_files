@@ -1,5 +1,32 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+/// Controls the normalization trade-off for load and convert operations.
+///
+/// Declared in 0.7.0 for API stability. Pipeline wiring (the `fidelityMode`
+/// parameter on facade helpers) is planned for 0.8.0; until then the active
+/// mode is always [pragmaticNormalize] regardless of which value is passed.
+///
+/// Note that multi-track handling is independent of this enum: as of 0.7.0
+/// the GPX parser always preserves additional `<trk>` elements in
+/// `RawActivity.additionalTracks`, the GPX encoder re-emits them, and
+/// encoders for single-track formats (TCX, FIT, CSV, GeoJSON) merge them via
+/// `RawActivity.flattened()` so no data is lost.
+enum ParseFidelityMode {
+  /// Preserve the source data as faithfully as possible.
+  ///
+  /// Intended behaviour once wired: no implicit sorting, deduplication, or
+  /// trimming of the parsed activity.
+  strictFidelity,
+
+  /// Normalize and clean the activity for maximum downstream compatibility
+  /// (the current behaviour of facade helpers with `normalize: true`):
+  /// - Points are sorted and deduplicated.
+  /// - Channels are trimmed to the valid point range.
+  /// - Sentinel values (Null Island coordinates, −500 m elevations) are
+  ///   repaired; see `RawEditor.trimInvalid`.
+  pragmaticNormalize,
+}
+
 /// Controls how FIT corruption diagnostics are handled by facade helpers.
 enum FitCorruptionHandling {
   /// Keep best-effort parsing output and surface diagnostics.
