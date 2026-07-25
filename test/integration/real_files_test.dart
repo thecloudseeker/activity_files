@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/// Integration tests using real activity files from fixtures.
+/// Integration tests using real activity files from `example/assets` and
+/// (optionally) local fixtures in `dev/fixtures`.
 library;
 
 import 'dart:convert';
@@ -110,26 +111,36 @@ void main() {
       );
     });
 
-    test('sundaygreenloop FIT supports best-effort extraction', () async {
-      final candidates = [
-        'dev/fixtures/user_data/sundaygreenloop.fit',
-        'scripts/test_files/user_data/sundaygreenloop.fit',
-      ];
-      File? file;
-      for (final path in candidates) {
-        final candidate = File(path);
-        if (await candidate.exists()) {
-          file = candidate;
-          break;
-        }
-      }
-      if (file == null) {
-        // Optional local fixture; keep CI green when private data is absent.
-        return;
-      }
-      final resolvedFile = file;
-      final bytes = await resolvedFile.readAsBytes();
+    test('example assets round-trip through normalization', () async {
+      final gpxPath = await assetPath('sample.gpx');
+      final gpxBytes = await File(gpxPath).readAsBytes();
+      final loaded = await ActivityFiles.load(
+        gpxBytes,
+        format: ActivityFileFormat.gpx,
+        useIsolate: false,
+      );
+      final normalized = ActivityFiles.normalizeActivity(loaded.activity);
 
+      expect(normalized.points, isNotEmpty);
+      expect(
+        normalized.points.length,
+        lessThanOrEqualTo(loaded.activity.points.length),
+      );
+      for (final point in normalized.points) {
+        expect(point.latitude, greaterThanOrEqualTo(-90.0));
+        expect(point.latitude, lessThanOrEqualTo(90.0));
+        expect(point.longitude, greaterThanOrEqualTo(-180.0));
+        expect(point.longitude, lessThanOrEqualTo(180.0));
+      }
+    });
+
+    test('sundaygreenloop FIT supports best-effort extraction', () async {
+      // Optional local fixture (see README "Call for real-world files");
+      // keep CI green when private data is absent.
+      final file = File('dev/fixtures/user_data/sundaygreenloop.fit');
+      if (!await file.exists()) return;
+
+      final bytes = await file.readAsBytes();
       final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(
@@ -149,5 +160,67 @@ void main() {
         isTrue,
       );
     });
+  });
+
+  group('Synthetic fixtures', () {
+    Future<Directory?> syntheticDir() async {
+      final dir = Directory('example/assets/synthetic');
+      return await dir.exists() ? dir : null;
+    }
+
+    test('synthetic files parse with expected quality', () async {
+      final dir = await syntheticDir();
+      if (dir == null) return;
+
+      for (final format in [
+        ActivityFileFormat.gpx,
+        ActivityFileFormat.tcx,
+        ActivityFileFormat.fit,
+      ]) {
+        final file = File('${dir.path}/clean_run.${format.name}');
+        final result = await ActivityFiles.load(
+          await file.readAsBytes(),
+          format: format,
+          useIsolate: false,
+        );
+        expect(result.activity.points.length, equals(100));
+        expect(result.activity.channels, isNotEmpty);
+        if (format != ActivityFileFormat.fit) {
+          expect(
+            result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+            isEmpty,
+          );
+        }
+      }
+    });
+
+    test(
+      'synthetic files preserve point count through round-trip conversion',
+      () async {
+        final dir = await syntheticDir();
+        if (dir == null) return;
+
+        final gpxFile = File('${dir.path}/clean_run.gpx');
+        final originalBytes = await gpxFile.readAsBytes();
+        final loaded = await ActivityFiles.load(
+          originalBytes,
+          format: ActivityFileFormat.gpx,
+          useIsolate: false,
+        );
+
+        for (final format in [ActivityFileFormat.tcx, ActivityFileFormat.fit]) {
+          final converted = await ActivityFiles.convert(
+            source: originalBytes,
+            to: format,
+            useIsolate: false,
+          );
+          expect(
+            converted.activity.points.length,
+            equals(loaded.activity.points.length),
+          );
+          expect(converted.hasErrors, isFalse);
+        }
+      },
+    );
   });
 }

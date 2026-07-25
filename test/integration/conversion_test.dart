@@ -275,9 +275,15 @@ void main() {
         options: encoderOptions,
       );
 
-      final firstBytes = base64Decode(firstFit);
-      final secondBytes = base64Decode(secondFit);
-      expect(secondBytes.length, equals(firstBytes.length));
+      // The first parse synthesizes device metadata from file_id, which the
+      // re-encode carries as a device_info message — so the stable fixed
+      // point is reached from the second encode onward.
+      final thirdFit = ActivityEncoder.encode(
+        ActivityParser.parse(secondFit, ActivityFileFormat.fit).activity,
+        ActivityFileFormat.fit,
+        options: encoderOptions,
+      );
+      expect(base64Decode(thirdFit), equals(base64Decode(secondFit)));
 
       final secondParsed = ActivityParser.parse(
         secondFit,
