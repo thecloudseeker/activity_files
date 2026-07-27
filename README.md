@@ -1,41 +1,49 @@
 # activity_files
 [![Pub Package](https://img.shields.io/pub/v/activity_files.svg)](https://pub.dev/packages/activity_files)
-[![Pub Points](https://img.shields.io/pub/points/activity_files)](https://pub.dev/packages/activity_files/score)
-[![Pub Likes](https://img.shields.io/pub/likes/activity_files)](https://pub.dev/packages/activity_files/score)
-[![codecov](https://codecov.io/gh/thecloudseeker/activity_files/branch/main/graph/badge.svg)](https://codecov.io/gh/thecloudseeker/activity_files)
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/thecloudseeker/activity_files.svg)](https://github.com/thecloudseeker/activity_files/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/thecloudseeker/activity_files.svg)](https://github.com/thecloudseeker/activity_files/network)
+[![codecov](https://codecov.io/gh/thecloudseeker/activity_files/branch/main/graph/badge.svg)](https://codecov.io/gh/thecloudseeker/activity_files)
+[![Pub Points](https://img.shields.io/pub/points/activity_files)](https://pub.dev/packages/activity_files/score)
 [![GitHub Issues](https://img.shields.io/github/issues/thecloudseeker/activity_files.svg)](https://github.com/thecloudseeker/activity_files/issues)
-
-Licensed under the BSD 3-Clause License. See [LICENSE](./LICENSE) for details.
+[![Pub Likes](https://img.shields.io/pub/likes/activity_files)](https://pub.dev/packages/activity_files/score)
+[![GitHub Stars](https://img.shields.io/github/stars/thecloudseeker/activity_files.svg)](https://github.com/thecloudseeker/activity_files/stargazers)
 
 A pure Dart toolkit for parsing, editing, validating, and converting workout activity files in GPX, TCX, FIT, GeoJSON, and CSV formats.
-  
+
 ## Highlights
 
-- Format-agnostic `RawActivity` model with builders/editors for GPS points,
-  laps, channels, and device metadata.
-- Ergonomic `ActivityFiles` facade plus CLI that load, normalize, validate, and
-  convert/export GPX/TCX/FIT/CSV/GeoJSON payloads in a handful of calls.
-- Stream-aware builders (`builderFromStreams`, `convertAndExport`) so servers
-  can feed timestamp/value tuples directly without manual model wiring.
-- Diagnostics-first results with sport mappers, validation stats, and
-  namespace-tolerant parsers that never throw on untrusted files.
-- Channel cursors, resampling helpers, and encoder options keep exports fast
-  while letting you control tolerances/precision.
-- FIT session + lap stats are exposed via `ActivitySummary` and enriched `Lap` fields.
-- Flexible export targets: emit GPX 1.0/1.1 and TCX v1/v2 via `EncoderOptions`
-  or CLI flags; FIT encoding covers core workout fields.
+- Format-agnostic `RawActivity` model covering GPS points, laps, sensor
+  channels, and device metadata.
+- `ActivityFiles` facade and CLI: load, normalize, validate, and convert
+  between all five formats in a few calls.
+- Stream-aware builders (`builderFromStreams`, `convertAndExport`) accept raw
+  timestamp/value tuples, so servers can skip manual model assembly.
+- Parsers never throw on malformed files; every issue is reported as a
+  diagnostic with a stable `code`, a `suggestedFix`, and a `priority`.
+- FIT session and lap statistics on `ActivitySummary` and `Lap`, mapped per the
+  official FIT profile and verified against real device files, including swim
+  metrics (pool length, stroke, lengths) and strength sets (`WorkoutSet`).
+- Point-level editing on `RawEditor`: `insertPoint`, `deletePointAt`,
+  `updatePoint`, `deleteRange`, `insertPause`, `removePause`.
+- Multi-sport workflows: `ActivityFiles.merge(preserveSportPerLap: true)`
+  combines swim/bike/run files into one triathlon; `splitBySport()` breaks a
+  multi-sport file back into single-sport activities.
+- Batch import (`ActivityFiles.loadBatch`) with per-file error capture and
+  progress reporting.
+- Multi-track GPX round-trips: extra `<trk>` elements survive GPX export;
+  single-track targets (TCX/FIT/CSV/GeoJSON) merge them so no points are lost.
+- Encoder options for GPX 1.0/1.1 and TCX v1/v2 output, channel tolerances,
+  and coordinate precision.
 
-See the [usage guide](doc/usage_guide.md) for the full feature tour and
-performance notes.
+## Call for real-world files
+As I only have one fitness tracking device, real-world GPX, TCX, FIT, GeoJSON, and CSV files are highly appreciated. Contributed files are used for local testing only; they are never published or committed to the repository.
+Please send them to: `packages@eikedreier.xyz`
 
 ## Quick links
 
-- [Usage guide (full README)](doc/usage_guide.md) – Flutter, CLI, streaming,
-  and error-handling walkthroughs.
-- [Example app](example/main.dart) – minimal GPX round-trip.
+- [Usage guide](doc/usage_guide.md) – Flutter, CLI, streaming, and
+  error-handling walkthroughs.
+- [Example app](example/main.dart) – runnable end-to-end demo: load, edit,
+  validate, export.
 - [CHANGELOG](CHANGELOG.md) – migration notes and release history.
 
 ## Getting started
@@ -44,7 +52,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.6.0
+  activity_files: ^0.7.0
 ```
 
 Then install dependencies:
@@ -53,7 +61,7 @@ Then install dependencies:
 dart pub get
 ```
 
-See `example/main.dart` for a complete sample (uses the generated `example/assets/sample.*`) or jump straight into the facade:
+Then jump straight into the facade:
 
 ```dart
 import 'package:activity_files/activity_files.dart';
@@ -72,7 +80,7 @@ Future<void> convertGpxToFit(Uint8List bytes) async {
   final normalized = ActivityFiles.normalizeActivity(load.activity);
 
   // 3) Export with validation so warnings/errors surface alongside the payload.
-  final export = await ActivityFiles.export(
+  final export = ActivityFiles.export(
     activity: normalized,
     to: ActivityFileFormat.fit,
     runValidation: true,
@@ -87,71 +95,23 @@ Future<void> convertGpxToFit(Uint8List bytes) async {
 }
 ```
 
-Need to handle large uploads? The loader caps inline payloads/streams at
-64MB (`ActivityFiles.defaultMaxPayloadBytes`). For bigger files, stream and
-convert without buffering everything:
+For the detailed Flutter, streaming, CLI, and isolate walkthroughs, see the
+[usage guide](doc/usage_guide.md); for a complete runnable program
+(load → normalize → validate → export), see `example/main.dart`.
 
-```dart
-Future<ActivityExportResult> streamConvert(File input) {
-  return ActivityFiles.convertAndExportStream(
-    source: input.openRead(),
-    from: ActivityFileFormat.gpx,
-    to: ActivityFileFormat.tcx,
-    parseInIsolate: true,
-    exportInIsolate: true,
-    runValidation: true,
-  );
-}
-```
+## Working with large or malformed files
 
-The [usage guide](doc/usage_guide.md) now hosts the detailed Flutter widget,
-streaming, CLI, and isolate walkthroughs that previously lived in this README.
-For a complete, runnable walkthrough (load → normalize → validate → export),
-see `example/main.dart`.
-
-## Source inputs & isolates
-
-- String inputs are treated as inline payloads. Pass a `File` (preferred) or set
-  `allowFilePaths: true` when you explicitly trust the string to reference local
-  storage.
-- `useIsolate` / `exportInIsolate` offload work when isolates are available.
-  Gate both flags with `!kIsWeb` for Flutter web builds.
-- Stream-backed loads keep a replayable buffer so `bytesPayload` remains usable
-  even after parsing completes.
-- Payload limits: inline strings/bytes and buffered streams are capped at 64MB
-  (`ActivityFiles.defaultMaxPayloadBytes`). Oversized inputs throw
-  `FormatException` (and the CLI rejects them) to avoid unbounded memory use;
-  split very large uploads before parsing.
-
-## Diagnostics-first workflows
-
-Parsing, conversion, and export helpers never throw for malformed files—they
-surface issues via `ParseDiagnostic`s on the result. Always check `hasErrors`,
-`diagnosticsSummary`, or the `diagnostics` list before trusting the returned
-`RawActivity`. The [error-handling section](doc/usage_guide.md#error-handling)
-shows ready-to-copy patterns for both load and export flows.
-
-### Format limitations
-
-- GPX 1.0/1.1 are both parsed/encoded, including metadata/track names,
-  descriptions, and extensions. The parser flattens all tracks/segments into a
-  single stream and ignores waypoints/routes, so files that rely on multiple
-  tracks or saved waypoints will lose that structure on load/export.
-- TCX: only the first `<Activity>` is parsed. Additional activities in a single
-  file are skipped.
-
-If you need full fidelity for multi-activity or waypoint-heavy files, split
-inputs before loading or extend the parsers to keep those constructs.
-
-## Async export & streaming
-
-`ActivityExportRequest`, `convertAndExport`, and `exportAsync` share the same
-builder API for raw location/channel streams plus isolate toggles so you can
-pin heavy work off the UI thread. See
-[doc/usage_guide.md#async-export--streaming](doc/usage_guide.md#async-export--streaming)
-for streamed conversions, CLI pipelines, and memory caveats.
-
-For advanced editing pipelines, parser/encoder samples, and CLI walkthroughs, see the [usage guide](doc/usage_guide.md), which retains the detailed examples previously listed here.
+- Parsing/export never throw on malformed input; check `hasErrors` and
+  `diagnosticsSummary()` on the result (see
+  [error handling](doc/usage_guide.md#error-handling)).
+- Inline payloads/streams are capped at 64MB
+  (`ActivityFiles.defaultMaxPayloadBytes`); use `useIsolate`/`exportInIsolate`
+  and the streaming APIs for bigger files (see
+  [async export & streaming](doc/usage_guide.md#async-export--streaming)).
+- GPX multi-track inputs are flattened when exported to single-track formats
+  (no points lost); TCX multi-activity inputs are merged on parse instead,
+  with per-lap sport preserved. See
+  [format handling](doc/usage_guide.md#format-handling) for details.
 
 ## Contributing
 

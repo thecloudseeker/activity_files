@@ -20,6 +20,132 @@ Future<void> main() async {
   await _demoFilePathHandling(resolvedFile);
   await _buildAndExportSyntheticActivity();
   await _exportFromRawStreams();
+  await _demoBatchDiagnosticsAndEditing();
+}
+
+Future<void> _demoBatchDiagnosticsAndEditing() async {
+  print('=== Batch import, diagnostics & point editing ===');
+
+  // --- Batch import ---
+  final files = [
+    File('example/assets/sample.gpx'),
+    File('example/assets/sample.fit'),
+    File('example/assets/sample.tcx'),
+  ];
+  final batch = await ActivityFiles.loadBatch(
+    files,
+    useIsolate: supportsIsolates,
+    onProgress: (done, total) => print('Batch: $done/$total'),
+  );
+  print('Batch: ${batch.successCount} ok, ${batch.failureCount} failed');
+
+  // --- Structured validation diagnostics with suggestedFix ---
+  if (batch.successes.isNotEmpty) {
+    final activity = batch.successes.first.activity;
+    final validation = validateRawActivity(activity);
+    for (final d in validation.diagnostics) {
+      final fix = d.suggestedFix != null ? ' → ${d.suggestedFix}' : '';
+      print('[${d.severity.name}] ${d.code}$fix');
+    }
+    final deviceDiags = activity.device != null
+        ? validateDeviceMetadata(activity.device!)
+        : <ValidationDiagnostic>[];
+    final channelDiags = validateChannels(activity.channels);
+    print(
+      'Device diags: ${deviceDiags.length}, '
+      'channel diags: ${channelDiags.length}',
+    );
+  }
+
+  // --- repairDiagnostics after trimInvalid ---
+  final base = DateTime.utc(2024, 3, 1, 10);
+  final activityWithSentinels = RawActivity(
+    points: [
+      GeoPoint(latitude: 51.5, longitude: -0.1, time: base),
+      GeoPoint(
+        latitude: 0.0,
+        longitude: 0.0,
+        time: base.add(const Duration(seconds: 5)),
+      ),
+    ],
+  );
+  final editor = RawEditor(activityWithSentinels)..trimInvalid();
+  print(
+    'repairDiagnostics: ${editor.repairDiagnostics.map((d) => d.code).join(', ')}',
+  );
+  print('Points after trim: ${editor.activity.points.length}');
+
+  // --- Point-level editing ---
+  final editBase = DateTime.utc(2024, 6, 1, 9);
+  final editable = RawActivity(
+    points: [
+      GeoPoint(latitude: 40.0, longitude: -105.0, time: editBase),
+      GeoPoint(
+        latitude: 40.001,
+        longitude: -105.001,
+        time: editBase.add(const Duration(seconds: 30)),
+      ),
+      GeoPoint(
+        latitude: 40.002,
+        longitude: -105.002,
+        time: editBase.add(const Duration(seconds: 60)),
+      ),
+    ],
+    channels: {
+      Channel.heartRate: [
+        Sample(time: editBase, value: 140),
+        Sample(time: editBase.add(const Duration(seconds: 30)), value: 145),
+        Sample(time: editBase.add(const Duration(seconds: 60)), value: 150),
+      ],
+    },
+  );
+  final pointEditor = RawEditor(editable)
+    ..insertPoint(
+      GeoPoint(
+        latitude: 40.0005,
+        longitude: -105.0005,
+        time: editBase.add(const Duration(seconds: 15)),
+      ),
+    )
+    ..deleteRange(
+      editBase.add(const Duration(seconds: 25)),
+      editBase.add(const Duration(seconds: 35)),
+    )
+    ..insertPause(
+      editBase.add(const Duration(seconds: 50)),
+      const Duration(seconds: 10),
+    );
+  print('Points after point edits: ${pointEditor.activity.points.length}');
+
+  // --- channelSamplesFrom for re-export round-trip ---
+  if (batch.successes.isNotEmpty) {
+    final channelMap = ActivityFiles.channelSamplesFrom(
+      batch.successes.first.activity,
+    );
+    print('channelSamplesFrom: ${channelMap.length} channel(s)');
+  }
+
+  // --- WorkoutSet.categoryLabel ---
+  print('Category 28: ${WorkoutSet.categoryLabel(28)}'); // Squat
+  print('Category 8: ${WorkoutSet.categoryLabel(8)}'); // Deadlift
+  print('Category 99: ${WorkoutSet.categoryLabel(99)}'); // null (unknown)
+
+  // --- SwimStroke enum ---
+  print('Strokes: ${SwimStroke.values.map((s) => s.name).join(', ')}');
+
+  // --- ActivitySummary swim fields ---
+  const swimSummary = ActivitySummary(
+    poolLengthMeters: 50.0,
+    numActiveLengths: 40,
+    swimStroke: SwimStroke.freestyle,
+    subSport: 45,
+    totalCycles: 600,
+  );
+  print(
+    'Swim: ${swimSummary.poolLengthMeters}m pool, '
+    '${swimSummary.numActiveLengths} lengths, '
+    'stroke=${swimSummary.swimStroke?.name}',
+  );
 }
 
 Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
