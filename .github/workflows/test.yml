@@ -52,3 +52,53 @@ jobs:
           flags: unittests
           fail_ci_if_error: false
           verbose: true
+
+  tag-release:
+    name: Tag release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: v${{ steps.version.outputs.version }}
+      created: ${{ steps.tag.outputs.created }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read pubspec version
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^version: *//p' pubspec.yaml | tr -d '[:space:]')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Idempotent: a push to main whose version already has a tag (e.g. a
+      # docs-only follow-up commit) just skips instead of failing.
+      - name: Create and push tag if missing
+        id: tag
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "$TAG"
+            git push origin "$TAG"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    name: Publish to pub.dev
+    needs: tag-release
+    # A tag pushed with the default GITHUB_TOKEN above does not itself
+    # trigger publish.yml's tag-push listener (GitHub suppresses
+    # workflow-triggering for GITHUB_TOKEN-authored pushes), so this job
+    # calls the same reusable workflow directly instead of relying on that.
+    if: needs.tag-release.outputs.created == 'true'
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1

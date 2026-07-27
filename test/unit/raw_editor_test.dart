@@ -5,8 +5,7 @@
 /// smoothing, and channel resampling.
 library;
 
-import 'package:activity_files/src/models.dart';
-import 'package:activity_files/src/transforms.dart';
+import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -225,6 +224,151 @@ void main() {
           .map((sample) => sample.value);
 
       expect(values, orderedEquals([105, 110, 120, 125]));
+    });
+  });
+
+  group('RawEditor.repairDiagnostics (0.7.0)', () {
+    test('empty when no repairs were needed', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: base.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+
+      final editor = RawEditor(activity)..trimInvalid();
+
+      expect(editor.repairDiagnostics, isEmpty);
+    });
+
+    test(
+      'populated with sentinel_coords_removed when null-island points are dropped',
+      () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 0.0, longitude: 0.0, time: base),
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: base.add(const Duration(seconds: 10)),
+            ),
+          ],
+        );
+
+        final editor = RawEditor(activity)..trimInvalid();
+
+        expect(editor.repairDiagnostics, hasLength(1));
+        expect(
+          editor.repairDiagnostics.first.code,
+          equals('repaired.sentinel_coords_removed'),
+        );
+        expect(
+          editor.repairDiagnostics.first.severity,
+          equals(ValidationSeverity.warning),
+        );
+        expect(editor.repairDiagnostics.first.suggestedFix, isNotNull);
+        expect(editor.repairDiagnostics.first.priority, isNotNull);
+      },
+    );
+
+    test('sentinel elevation (-500 m) is cleared but the point is kept', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            elevation: -500.0,
+            time: base,
+          ),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            elevation: 1200.0,
+            time: base.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+
+      final editor = RawEditor(activity)..trimInvalid();
+
+      expect(editor.repairDiagnostics, hasLength(1));
+      expect(
+        editor.repairDiagnostics.first.code,
+        equals('repaired.sentinel_elevation_cleared'),
+      );
+      // The point survives with its elevation cleared; only the bogus
+      // elevation value is discarded.
+      expect(editor.activity.points, hasLength(2));
+      expect(editor.activity.points.first.elevation, isNull);
+      expect(editor.activity.points.first.latitude, equals(40.0));
+      expect(editor.activity.points.last.elevation, equals(1200.0));
+    });
+
+    test('accumulates diagnostics from both sentinel types in one pass', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 0.0, longitude: 0.0, time: base),
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            elevation: -500.0,
+            time: base.add(const Duration(seconds: 10)),
+          ),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            elevation: 1200.0,
+            time: base.add(const Duration(seconds: 20)),
+          ),
+        ],
+      );
+
+      final editor = RawEditor(activity)..trimInvalid();
+
+      expect(editor.repairDiagnostics, hasLength(2));
+      final codes = editor.repairDiagnostics.map((d) => d.code).toSet();
+      expect(
+        codes,
+        containsAll([
+          'repaired.sentinel_coords_removed',
+          'repaired.sentinel_elevation_cleared',
+        ]),
+      );
+    });
+
+    test('repairDiagnostics is unmodifiable', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 0.0, longitude: 0.0, time: base),
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+
+      final editor = RawEditor(activity)..trimInvalid();
+
+      expect(
+        () => (editor.repairDiagnostics as List).add(
+          const ValidationDiagnostic(
+            severity: ValidationSeverity.warning,
+            code: 'x',
+            message: 'x',
+          ),
+        ),
+        throwsUnsupportedError,
+      );
     });
   });
 

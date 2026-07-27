@@ -10,7 +10,6 @@ import 'parse_result.dart';
 /// Supports multi-sport activities (e.g., triathlons) by parsing all
 /// `<Activity>` elements and merging them into a single [RawActivity] with
 /// sport-specific laps.
-// TODO(0.8.0): TCX: Support courses, workouts, and extensions round-trip.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
 
@@ -69,17 +68,27 @@ class TcxParser implements ActivityFormatParser {
       );
     }
 
-    // Parse all activities for multi-sport support (e.g., triathlons)
+    // Merge all <Activity> elements into one activity; each lap keeps its own
+    // sport, so the multi-activity/multi-sport structure survives — the encoder
+    // re-splits laps by sport back into separate <Activity> elements.
     final allPoints = <GeoPoint>[];
     final allHrSamples = <Sample>[];
     final allCadenceSamples = <Sample>[];
     final allDistanceSamples = <Sample>[];
+    final allSpeedSamples = <Sample>[];
+    final allPowerSamples = <Sample>[];
     final allLaps = <Lap>[];
     final metadataExtensions = <GpxExtensionNode>[];
     final trackExtensions = <GpxExtensionNode>[];
     Sport? overallSport;
     String? creator;
+    String? notes;
     ActivityDeviceMetadata? device;
+    // <Author> lives at the TrainingCenterDatabase root, not per activity.
+    final authorElement = document.findAllElements('Author').firstOrNull;
+    final author = authorElement != null
+        ? _firstText(authorElement, 'Name')
+        : null;
 
     if (activities.length > 1) {
       diagnostics.add(
@@ -87,7 +96,9 @@ class TcxParser implements ActivityFormatParser {
           severity: ParseSeverity.info,
           code: 'tcx.multi_activity',
           message:
-              'Multi-activity TCX file detected (${activities.length} activities); merging into single activity with sport-specific laps.',
+              'Multi-activity TCX file detected (${activities.length} '
+              'activities); merged into one activity with sport-specific laps '
+              '(re-split by sport on encode).',
           node: const ParseNodeReference(path: 'tcx.activities'),
         ),
       );
@@ -98,6 +109,7 @@ class TcxParser implements ActivityFormatParser {
         activityElement.getAttribute('Sport'),
       );
       overallSport ??= activitySport;
+      notes ??= _firstText(activityElement, 'Notes');
 
       for (final child in activityElement.childElements) {
         if (child.name.local == 'Extensions') {
@@ -135,6 +147,34 @@ class TcxParser implements ActivityFormatParser {
         final lapDistance = lapDistanceText != null
             ? double.tryParse(lapDistanceText)
             : null;
+        // Lap statistics: plain elements plus HR wrappers (<...Bpm><Value>)
+        // and LX lap extensions (ActivityExtension/v2).
+        double? lapValueOf(String name) {
+          final text = _firstText(lapElement, name);
+          return text != null ? double.tryParse(text) : null;
+        }
+
+        double? lapHrOf(String name) {
+          final node = _firstChild(lapElement, name);
+          final text = node != null ? _firstText(node, 'Value') : null;
+          return text != null ? double.tryParse(text) : null;
+        }
+
+        double? lapAvgSpeed;
+        double? lapAvgWatts;
+        double? lapMaxWatts;
+        double? lapMaxBikeCadence;
+        for (final extensions in _childElements(lapElement, 'Extensions')) {
+          for (final lx in extensions.childElements) {
+            if (lx.name.local != 'LX') continue;
+            lapAvgSpeed ??= double.tryParse(_firstText(lx, 'AvgSpeed') ?? '');
+            lapAvgWatts ??= double.tryParse(_firstText(lx, 'AvgWatts') ?? '');
+            lapMaxWatts ??= double.tryParse(_firstText(lx, 'MaxWatts') ?? '');
+            lapMaxBikeCadence ??= double.tryParse(
+              _firstText(lx, 'MaxBikeCadence') ?? '',
+            );
+          }
+        }
         final track = _childElements(lapElement, 'Track').firstOrNull;
         if (track == null) {
           diagnostics.add(
@@ -297,6 +337,31 @@ class TcxParser implements ActivityFormatParser {
           } else if (distanceValue != null) {
             allDistanceSamples.add(Sample(time: time, value: distanceValue));
           }
+          // TPX trackpoint extensions (ActivityExtension/v2): the standard
+          // way Garmin TCX carries speed, power, and run cadence.
+          for (final extensions in _childElements(trackpoint, 'Extensions')) {
+            for (final tpx in extensions.childElements) {
+              if (tpx.name.local != 'TPX') continue;
+              for (final child in tpx.childElements) {
+                final value = double.tryParse(child.innerText.trim());
+                if (value == null) continue;
+                switch (child.name.local) {
+                  case 'Speed':
+                    allSpeedSamples.add(Sample(time: time, value: value));
+                    break;
+                  case 'Watts':
+                    allPowerSamples.add(Sample(time: time, value: value));
+                    break;
+                  case 'RunCadence':
+                    // Plain <Cadence> wins when both are present.
+                    if (cadenceValue == null) {
+                      allCadenceSamples.add(Sample(time: time, value: value));
+                    }
+                    break;
+                }
+              }
+            }
+          }
           firstTime ??= time;
           lastTime = time;
         }
@@ -311,13 +376,24 @@ class TcxParser implements ActivityFormatParser {
               distanceMeters: lapDistance,
               name: 'Lap ${allLaps.length + 1}',
               sport: activitySport,
+              calories: lapValueOf('Calories'),
+              maxSpeed: lapValueOf('MaximumSpeed'),
+              avgHeartRate: lapHrOf('AverageHeartRateBpm'),
+              maxHeartRate: lapHrOf('MaximumHeartRateBpm'),
+              avgCadence: lapValueOf('Cadence'),
+              maxCadence: lapMaxBikeCadence,
+              avgSpeed: lapAvgSpeed,
+              avgPower: lapAvgWatts,
+              maxPower: lapMaxWatts,
+              tcxIntensity: _firstText(lapElement, 'Intensity'),
+              tcxTriggerMethod: _firstText(lapElement, 'TriggerMethod'),
             ),
           );
         }
       }
     }
 
-    // Build final activity from merged data
+    // Build the merged activity.
     final channelMap = <Channel, Iterable<Sample>>{};
     if (allHrSamples.isNotEmpty) {
       channelMap[Channel.heartRate] = allHrSamples;
@@ -328,6 +404,12 @@ class TcxParser implements ActivityFormatParser {
     if (allDistanceSamples.isNotEmpty) {
       channelMap[Channel.distance] = allDistanceSamples;
     }
+    if (allSpeedSamples.isNotEmpty) {
+      channelMap[Channel.speed] = allSpeedSamples;
+    }
+    if (allPowerSamples.isNotEmpty) {
+      channelMap[Channel.power] = allPowerSamples;
+    }
     final activity = RawActivity(
       points: allPoints,
       channels: channelMap,
@@ -335,6 +417,8 @@ class TcxParser implements ActivityFormatParser {
       sport: overallSport ?? Sport.unknown,
       creator: creator,
       device: device,
+      tcxNotes: notes,
+      tcxAuthor: author,
       gpxMetadataExtensions: metadataExtensions,
       gpxTrackExtensions: trackExtensions,
     );

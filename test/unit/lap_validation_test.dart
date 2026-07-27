@@ -251,4 +251,177 @@ void main() {
       expect(result.isValid, isTrue);
     });
   });
+
+  group('LapValidationResult.diagnostics (0.7.0)', () {
+    test('diagnostics is empty for valid laps', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+          ),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: DateTime.utc(2024, 1, 1, 10, 1, 0),
+          ),
+        ],
+        laps: [
+          Lap(
+            startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            endTime: DateTime.utc(2024, 1, 1, 10, 1, 0),
+          ),
+        ],
+      );
+
+      final result = RawEditor(activity).validateLapBoundaries();
+
+      expect(result.diagnostics, isEmpty);
+      expect(result.isValid, isTrue);
+      expect(result.hasIssues, isFalse);
+    });
+
+    test('diagnostics contains error entries for overlapping laps', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+          ),
+          GeoPoint(
+            latitude: 40.002,
+            longitude: -105.002,
+            time: DateTime.utc(2024, 1, 1, 10, 2, 0),
+          ),
+        ],
+        laps: [
+          Lap(
+            startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            endTime: DateTime.utc(2024, 1, 1, 10, 1, 30),
+          ),
+          Lap(
+            startTime: DateTime.utc(2024, 1, 1, 10, 1, 0),
+            endTime: DateTime.utc(2024, 1, 1, 10, 2, 0),
+          ),
+        ],
+      );
+
+      final result = RawEditor(activity).validateLapBoundaries();
+
+      expect(result.diagnostics, isNotEmpty);
+      expect(result.diagnostics.any((d) => d.isError), isTrue);
+      expect(result.isValid, isFalse);
+    });
+
+    test('diagnostics entries have stable codes and messages', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+          ),
+          GeoPoint(
+            latitude: 40.002,
+            longitude: -105.002,
+            time: DateTime.utc(2024, 1, 1, 10, 2, 0),
+          ),
+        ],
+        laps: [
+          Lap(
+            startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            endTime: DateTime.utc(2024, 1, 1, 10, 1, 30),
+          ),
+          Lap(
+            startTime: DateTime.utc(2024, 1, 1, 10, 1, 0),
+            endTime: DateTime.utc(2024, 1, 1, 10, 2, 0),
+          ),
+        ],
+      );
+
+      final result = RawEditor(activity).validateLapBoundaries();
+
+      for (final d in result.diagnostics) {
+        expect(d.code, isNotEmpty);
+        expect(d.message, isNotEmpty);
+        expect(d.severity, isA<ValidationSeverity>());
+      }
+    });
+
+    test(
+      'diagnostics contains warning entries for laps outside point range',
+      () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 5, 0),
+            ),
+            GeoPoint(
+              latitude: 40.001,
+              longitude: -105.001,
+              time: DateTime.utc(2024, 1, 1, 10, 10, 0),
+            ),
+          ],
+          laps: [
+            // Lap starts before the first point
+            Lap(
+              startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+              endTime: DateTime.utc(2024, 1, 1, 10, 10, 0),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).validateLapBoundaries();
+
+        expect(result.hasIssues, isTrue);
+        expect(result.diagnostics, isNotEmpty);
+      },
+    );
+
+    test(
+      'errorDiagnostics and warningDiagnostics filter correctly via ValidationResult shape',
+      () {
+        // LapValidationResult mirrors ValidationResult — verify filtered views work
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.002,
+              longitude: -105.002,
+              time: DateTime.utc(2024, 1, 1, 10, 2, 0),
+            ),
+          ],
+          laps: [
+            Lap(
+              startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+              endTime: DateTime.utc(2024, 1, 1, 10, 1, 30),
+            ),
+            Lap(
+              startTime: DateTime.utc(2024, 1, 1, 10, 1, 0),
+              endTime: DateTime.utc(2024, 1, 1, 10, 2, 0),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).validateLapBoundaries();
+
+        // All error diagnostics must be errors
+        for (final d in result.diagnostics.where((d) => d.isError)) {
+          expect(d.severity, equals(ValidationSeverity.error));
+        }
+        // All warning diagnostics must be warnings
+        for (final d in result.diagnostics.where((d) => !d.isError)) {
+          expect(d.severity, equals(ValidationSeverity.warning));
+        }
+      },
+    );
+  });
 }

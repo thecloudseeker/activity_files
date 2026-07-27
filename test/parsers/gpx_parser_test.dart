@@ -357,24 +357,37 @@ void main() {
     });
 
     group('Waypoint parsing', () {
-      test('parses GPX waypoints', () {
+      test('parses GPX waypoints as structured data (not track points)', () {
         const gpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <wpt lat="40.0" lon="-105.0">
     <ele>1600</ele>
     <time>2024-01-01T10:00:00Z</time>
+    <name>Summit</name>
+    <sym>Flag</sym>
   </wpt>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final activity = ActivityParser.parse(
+          gpx,
+          ActivityFileFormat.gpx,
+        ).activity;
 
-        expect(result.activity.points.length, equals(1));
+        // Waypoints are preserved separately, not folded into the track.
+        expect(activity.points, isEmpty);
+        expect(activity.gpxWaypoints.length, equals(1));
+        final wpt = activity.gpxWaypoints.single;
+        expect(wpt.latitude, closeTo(40.0, 1e-9));
+        expect(wpt.elevation, closeTo(1600, 1e-9));
+        expect(wpt.gpxAttributes?['name'], 'Summit');
+        expect(wpt.gpxAttributes?['sym'], 'Flag');
       });
 
-      test('parses GPX routes', () {
+      test('parses GPX routes as structured data', () {
         const gpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <rte>
+    <name>Planned loop</name>
     <rtept lat="40.0" lon="-105.0">
       <time>2024-01-01T10:00:00Z</time>
     </rtept>
@@ -384,9 +397,16 @@ void main() {
   </rte>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final activity = ActivityParser.parse(
+          gpx,
+          ActivityFileFormat.gpx,
+        ).activity;
 
-        expect(result.activity.points.length, equals(2));
+        expect(activity.points, isEmpty);
+        expect(activity.gpxRoutes.length, equals(1));
+        final route = activity.gpxRoutes.single;
+        expect(route.name, 'Planned loop');
+        expect(route.points.length, equals(2));
       });
     });
 

@@ -1,11 +1,25 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'dart:math' as math;
+import 'geo_math.dart';
 
 /// Supported file formats for activities.
 enum ActivityFileFormat { gpx, tcx, fit, csv, geojson }
 
 /// Supported sports.
 enum Sport { unknown, running, cycling, swimming, hiking, walking, other }
+
+/// Swim stroke type as recorded in FIT swim sessions.
+///
+/// Declaration order mirrors the FIT swim_stroke wire values (0–6);
+/// the FIT parser decodes by index, so do not reorder.
+enum SwimStroke {
+  freestyle,
+  backstroke,
+  breaststroke,
+  butterfly,
+  drill,
+  mixed,
+  im,
+}
 
 /// Location sample expressed as timestamp + geographic coordinates.
 typedef LocationStreamSample = ({
@@ -23,7 +37,6 @@ typedef StreamTimestampDecoder = DateTime Function(int timestamp);
 
 /// Known FIT manufacturer identifiers.
 /// Source: Garmin FIT SDK via mrihtar/Garmin-FIT Perl module (auto-generated).
-/// Expanded from 28 to 179 entries for comprehensive manufacturer coverage.
 const Map<int, String> fitManufacturerNames = {
   1: 'Garmin',
   2: 'Garmin FR405 ANTFS',
@@ -262,21 +275,80 @@ class GeoPoint {
     required this.longitude,
     this.elevation,
     required DateTime time,
-  }) : time = time.toUtc();
+    Iterable<GpxExtensionNode>? gpxExtensions,
+    Map<String, String>? gpxAttributes,
+  }) : time = time.toUtc(),
+       gpxExtensions = gpxExtensions == null
+           ? null
+           : List.unmodifiable(gpxExtensions),
+       gpxAttributes = gpxAttributes == null || gpxAttributes.isEmpty
+           ? null
+           : Map.unmodifiable(gpxAttributes);
   final double latitude;
   final double longitude;
   final double? elevation;
   final DateTime time;
+
+  /// Unrecognized GPX point-level extension elements, preserved for lossless
+  /// round-trips (everything inside `<trkpt><extensions>` that is not a
+  /// Garmin TrackPointExtension). Null for points from other formats.
+  final List<GpxExtensionNode>? gpxExtensions;
+
+  /// Standard GPX point child elements without a dedicated field, keyed by
+  /// local element name (e.g. `hdop`, `vdop`, `pdop`, `sat`, `fix`,
+  /// `geoidheight`, `ageofdgpsdata`, `magvar`, `dgpsid`, `name`, `sym`).
+  ///
+  /// Raw string values, preserved so GPS-quality and waypoint metadata survive
+  /// a GPX round-trip. Null for points from other formats.
+  final Map<String, String>? gpxAttributes;
+
   GeoPoint copyWith({
     double? latitude,
     double? longitude,
     double? elevation,
     DateTime? time,
+    Iterable<GpxExtensionNode>? gpxExtensions,
+    Map<String, String>? gpxAttributes,
   }) => GeoPoint(
     latitude: latitude ?? this.latitude,
     longitude: longitude ?? this.longitude,
     elevation: elevation ?? this.elevation,
     time: (time ?? this.time).toUtc(),
+    gpxExtensions: gpxExtensions ?? this.gpxExtensions,
+    gpxAttributes: gpxAttributes ?? this.gpxAttributes,
+  );
+}
+
+/// A GPX route (`<rte>`): an ordered list of route points (`<rtept>`) with an
+/// optional name and other metadata, preserved for lossless GPX round-trips.
+class GpxRoute {
+  GpxRoute({
+    this.name,
+    Iterable<GeoPoint>? points,
+    Map<String, String>? metadata,
+  }) : points = List.unmodifiable(points ?? const <GeoPoint>[]),
+       metadata = metadata == null || metadata.isEmpty
+           ? const {}
+           : Map.unmodifiable(metadata);
+
+  /// Route name (`<rte><name>`).
+  final String? name;
+
+  /// Ordered route points.
+  final List<GeoPoint> points;
+
+  /// Other `<rte>`-level child elements (e.g. `desc`, `type`, `number`), keyed
+  /// by local element name.
+  final Map<String, String> metadata;
+
+  GpxRoute copyWith({
+    String? name,
+    Iterable<GeoPoint>? points,
+    Map<String, String>? metadata,
+  }) => GpxRoute(
+    name: name ?? this.name,
+    points: points ?? this.points,
+    metadata: metadata ?? this.metadata,
   );
 }
 
@@ -287,6 +359,176 @@ class Sample {
   final double value;
   Sample copyWith({DateTime? time, double? value}) =>
       Sample(time: (time ?? this.time).toUtc(), value: value ?? this.value);
+}
+
+/// A single strength-training set recorded by a fitness device.
+class WorkoutSet {
+  WorkoutSet({
+    required DateTime startTime,
+    required DateTime endTime,
+    required this.isRest,
+    this.exerciseCategoryId,
+    this.exerciseCategory,
+    this.repetitions,
+    this.weightKg,
+  }) : startTime = startTime.toUtc(),
+       endTime = endTime.toUtc();
+
+  /// When this set started (UTC).
+  final DateTime startTime;
+
+  /// When this set ended (UTC).
+  final DateTime endTime;
+
+  /// True for rest periods between active sets.
+  final bool isRest;
+
+  /// Raw FIT `exercise_category` value.
+  ///
+  /// Preserved so sets can be round-tripped back to FIT without relying on
+  /// the human-readable [exerciseCategory] label.
+  final int? exerciseCategoryId;
+
+  /// Human-readable exercise category (e.g. "Squat", "Bench Press").
+  final String? exerciseCategory;
+
+  /// Number of repetitions performed.
+  final int? repetitions;
+
+  /// Weight used in kilograms.
+  final double? weightKg;
+
+  Duration get elapsed => endTime.difference(startTime);
+
+  /// Returns a copy with selective field overrides.
+  WorkoutSet copyWith({
+    DateTime? startTime,
+    DateTime? endTime,
+    bool? isRest,
+    int? exerciseCategoryId,
+    String? exerciseCategory,
+    int? repetitions,
+    double? weightKg,
+  }) => WorkoutSet(
+    startTime: (startTime ?? this.startTime).toUtc(),
+    endTime: (endTime ?? this.endTime).toUtc(),
+    isRest: isRest ?? this.isRest,
+    exerciseCategoryId: exerciseCategoryId ?? this.exerciseCategoryId,
+    exerciseCategory: exerciseCategory ?? this.exerciseCategory,
+    repetitions: repetitions ?? this.repetitions,
+    weightKg: weightKg ?? this.weightKg,
+  );
+
+  /// FIT exercise_category labels, indexed by the raw FIT value (0–32).
+  static const List<String> _categoryLabels = [
+    'Bench Press', 'Calf Raise', 'Cardio', 'Carry', 'Chop', 'Core', //
+    'Crunch', 'Curl', 'Deadlift', 'Fly', 'Hip Raise', 'Hip Stability',
+    'Hip Swing', 'Hyperextension', 'Lateral Raise', 'Leg Curl', 'Leg Raise',
+    'Lunge', 'Olympic Lift', 'Plank', 'Plyometric', 'Pull-up', 'Push-up',
+    'Row', 'Shoulder Press', 'Shoulder Stability', 'Shrug', 'Sit-up',
+    'Squat', 'Total Body', 'Triceps Extension', 'Warm-up', 'Run',
+  ];
+
+  /// Maps a FIT exercise_category integer to a human-readable label.
+  static String? categoryLabel(int? value) =>
+      value != null && value >= 0 && value < _categoryLabels.length
+      ? _categoryLabels[value]
+      : null;
+}
+
+/// A timer or marker event recorded by a fitness device (FIT event messages).
+///
+/// Timer events carry the pause information of an activity: a stop event
+/// followed by a start event delimits a pause.
+class ActivityEvent {
+  ActivityEvent({
+    required DateTime time,
+    required this.event,
+    required this.eventType,
+    this.data,
+  }) : time = time.toUtc();
+
+  /// When the event occurred (UTC).
+  final DateTime time;
+
+  /// Raw FIT `event` value (0 = timer).
+  final int event;
+
+  /// Raw FIT `event_type` value (0 = start, 1 = stop, 4 = stop_all).
+  final int eventType;
+
+  /// Raw FIT `data` value, if present.
+  final int? data;
+
+  /// True for timer events (pause/resume boundaries).
+  bool get isTimerEvent => event == 0;
+
+  /// True when this event starts (or resumes) the timer.
+  bool get isStart => eventType == 0;
+
+  /// True when this event stops (pauses) the timer.
+  bool get isStop => eventType == 1 || eventType == 4;
+
+  ActivityEvent copyWith({
+    DateTime? time,
+    int? event,
+    int? eventType,
+    int? data,
+  }) => ActivityEvent(
+    time: (time ?? this.time).toUtc(),
+    event: event ?? this.event,
+    eventType: eventType ?? this.eventType,
+    data: data ?? this.data,
+  );
+}
+
+/// A single pool length from a FIT swim activity (length messages).
+class SwimLength {
+  SwimLength({
+    required DateTime startTime,
+    required DateTime endTime,
+    required this.isActive,
+    this.totalStrokes,
+    this.avgSpeed,
+    this.swimStroke,
+  }) : startTime = startTime.toUtc(),
+       endTime = endTime.toUtc();
+
+  /// When this length started (UTC).
+  final DateTime startTime;
+
+  /// When this length ended (UTC).
+  final DateTime endTime;
+
+  /// True for active lengths; false for idle time at the pool wall.
+  final bool isActive;
+
+  /// Strokes taken in this length.
+  final int? totalStrokes;
+
+  /// Average speed for this length (m/s).
+  final double? avgSpeed;
+
+  /// Stroke swum in this length.
+  final SwimStroke? swimStroke;
+
+  Duration get elapsed => endTime.difference(startTime);
+
+  SwimLength copyWith({
+    DateTime? startTime,
+    DateTime? endTime,
+    bool? isActive,
+    int? totalStrokes,
+    double? avgSpeed,
+    SwimStroke? swimStroke,
+  }) => SwimLength(
+    startTime: (startTime ?? this.startTime).toUtc(),
+    endTime: (endTime ?? this.endTime).toUtc(),
+    isActive: isActive ?? this.isActive,
+    totalStrokes: totalStrokes ?? this.totalStrokes,
+    avgSpeed: avgSpeed ?? this.avgSpeed,
+    swimStroke: swimStroke ?? this.swimStroke,
+  );
 }
 
 /// Summary information for a lap or segment.
@@ -311,8 +553,20 @@ class Lap {
     this.maxPower,
     this.event,
     this.eventType,
+    this.numActiveLengths,
+    this.swimStroke,
+    this.tcxIntensity,
+    this.tcxTriggerMethod,
+    Map<int, double>? extraFitFields,
+    Map<int, List<double>>? extraFitArrays,
   }) : startTime = startTime.toUtc(),
-       endTime = endTime.toUtc();
+       endTime = endTime.toUtc(),
+       extraFitFields = Map.unmodifiable(
+         extraFitFields ?? const <int, double>{},
+       ),
+       extraFitArrays = Map.unmodifiable(
+         extraFitArrays ?? const <int, List<double>>{},
+       );
 
   /// Start timestamp (UTC).
   final DateTime startTime;
@@ -365,6 +619,30 @@ class Lap {
   /// FIT event type for the lap (raw FIT field 1).
   final int? eventType;
 
+  /// Active lengths completed in this lap (swim only).
+  final int? numActiveLengths;
+
+  /// Swim stroke for this lap (swim only).
+  final SwimStroke? swimStroke;
+
+  /// Raw FIT lap fields with no dedicated property, keyed by FIT field number
+  /// (e.g. total_ascent, normalized_power). Values are the raw on-wire numbers;
+  /// field-specific scale/units are not applied. Preserved so a FIT lap
+  /// round-trips without silently dropping unmodeled metrics.
+  final Map<int, double> extraFitFields;
+
+  /// Raw FIT lap *array* fields with no dedicated property, keyed by FIT field
+  /// number (e.g. time_in_hr_zone). Raw per-element values; kept separate from
+  /// [extraFitFields] because a scalar cannot represent a multi-element array.
+  final Map<int, List<double>> extraFitArrays;
+
+  /// TCX lap `<Intensity>` (`Active` or `Resting`); null for non-TCX laps.
+  final String? tcxIntensity;
+
+  /// TCX lap `<TriggerMethod>` (`Manual`, `Distance`, `Location`, `Time`,
+  /// `HeartRate`); null for non-TCX laps.
+  final String? tcxTriggerMethod;
+
   /// Duration of this lap.
   Duration get elapsed => endTime.difference(startTime);
 
@@ -385,6 +663,12 @@ class Lap {
     double? maxPower,
     int? event,
     int? eventType,
+    int? numActiveLengths,
+    SwimStroke? swimStroke,
+    String? tcxIntensity,
+    String? tcxTriggerMethod,
+    Map<int, double>? extraFitFields,
+    Map<int, List<double>>? extraFitArrays,
   }) => Lap(
     startTime: (startTime ?? this.startTime).toUtc(),
     endTime: (endTime ?? this.endTime).toUtc(),
@@ -402,6 +686,42 @@ class Lap {
     maxPower: maxPower ?? this.maxPower,
     event: event ?? this.event,
     eventType: eventType ?? this.eventType,
+    numActiveLengths: numActiveLengths ?? this.numActiveLengths,
+    swimStroke: swimStroke ?? this.swimStroke,
+    tcxIntensity: tcxIntensity ?? this.tcxIntensity,
+    tcxTriggerMethod: tcxTriggerMethod ?? this.tcxTriggerMethod,
+    extraFitFields: extraFitFields ?? this.extraFitFields,
+    extraFitArrays: extraFitArrays ?? this.extraFitArrays,
+  );
+
+  /// Returns a copy of this lap with [sport] cleared while preserving all
+  /// other metadata.
+  ///
+  /// [copyWith] cannot null out a field, so use this when the per-lap sport
+  /// should fall back to the activity-level sport again (e.g. after splitting
+  /// a multi-sport activity into single-sport activities).
+  Lap copyWithoutSport() => Lap(
+    startTime: startTime,
+    endTime: endTime,
+    distanceMeters: distanceMeters,
+    name: name,
+    calories: calories,
+    avgSpeed: avgSpeed,
+    maxSpeed: maxSpeed,
+    avgHeartRate: avgHeartRate,
+    maxHeartRate: maxHeartRate,
+    avgCadence: avgCadence,
+    maxCadence: maxCadence,
+    avgPower: avgPower,
+    maxPower: maxPower,
+    event: event,
+    eventType: eventType,
+    numActiveLengths: numActiveLengths,
+    swimStroke: swimStroke,
+    tcxIntensity: tcxIntensity,
+    tcxTriggerMethod: tcxTriggerMethod,
+    extraFitFields: extraFitFields,
+    extraFitArrays: extraFitArrays,
   );
 }
 
@@ -420,6 +740,15 @@ class ActivitySummary {
     this.avgPower,
     this.maxPower,
     this.calories,
+    this.poolLengthMeters,
+    this.numActiveLengths,
+    this.swimStroke,
+    this.avgStrokeCount,
+    this.subSport,
+    this.totalCycles,
+    this.sport,
+    this.extraFitFields = const {},
+    this.extraFitArrays = const {},
   });
 
   /// Total elapsed time for the activity.
@@ -458,6 +787,77 @@ class ActivitySummary {
   /// Total calories burned (kcal).
   final double? calories;
 
+  /// Pool length in meters (swim only).
+  final double? poolLengthMeters;
+
+  /// Total active lengths completed (swim only).
+  final int? numActiveLengths;
+
+  /// Dominant swim stroke for the session (swim only).
+  final SwimStroke? swimStroke;
+
+  /// Average strokes per pool length for the session (swim only).
+  final double? avgStrokeCount;
+
+  /// FIT sub-sport identifier (e.g. 35 = alpine skiing, 36 = XC skiing).
+  final int? subSport;
+
+  /// Total movement cycles for the session.
+  ///
+  /// Meaning is sport-specific: jump-rope jumps, running strides, cycling
+  /// pedal revolutions, swimming strokes, etc.
+  final int? totalCycles;
+
+  /// Sport of this session.
+  ///
+  /// Set for sessions parsed from multi-session FIT files (e.g. triathlon
+  /// legs) so each session keeps its own sport; null when the session simply
+  /// inherits the activity-level sport.
+  final Sport? sport;
+
+  /// Raw FIT session fields with no dedicated property, keyed by FIT field
+  /// number (e.g. total_ascent, normalized_power, training_stress_score).
+  ///
+  /// Values are the raw on-wire numbers; field-specific scale/units are not
+  /// applied. Preserved so a FIT session round-trips without silently dropping
+  /// metrics the model does not model explicitly.
+  final Map<int, double> extraFitFields;
+
+  /// Raw FIT session *array* fields with no dedicated property, keyed by FIT
+  /// field number (e.g. time_in_hr_zone, time_in_power_zone).
+  ///
+  /// Values are the raw on-wire numbers per element; scale/units are not
+  /// applied. Kept separate from [extraFitFields] because a single scalar
+  /// cannot represent a multi-element array.
+  final Map<int, List<double>> extraFitArrays;
+
+  /// Whether no summary field carries data (all scalars null, no extras).
+  bool get isEmpty =>
+      elapsedTime == null &&
+      timerTime == null &&
+      totalDistanceMeters == null &&
+      avgSpeed == null &&
+      maxSpeed == null &&
+      avgHeartRate == null &&
+      maxHeartRate == null &&
+      avgCadence == null &&
+      maxCadence == null &&
+      avgPower == null &&
+      maxPower == null &&
+      calories == null &&
+      poolLengthMeters == null &&
+      numActiveLengths == null &&
+      swimStroke == null &&
+      avgStrokeCount == null &&
+      subSport == null &&
+      totalCycles == null &&
+      sport == null &&
+      extraFitFields.isEmpty &&
+      extraFitArrays.isEmpty;
+
+  /// Whether any summary field carries data.
+  bool get isNotEmpty => !isEmpty;
+
   ActivitySummary copyWith({
     Duration? elapsedTime,
     Duration? timerTime,
@@ -471,6 +871,15 @@ class ActivitySummary {
     double? avgPower,
     double? maxPower,
     double? calories,
+    double? poolLengthMeters,
+    int? numActiveLengths,
+    SwimStroke? swimStroke,
+    double? avgStrokeCount,
+    int? subSport,
+    int? totalCycles,
+    Sport? sport,
+    Map<int, double>? extraFitFields,
+    Map<int, List<double>>? extraFitArrays,
   }) => ActivitySummary(
     elapsedTime: elapsedTime ?? this.elapsedTime,
     timerTime: timerTime ?? this.timerTime,
@@ -484,11 +893,19 @@ class ActivitySummary {
     avgPower: avgPower ?? this.avgPower,
     maxPower: maxPower ?? this.maxPower,
     calories: calories ?? this.calories,
+    poolLengthMeters: poolLengthMeters ?? this.poolLengthMeters,
+    numActiveLengths: numActiveLengths ?? this.numActiveLengths,
+    swimStroke: swimStroke ?? this.swimStroke,
+    avgStrokeCount: avgStrokeCount ?? this.avgStrokeCount,
+    subSport: subSport ?? this.subSport,
+    totalCycles: totalCycles ?? this.totalCycles,
+    sport: sport ?? this.sport,
+    extraFitFields: extraFitFields ?? this.extraFitFields,
+    extraFitArrays: extraFitArrays ?? this.extraFitArrays,
   );
 }
 
 /// Metadata describing the recording device or software.
-/// TODO(0.7.0): Validate device metadata and handle edge cases in channel mappings.
 class ActivityDeviceMetadata {
   /// Creates metadata describing the originating device or software.
   const ActivityDeviceMetadata({
@@ -614,6 +1031,9 @@ class RawActivity {
     Iterable<GeoPoint>? points,
     Map<Channel, Iterable<Sample>>? channels,
     Iterable<Lap>? laps,
+    Iterable<WorkoutSet>? sets,
+    Iterable<ActivityEvent>? events,
+    Iterable<SwimLength>? lengths,
     Sport sport = Sport.unknown,
     String? creator,
     ActivityDeviceMetadata? device,
@@ -626,10 +1046,21 @@ class RawActivity {
     String? gpxTrackType,
     Iterable<GpxExtensionNode>? gpxMetadataExtensions,
     Iterable<GpxExtensionNode>? gpxTrackExtensions,
+    Iterable<RawActivity>? additionalTracks,
+    Iterable<ActivitySummary>? additionalSessions,
+    Iterable<GeoPoint>? gpxWaypoints,
+    Iterable<GpxRoute>? gpxRoutes,
+    Iterable<int>? gpxTrackSegments,
+    String? tcxNotes,
+    String? tcxAuthor,
+    Map<String, Object?>? metadata,
   }) => RawActivity._canonical(
     points: points,
     channels: channels,
     laps: laps,
+    sets: sets,
+    events: events,
+    lengths: lengths,
     sport: sport,
     creator: creator,
     device: device,
@@ -642,6 +1073,14 @@ class RawActivity {
     gpxTrackType: gpxTrackType,
     gpxMetadataExtensions: gpxMetadataExtensions,
     gpxTrackExtensions: gpxTrackExtensions,
+    additionalTracks: additionalTracks,
+    additionalSessions: additionalSessions,
+    gpxWaypoints: gpxWaypoints,
+    gpxRoutes: gpxRoutes,
+    gpxTrackSegments: gpxTrackSegments,
+    tcxNotes: tcxNotes,
+    tcxAuthor: tcxAuthor,
+    metadata: metadata,
     assumeCanonical: false,
   );
 
@@ -649,6 +1088,9 @@ class RawActivity {
     Iterable<GeoPoint>? points,
     Map<Channel, Iterable<Sample>>? channels,
     Iterable<Lap>? laps,
+    Iterable<WorkoutSet>? sets,
+    Iterable<ActivityEvent>? events,
+    Iterable<SwimLength>? lengths,
     required this.sport,
     required this.creator,
     required this.device,
@@ -661,6 +1103,14 @@ class RawActivity {
     required this.gpxTrackType,
     Iterable<GpxExtensionNode>? gpxMetadataExtensions,
     Iterable<GpxExtensionNode>? gpxTrackExtensions,
+    Iterable<RawActivity>? additionalTracks,
+    Iterable<ActivitySummary>? additionalSessions,
+    Iterable<GeoPoint>? gpxWaypoints,
+    Iterable<GpxRoute>? gpxRoutes,
+    Iterable<int>? gpxTrackSegments,
+    this.tcxNotes,
+    this.tcxAuthor,
+    Map<String, Object?>? metadata,
     required bool assumeCanonical,
   }) : assert(!assumeCanonical || points == null || points is List<GeoPoint>),
        assert(
@@ -693,6 +1143,11 @@ class RawActivity {
        laps = assumeCanonical
            ? (laps as List<Lap>? ?? const <Lap>[])
            : List<Lap>.unmodifiable(laps ?? const <Lap>[]),
+       sets = List<WorkoutSet>.unmodifiable(sets ?? const <WorkoutSet>[]),
+       events = List<ActivityEvent>.unmodifiable(
+         events ?? const <ActivityEvent>[],
+       ),
+       lengths = List<SwimLength>.unmodifiable(lengths ?? const <SwimLength>[]),
        gpxMetadataExtensions = assumeCanonical
            ? (gpxMetadataExtensions as List<GpxExtensionNode>? ??
                  const <GpxExtensionNode>[])
@@ -704,7 +1159,23 @@ class RawActivity {
                  const <GpxExtensionNode>[])
            : List<GpxExtensionNode>.unmodifiable(
                gpxTrackExtensions ?? const <GpxExtensionNode>[],
-             );
+             ),
+       additionalTracks = List<RawActivity>.unmodifiable(
+         additionalTracks ?? const <RawActivity>[],
+       ),
+       additionalSessions = List<ActivitySummary>.unmodifiable(
+         additionalSessions ?? const <ActivitySummary>[],
+       ),
+       gpxWaypoints = List<GeoPoint>.unmodifiable(
+         gpxWaypoints ?? const <GeoPoint>[],
+       ),
+       gpxRoutes = List<GpxRoute>.unmodifiable(gpxRoutes ?? const <GpxRoute>[]),
+       gpxTrackSegments = List<int>.unmodifiable(
+         gpxTrackSegments ?? const <int>[],
+       ),
+       metadata = metadata == null || metadata.isEmpty
+           ? const {}
+           : Map.unmodifiable(metadata);
 
   /// Sequence of geographic points.
   final List<GeoPoint> points;
@@ -714,6 +1185,16 @@ class RawActivity {
 
   /// Declared laps or segments.
   final List<Lap> laps;
+
+  /// Strength-training sets recorded by a fitness device (FIT set messages).
+  final List<WorkoutSet> sets;
+
+  /// Timer and marker events (FIT event messages); timer stop/start pairs
+  /// delimit pauses.
+  final List<ActivityEvent> events;
+
+  /// Per-length pool-swim data (FIT length messages).
+  final List<SwimLength> lengths;
 
   /// Dominant sport classification.
   final Sport sport;
@@ -751,6 +1232,57 @@ class RawActivity {
   /// GPX track-level extensions emitted during encoding.
   final List<GpxExtensionNode> gpxTrackExtensions;
 
+  /// Additional GPX tracks from a multi-track file.
+  ///
+  /// When a GPX file contains more than one `<trk>` element the primary track
+  /// is represented by this [RawActivity] and every subsequent track is stored
+  /// here, preserving the file structure for lossless round-trips.
+  ///
+  /// Empty for activities parsed from single-track files, TCX, FIT, or any
+  /// other format that does not carry multi-track structure.
+  final List<RawActivity> additionalTracks;
+
+  /// Additional sessions from a multi-session file.
+  ///
+  /// When a FIT file contains more than one session message (e.g. the legs of
+  /// a triathlon), the first session becomes [summary] and every subsequent
+  /// session is stored here — each with its own [ActivitySummary.sport] — so
+  /// per-leg statistics survive round-trips.
+  ///
+  /// Empty for single-session files and formats without session structure.
+  final List<ActivitySummary> additionalSessions;
+
+  /// GPX standalone waypoints (`<wpt>`): named points of interest carried at
+  /// the file root, not part of the track. Each is a [GeoPoint] whose name,
+  /// symbol, and other metadata live in [GeoPoint.gpxAttributes]. Empty for
+  /// non-GPX sources or GPX files without waypoints.
+  final List<GeoPoint> gpxWaypoints;
+
+  /// GPX routes (`<rte>`): planned/ordered route-point sequences, distinct from
+  /// the recorded track. Empty for non-GPX sources or GPX files without routes.
+  final List<GpxRoute> gpxRoutes;
+
+  /// Start indices into [points] where each GPX track segment (`<trkseg>`)
+  /// begins, so multi-segment tracks re-emit their segment boundaries.
+  ///
+  /// Empty or single-entry `[0]` means one segment. Cleared by [flattened]
+  /// (indices no longer align after tracks are merged).
+  final List<int> gpxTrackSegments;
+
+  /// TCX activity `<Notes>` free text; null for other sources.
+  final String? tcxNotes;
+
+  /// TCX file `<Author>` name (the creating software/person); null otherwise.
+  final String? tcxAuthor;
+
+  /// Arbitrary activity-level metadata preserved from the source, keyed by
+  /// property name with raw scalar values (String/num/bool), e.g. GeoJSON
+  /// feature properties such as `notes`, `weather_summary`, `start_time`,
+  /// `total_distance`. Original JSON types are kept so they round-trip exactly.
+  ///
+  /// Empty for sources without free-form activity metadata.
+  final Map<String, Object?> metadata;
+
   double? _approximateDistanceCache;
 
   /// Returns the samples for a given [channel], if present.
@@ -762,6 +1294,9 @@ class RawActivity {
     Iterable<GeoPoint>? points,
     Map<Channel, Iterable<Sample>>? channels,
     Iterable<Lap>? laps,
+    Iterable<WorkoutSet>? sets,
+    Iterable<ActivityEvent>? events,
+    Iterable<SwimLength>? lengths,
     Sport? sport,
     String? creator,
     ActivityDeviceMetadata? device,
@@ -774,6 +1309,14 @@ class RawActivity {
     String? gpxTrackType,
     Iterable<GpxExtensionNode>? gpxMetadataExtensions,
     Iterable<GpxExtensionNode>? gpxTrackExtensions,
+    Iterable<RawActivity>? additionalTracks,
+    Iterable<ActivitySummary>? additionalSessions,
+    Iterable<GeoPoint>? gpxWaypoints,
+    Iterable<GpxRoute>? gpxRoutes,
+    Iterable<int>? gpxTrackSegments,
+    String? tcxNotes,
+    String? tcxAuthor,
+    Map<String, Object?>? metadata,
   }) {
     final resolvedPoints = points ?? this.points;
     final resolvedChannels = channels ?? this.channels;
@@ -792,6 +1335,9 @@ class RawActivity {
       points: resolvedPoints,
       channels: resolvedChannels,
       laps: resolvedLaps,
+      sets: sets ?? this.sets,
+      events: events ?? this.events,
+      lengths: lengths ?? this.lengths,
       sport: sport ?? this.sport,
       creator: creator ?? this.creator,
       device: device ?? this.device,
@@ -807,6 +1353,14 @@ class RawActivity {
       gpxTrackType: gpxTrackType ?? this.gpxTrackType,
       gpxMetadataExtensions: resolvedMetadataExtensions,
       gpxTrackExtensions: resolvedTrackExtensions,
+      additionalTracks: additionalTracks ?? this.additionalTracks,
+      additionalSessions: additionalSessions ?? this.additionalSessions,
+      gpxWaypoints: gpxWaypoints ?? this.gpxWaypoints,
+      gpxRoutes: gpxRoutes ?? this.gpxRoutes,
+      gpxTrackSegments: gpxTrackSegments ?? this.gpxTrackSegments,
+      tcxNotes: tcxNotes ?? this.tcxNotes,
+      tcxAuthor: tcxAuthor ?? this.tcxAuthor,
+      metadata: metadata ?? this.metadata,
       assumeCanonical: canAssumeCanonical,
     );
     if (canAssumeCanonical &&
@@ -816,6 +1370,63 @@ class RawActivity {
       copy._approximateDistanceCache = _approximateDistanceCache;
     }
     return copy;
+  }
+
+  /// Returns this activity with all [additionalTracks] merged into a single
+  /// flat track.
+  ///
+  /// Points, channel samples, laps, and sets from every track are combined
+  /// and sorted chronologically; the result has an empty [additionalTracks]
+  /// list. Encoders for formats that cannot represent multiple tracks
+  /// (TCX, FIT, CSV, GeoJSON) call this before encoding so that no track
+  /// data is silently dropped.
+  ///
+  /// Returns `this` unchanged when there are no additional tracks.
+  RawActivity flattened() {
+    if (additionalTracks.isEmpty) {
+      return this;
+    }
+    final mergedPoints = <GeoPoint>[...points];
+    final mergedChannels = <Channel, List<Sample>>{
+      for (final entry in channels.entries) entry.key: [...entry.value],
+    };
+    final mergedLaps = <Lap>[...laps];
+    final mergedSets = <WorkoutSet>[...sets];
+    final mergedEvents = <ActivityEvent>[...events];
+    final mergedLengths = <SwimLength>[...lengths];
+    for (final track in additionalTracks) {
+      final flat = track.flattened();
+      mergedPoints.addAll(flat.points);
+      for (final entry in flat.channels.entries) {
+        mergedChannels
+            .putIfAbsent(entry.key, () => <Sample>[])
+            .addAll(entry.value);
+      }
+      mergedLaps.addAll(flat.laps);
+      mergedSets.addAll(flat.sets);
+      mergedEvents.addAll(flat.events);
+      mergedLengths.addAll(flat.lengths);
+    }
+    mergedPoints.sort((a, b) => a.time.compareTo(b.time));
+    for (final samples in mergedChannels.values) {
+      samples.sort((a, b) => a.time.compareTo(b.time));
+    }
+    mergedLaps.sort((a, b) => a.startTime.compareTo(b.startTime));
+    mergedSets.sort((a, b) => a.startTime.compareTo(b.startTime));
+    mergedEvents.sort((a, b) => a.time.compareTo(b.time));
+    mergedLengths.sort((a, b) => a.startTime.compareTo(b.startTime));
+    return copyWith(
+      points: mergedPoints,
+      channels: mergedChannels,
+      laps: mergedLaps,
+      sets: mergedSets,
+      events: mergedEvents,
+      lengths: mergedLengths,
+      additionalTracks: const [],
+      // Segment boundaries index the primary track's points; after merging and
+      // re-sorting they no longer align, so drop them.
+      gpxTrackSegments: const [],
+    );
   }
 
   /// Returns the timestamp of the first point, if any.
@@ -839,24 +1450,8 @@ class RawActivity {
     }
     double total = 0;
     for (var i = 1; i < points.length; i++) {
-      total += _haversine(points[i - 1], points[i]);
+      total += haversineMeters(points[i - 1], points[i]);
     }
     return total;
   }
-
-  static double _haversine(GeoPoint a, GeoPoint b) {
-    const earthRadius = 6371000; // meters
-    final dLat = _radians(b.latitude - a.latitude);
-    final dLon = _radians(b.longitude - a.longitude);
-    final lat1 = _radians(a.latitude);
-    final lat2 = _radians(b.latitude);
-    final sinDLat = math.sin(dLat / 2);
-    final sinDLon = math.sin(dLon / 2);
-    final h =
-        sinDLat * sinDLat + math.cos(lat1) * math.cos(lat2) * sinDLon * sinDLon;
-    final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
-    return earthRadius * c;
-  }
-
-  static double _radians(double deg) => deg * math.pi / 180.0;
 }

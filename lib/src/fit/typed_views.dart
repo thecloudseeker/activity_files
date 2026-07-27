@@ -26,6 +26,9 @@ class FitTypedActivityView {
       .map((lap) => FitLapView.fromRaw(lap, activity.sport))
       .toList(growable: false);
 
+  /// Strength-training sets.
+  List<WorkoutSet> get sets => activity.sets;
+
   /// Record-level typed views mapped from geographic points.
   ///
   /// Channels are matched by nearest timestamp within [channelMatchWindow].
@@ -124,6 +127,11 @@ class FitSessionView {
   double? get maxHeartRate => summary?.maxHeartRate;
   double? get avgCadence => summary?.avgCadence;
   double? get avgPower => summary?.avgPower;
+
+  double? get poolLengthMeters => summary?.poolLengthMeters;
+  int? get numActiveLengths => summary?.numActiveLengths;
+  SwimStroke? get swimStroke => summary?.swimStroke;
+  double? get avgStrokeCount => summary?.avgStrokeCount;
 }
 
 /// Typed lap-level view.
@@ -143,6 +151,8 @@ class FitLapView {
     this.avgPower,
     this.maxPower,
     this.calories,
+    this.numActiveLengths,
+    this.swimStroke,
   });
 
   factory FitLapView.fromRaw(Lap lap, Sport defaultSport) => FitLapView(
@@ -160,6 +170,8 @@ class FitLapView {
     avgPower: lap.avgPower,
     maxPower: lap.maxPower,
     calories: lap.calories,
+    numActiveLengths: lap.numActiveLengths,
+    swimStroke: lap.swimStroke,
   );
 
   final DateTime startTime;
@@ -176,6 +188,8 @@ class FitLapView {
   final double? avgPower;
   final double? maxPower;
   final double? calories;
+  final int? numActiveLengths;
+  final SwimStroke? swimStroke;
 
   Duration get elapsed => endTime.difference(startTime);
 }

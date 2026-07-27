@@ -1,21 +1,5 @@
 part of '../transforms.dart';
 
-double _haversine(GeoPoint a, GeoPoint b) {
-  const earthRadius = 6371000.0;
-  final dLat = _radians(b.latitude - a.latitude);
-  final dLon = _radians(b.longitude - a.longitude);
-  final lat1 = _radians(a.latitude);
-  final lat2 = _radians(b.latitude);
-  final sinDLat = math.sin(dLat / 2);
-  final sinDLon = math.sin(dLon / 2);
-  final h =
-      sinDLat * sinDLat + math.cos(lat1) * math.cos(lat2) * sinDLon * sinDLon;
-  final c = 2 * math.atan2(math.sqrt(h), math.sqrt(1 - h));
-  return earthRadius * c;
-}
-
-double _radians(double deg) => deg * math.pi / 180.0;
-
 List<GeoPoint> _resamplePoints(List<GeoPoint> points, List<DateTime> times) {
   final result = <GeoPoint>[];
   if (points.isEmpty) {

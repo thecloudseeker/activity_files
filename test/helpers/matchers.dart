@@ -5,6 +5,16 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:test/test.dart';
+
+/// Returns a [Matcher] that checks whether a [DateTime] is at the same moment
+/// as [expected], using [DateTime.isAtSameMomentAs] for comparison. This is
+/// equivalent to comparing UTC microseconds but works correctly across timezone
+/// representations.
+Matcher isAtSameMomentAs(DateTime expected) => predicate<DateTime>(
+  (actual) => actual.isAtSameMomentAs(expected),
+  'is at the same moment as $expected',
+);
 
 /// Checks if a sample list contains a matching sample within tolerance.
 ///

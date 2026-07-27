@@ -1,4 +1,43 @@
 # Changelog
+## 0.7.0
+### Breaking
+- FIT parsing is now remapped to the official FIT profile. Since 0.6.0, session/lap stats and the sport value were parsed incorrectly 
+  - Migration: re-parse any FIT summaries stored with ≤ 0.6.x.
+- FIT encoding fixed accordingly: lap distance and sport values are now written correctly. FIT files exported with ≤ 0.6.x carry these defects; re-export them from source.
+- Multi-track GPX is now preserved instead of merged: the first `<trk>` becomes the primary `RawActivity`; the rest are stored in `RawActivity.additionalTracks`. Single-track encoders (TCX/FIT/CSV/GeoJSON) merge them automatically via the new `RawActivity.flattened()`, so conversions keep every point. But `activity.points` after loading a multi-track GPX now contains only the first track.
+- Default normalization now repairs sentinel values: `RawEditor.trimInvalid()` (run by `convert`/`export` when `normalize: true`, the default) removes Null Island points (lat/lon ≈ 0) and clears elevations ≤ −499 m while keeping the point. Repairs are reported via `RawEditor.repairDiagnostics` and in conversion/export diagnostics (`repaired.sentinel_coords_removed`, `repaired.sentinel_elevation_cleared`). Pass `normalize: false` to opt out.
+- `ValidationResult.isValid` / `LapValidationResult.isValid` now derive from the structured `diagnostics` list as well as the legacy `errors` list.
+
+### Added
+
+Parsers and encoders now round-trip everything a format can hold; anything the target format can't represent is reported via a `lossy.*` diagnostic (`lossy.sets_dropped`, `lossy.events_dropped`, `lossy.lengths_dropped`, `lossy.sessions_dropped`, `lossy.summary_dropped`, `lossy.laps_dropped`, `lossy.multi_track_flattened`) instead of being dropped silently. Per format:
+
+- FIT import: multi-session files (e.g. triathlons), timer events, per-length swim data, and unknown record/session/lap fields (`extraFitFields`/`extraFitArrays`) are all preserved; developer fields decode using their declared name, type, scale, and offset.
+- FIT export: lossless FIT→FIT round-trips: session/lap stats, sets, events, swim lengths, device metadata, and custom channels (including unmapped ones as named developer fields) all write back.
+- GPX: waypoints and routes are preserved as structured data (`gpxWaypoints`, `gpxRoutes`) instead of being folded into the track; multi-segment tracks and unknown extensions round-trip.
+- TCX: power (`ns3:TPX` Watts/Speed/RunCadence) now parses as channels instead of being dropped; notes, author, and lap intensity/trigger fields round-trip.
+- GeoJSON: elevation, per-point timestamps, and feature properties all round-trip; polygons parse as tracks.
+- CSV: unknown numeric columns round-trip as custom channels.
+
+New data model and API:
+
+- Swim metrics: `ActivitySummary.poolLengthMeters`/`.numActiveLengths`/`.swimStroke`/`.avgStrokeCount`, `Lap.numActiveLengths`/`.swimStroke`, the `SwimStroke` enum, plus `ActivitySummary.subSport` and `.totalCycles`.
+- Strength-training sets: FIT set messages parse into `RawActivity.sets` as `WorkoutSet` (type, repetitions, weight, exercise category; raw id kept for round-trips).
+- Point-level editing on `RawEditor`: `insertPoint`, `deletePointAt`, `updatePoint`, `deleteRange`, `insertPause`, `removePause`, all with lap/set boundary clipping; `shiftTime` now also shifts sets.
+- Batch import: `ActivityFiles.loadBatch(sources)` with per-file error capture, `onProgress`, and `stopOnError`.
+- Structured validation diagnostics: `ValidationDiagnostic` (stable `code`, `suggestedFix`, `priority`) on every validation result; `ParseDiagnostic` gains `suggestedFix`/`priority`; new `validateDeviceMetadata()` and `validateChannels()` validators; `DiagnosticCategory` documents the code prefixes.
+- Smaller additions: `ActivityFiles.channelSamplesFrom()` (channels → export-ready stream samples), `Lap.copyWithoutSport()`, `ValidationResult.fromDiagnostics()`/`LapValidationResult.fromDiagnostics()`, and the `ParseFidelityMode` enum (declared for 0.8.0; this release always uses `pragmaticNormalize`).
+
+### Changed
+- GPX diagnostics `gpx.wpt.invalid_timestamp`/`gpx.rtept.invalid_timestamp` now say the point is kept with an epoch fallback time (the previous "ignored" wording contradicted the behaviour; codes unchanged).
+
+### Fixed
+- FIT device metadata was read from the wrong fields: device_info was shifted by one (the serial number as the manufacturer, the hardware revision as the software version), and metadata from paired sensors overwrote the recording device's (a connected speed sensor could replace the head unit's name). `product_name` is now captured as `ActivityDeviceMetadata.model`.
+- Modern Garmin files no longer collapse to a handful of points: message definitions with more than 96 fields (routine on current devices) were rejected, and multi-byte array fields misaligned every following field in the message. Together, these could reduce a multi-hour ride to a few points and zero laps.
+- Real-device laps were silently dropped: the fallback record heuristic (0.6.0) misclassified normal lap messages as GPS records.
+- Valid legacy FIT files were flagged as corrupt: the trailer CRC must be computed over header + data, not data alone, and a header CRC of 0x0000 means "not computed" and is no longer compared. 12-byte-header files (including the official FIT SDK sample) and Edge 810-era files now validate cleanly, while genuinely corrupt files are still detected.
+- GPX temperatures are now written as decimals: `atemp`/`wtemp` were rounded to whole numbers although the schema types them as decimal (18.5 °C came back as 19).
+
 ## 0.6.0
 ### Breaking
 - `ActivityFileFormat` now includes `csv` and `geojson`; exhaustive `switch` statements must handle the new enum values.
@@ -8,22 +47,22 @@
 - FIT regression suite for problematic real-world files.
 - Additional integration coverage for CSV/GeoJSON conversion and format detection.
 - New pipeline option models: `FitCorruptionHandling` and `ActivityAutoFixOptions`.
- - FIT Developer-Fields Support: decodes developer fields and exposes them as channels. (lib/src/parse/fit_parser.dart)
- - Extended FIT Message Coverage: handlers for messages 23, 34, 49. (lib/src/parse/fit_parser.dart)
- - Typed FIT Views: `asFitView()` typed accessors for session/lap/record data. (lib/src/fit/typed_views.dart)
- - Auto-Lap Heuristics: `autoLapByDistance` option generates laps by distance with sport defaults. (lib/src/api/pipeline_options.dart, lib/src/api/activity_files_facade.dart)
+- FIT Developer-Fields Support: decodes developer fields and exposes them as channels. (lib/src/parse/fit_parser.dart)
+- Extended FIT Message Coverage: handlers for messages 23, 34, 49. (lib/src/parse/fit_parser.dart)
+- Typed FIT Views: `asFitView()` typed accessors for session/lap/record data. (lib/src/fit/typed_views.dart)
+- Auto-Lap Heuristics: `autoLapByDistance` option generates laps by distance with sport defaults. (lib/src/api/pipeline_options.dart, lib/src/api/activity_files_facade.dart)
 
 
 ### Changed
 - CI workflows were consolidated and hardened
 - CSV/GeoJSON are now first-class in the unified `ActivityFileFormat` path (`detectFormat`, `load`, `convert`, `export`, parser/encoder routing, CLI options).
 - Shared lap-boundary validation logic is reused between `validateRawActivity()` and `RawEditor.validateLapBoundaries()`.
- - GPX parser: more robust TrackPoint parsing and TrackPointExtension handling
+- GPX parser: more robust TrackPoint parsing and TrackPointExtension handling
 
 ### Fixed
- - Auto-Lap: regenerate placeholder laps and recompute distance before marking. (lib/src/api/activity_files_facade.dart)
- - Autofix diagnostic `autofix.laps.auto_generated` is emitted when laps are generated. (lib/src/api/activity_files_facade.dart)
- - FIT parser now performs best-effort extraction for problematic FIT variants by applying in-stream local-definition updates and bounded timestamp recovery (`fit.record.recovered_timestamp`) instead of returning empty output.
+- Auto-Lap: regenerate placeholder laps and recompute distance before marking. (lib/src/api/activity_files_facade.dart)
+- Autofix diagnostic `autofix.laps.auto_generated` is emitted when laps are generated. (lib/src/api/activity_files_facade.dart)
+- FIT parser now performs best-effort extraction for problematic FIT variants by applying in-stream local-definition updates and bounded timestamp recovery (`fit.record.recovered_timestamp`) instead of returning empty output.
 - GeoJSON parser now uses a deterministic UTC-epoch fallback timestamp for points without `timestamp` instead of runtime-dependent `DateTime.now()`.
 - TCX parser cache lifecycle is now scoped with weak-key caching to avoid retaining parsed XML documents.
 - `ActivityFiles.splitBySport()` now preserves lap metadata fields (e.g. avg/max metrics, calories, FIT event fields) while removing per-lap sport in split outputs.

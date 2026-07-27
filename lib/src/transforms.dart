@@ -2,7 +2,9 @@
 
 import 'dart:math' as math;
 
+import 'geo_math.dart';
 import 'models.dart';
+import 'parse/parse_result.dart' show DiagnosticCategory;
 import 'validation.dart';
 
 part 'transforms/transform_utils.dart';

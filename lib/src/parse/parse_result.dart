@@ -5,6 +5,40 @@ import 'integrity_mode.dart';
 /// Severity associated with a parsing diagnostic.
 enum ParseSeverity { info, warning, error }
 
+/// Canonical category names used in diagnostic codes.
+///
+/// Two code shapes exist:
+///
+/// - **Parser diagnostics** are structured `<format>.<area>.<detail>`, where
+///   `<area>` names the part of the file that triggered the issue (e.g.
+///   `fit.header.crc_mismatch`, `fit.trailer.truncated`,
+///   `gpx.parse.malformed`). The `<area>` segment is format-specific and is
+///   not drawn from these constants.
+/// - **Validation and pipeline diagnostics** lead with a category from this
+///   class: `validation.laps.overlap`, `repaired.sentinel_coords_removed`,
+///   `lossy.multi_track_flattened`.
+///
+/// To route diagnostics, match on the leading segment for validation and
+/// pipeline codes, and on the `<format>` prefix (plus specific full codes
+/// where needed) for parser diagnostics. Codes are stable strings, so
+/// matching on full codes is always safe.
+abstract class DiagnosticCategory {
+  /// Structural parse failures (malformed syntax, missing required elements).
+  static const String parse = 'parse';
+
+  /// Data loss caused by conversion or normalization (e.g. multi-track
+  /// structure flattened for a single-track target format).
+  static const String lossy = 'lossy';
+
+  /// Automatic repairs applied to recover usable data
+  /// (e.g. `repaired.sentinel_coords_removed`).
+  static const String repaired = 'repaired';
+
+  /// Semantic validation findings produced by `validateRawActivity` and
+  /// related checks (e.g. `validation.laps.overlap`).
+  static const String validation = 'validation';
+}
+
 /// Identifies the node or logical entity that triggered a diagnostic.
 class ParseNodeReference {
   const ParseNodeReference({required this.path, this.index, this.description});
@@ -38,6 +72,8 @@ class ParseDiagnostic {
     required this.code,
     required this.message,
     this.node,
+    this.suggestedFix,
+    this.priority,
   });
 
   /// Severity for filtering or highlighting issues.
@@ -51,6 +87,16 @@ class ParseDiagnostic {
 
   /// Optional node reference providing additional context.
   final ParseNodeReference? node;
+
+  /// Human-readable suggestion for how to resolve this issue.
+  ///
+  /// When present, UIs can display this as a "one-click fix" label or
+  /// next-step guidance.  Null when no actionable recovery is known.
+  final String? suggestedFix;
+
+  /// Relative priority among diagnostics of the same severity (lower = more
+  /// important).  Null when relative ordering is not applicable.
+  final int? priority;
 }
 
 /// Utility for formatting and aggregating diagnostics.
@@ -105,6 +151,7 @@ class DiagnosticsFormatter {
     bool includeSeverity = true,
     bool includeCodes = true,
     bool includeNode = false,
+    bool includeSuggestedFix = false,
     String separator = '\n',
   }) {
     final buffer = StringBuffer();
@@ -126,6 +173,9 @@ class DiagnosticsFormatter {
       buffer.write(diagnostic.message);
       if (includeNode && diagnostic.node != null) {
         buffer.write(' (${diagnostic.node!.format()})');
+      }
+      if (includeSuggestedFix && diagnostic.suggestedFix != null) {
+        buffer.write(' → ${diagnostic.suggestedFix}');
       }
     }
     return buffer.toString();

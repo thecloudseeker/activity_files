@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import '../fit/fit_crc.dart';
+import '../fit/fit_sport.dart';
+import '../geo_math.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'integrity_mode.dart';
@@ -98,7 +100,9 @@ class FitParser implements ActivityFormatParser {
         payload,
         length: header.headerSize - 2,
       );
-      if (storedHeaderCrc != computedHeaderCrc) {
+      // A header CRC of 0x0000 means "not computed" per the FIT spec and
+      // must not be verified (common on Edge 810-era files).
+      if (storedHeaderCrc != 0 && storedHeaderCrc != computedHeaderCrc) {
         diagnostics.add(
           ParseDiagnostic(
             severity: ParseSeverity.error,
@@ -106,6 +110,9 @@ class FitParser implements ActivityFormatParser {
             message:
                 "FIT header CRC 0x${storedHeaderCrc.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computedHeaderCrc.toRadixString(16).padLeft(4, '0')}.",
             node: const ParseNodeReference(path: 'fit.header'),
+            suggestedFix:
+                'Re-download or re-export the FIT file from the source device. If the file is otherwise valid, try parsing with IntegrityMode.silent to recover data.',
+            priority: 1,
           ),
         );
       }
@@ -144,13 +151,31 @@ class FitParser implements ActivityFormatParser {
     final distanceSamples = <Sample>[];
     final extraSamples = <Channel, List<Sample>>{};
     final laps = <Lap>[];
+    final sets = <WorkoutSet>[];
+    final additionalSessions = <ActivitySummary>[];
+    final events = <ActivityEvent>[];
+    final swimLengths = <SwimLength>[];
+    var primarySessionSeen = false;
     var sawDataMessage = false;
     var unknownDefinitionCount = 0;
     var recoveredTimestampCount = 0;
+    // State for record field 8 (compressed_speed_distance): the 12-bit distance
+    // component is a wrapping accumulator (1/16 m), decoded across records.
+    var csdDistanceAccum = 0;
+    var csdLastRaw = 0;
+    var csdSeen = false;
     Sport sport = Sport.unknown;
     String? creator;
     ActivityDeviceMetadata? deviceMetadata;
     ActivitySummary? summary;
+    // Developer-field registry built from field_description (206) messages,
+    // keyed by _developerFieldKey. Names channels and selects the declared
+    // base type when decoding developer values (a float32 developer field
+    // read by size alone would decode as garbage).
+    final developerFieldNames = <int, String>{};
+    final developerBaseTypes = <int, int>{};
+    final developerFieldScales = <int, double>{};
+    final developerFieldOffsets = <int, double>{};
     if (dataLimit > payload.length) {
       diagnostics.add(
         ParseDiagnostic(
@@ -158,6 +183,9 @@ class FitParser implements ActivityFormatParser {
           code: 'fit.header.size_mismatch',
           message: 'FIT header advertises data larger than available payload.',
           node: const ParseNodeReference(path: 'fit.header'),
+          suggestedFix:
+              'The file is truncated. Re-download or re-export the activity from the device and try again.',
+          priority: 0,
         ),
       );
     }
@@ -171,15 +199,22 @@ class FitParser implements ActivityFormatParser {
           message:
               'FIT trailer is missing or truncated; CRC validation skipped.',
           node: const ParseNodeReference(path: 'fit.trailer'),
+          suggestedFix:
+              'The file is likely incomplete. Re-download or re-export the activity and ensure the full file was transferred.',
+          priority: 0,
         ),
       );
     } else {
       final storedCrc =
           payload[trailerOffset] | (payload[trailerOffset + 1] << 8);
+      // The trailer CRC covers the header AND the data records. Computing it
+      // over the data alone only agreed for files whose 14-byte header ends
+      // with a valid header CRC (the running CRC returns to zero after a
+      // block that ends with its own CRC) — legacy 12-byte headers and
+      // headers with CRC 0x0000 were falsely flagged.
       final computedCrc = computeFitCrc(
         payload,
-        offset: header.headerSize,
-        length: header.dataSize,
+        length: header.headerSize + header.dataSize,
       );
       if (storedCrc != computedCrc) {
         diagnostics.add(
@@ -189,6 +224,9 @@ class FitParser implements ActivityFormatParser {
             message:
                 "FIT trailer CRC 0x${storedCrc.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computedCrc.toRadixString(16).padLeft(4, '0')}.",
             node: const ParseNodeReference(path: 'fit.trailer'),
+            suggestedFix:
+                'The data may be corrupted. Re-download the file from the device; if recovery is needed, parse with IntegrityMode.silent.',
+            priority: 1,
           ),
         );
       }
@@ -239,6 +277,9 @@ class FitParser implements ActivityFormatParser {
                 path: 'fit.message',
                 description: 'localType=$localType',
               ),
+              suggestedFix:
+                  'The file may contain non-standard message ordering. Parsing continues in best-effort mode; re-export the activity if data appears incomplete.',
+              priority: 2,
             ),
           );
         }
@@ -264,6 +305,9 @@ class FitParser implements ActivityFormatParser {
                   path: 'fit.message',
                   description: 'localType=$localType',
                 ),
+                suggestedFix:
+                    'Some data may be lost. Re-exporting the original activity from the device is the most reliable fix.',
+                priority: 2,
               ),
             );
           }
@@ -273,6 +317,7 @@ class FitParser implements ActivityFormatParser {
       final values = definition.readValues(
         reader,
         compressedTimestamp: isCompressed,
+        developerBaseTypes: developerBaseTypes,
       );
       if (values == null) {
         diagnostics.add(
@@ -284,6 +329,9 @@ class FitParser implements ActivityFormatParser {
               path: 'fit.message',
               description: 'globalId=${definition.globalId}',
             ),
+            suggestedFix:
+                'The message data may be corrupted. Parsing continues in best-effort mode; re-export the activity if data gaps appear.',
+            priority: 2,
           ),
         );
         reader.skip(definition.dataSize(compressedTimestamp: isCompressed));
@@ -326,6 +374,9 @@ class FitParser implements ActivityFormatParser {
                     path: 'fit.record',
                     description: 'localType=$localType',
                   ),
+                  suggestedFix:
+                      'Timestamps were inferred from context. Re-exporting the activity from the device will produce a file with explicit timestamps.',
+                  priority: 3,
                 ),
               );
             }
@@ -341,6 +392,9 @@ class FitParser implements ActivityFormatParser {
                 path: 'fit.record',
                 description: 'localType=$localType',
               ),
+              suggestedFix:
+                  'This record cannot be placed on the timeline. Re-export the activity from the device to obtain a complete timestamped stream.',
+              priority: 2,
             ),
           );
           continue;
@@ -350,13 +404,6 @@ class FitParser implements ActivityFormatParser {
           if (value == null) return;
           (extraSamples[channel] ??= <Sample>[]).add(
             Sample(time: recordTime, value: value.toDouble()),
-          );
-        }
-
-        void addVendorField(int field) {
-          addSample(
-            Channel.custom('fit_field_$field'),
-            _asNumber(values[field]),
           );
         }
 
@@ -398,6 +445,31 @@ class FitParser implements ActivityFormatParser {
             Sample(time: recordTime, value: speed.toDouble() / 1000.0),
           );
         }
+        // Legacy record field 8 (compressed_speed_distance): 3 bytes packing a
+        // 12-bit speed (scale 100, m/s) and a 12-bit distance delta accumulator
+        // (scale 16, m). Used by older ANT+/Garmin devices instead of the
+        // separate speed (6) and distance (5) fields. Explicit fields win.
+        final csd = values[8];
+        if (csd is List<int> &&
+            csd.length >= 3 &&
+            !(csd[0] == 0xFF && csd[1] == 0xFF && csd[2] == 0xFF)) {
+          final packed = csd[0] | (csd[1] << 8) | (csd[2] << 16);
+          final speedRaw = packed & 0x0FFF;
+          final distRaw = (packed >> 12) & 0x0FFF;
+          if (csdSeen) {
+            csdDistanceAccum += (distRaw - csdLastRaw) & 0x0FFF;
+          }
+          csdLastRaw = distRaw;
+          csdSeen = true;
+          if (speed == null && speedRaw != 0x0FFF) {
+            speedSamples.add(Sample(time: recordTime, value: speedRaw / 100.0));
+          }
+          if (distance == null) {
+            distanceSamples.add(
+              Sample(time: recordTime, value: csdDistanceAccum / 16.0),
+            );
+          }
+        }
         final power = _asNumber(values[7]);
         if (power != null) {
           powerSamples.add(Sample(time: recordTime, value: power.toDouble()));
@@ -408,33 +480,36 @@ class FitParser implements ActivityFormatParser {
         }
         addSample(Channel.custom('grade'), _decodeFitScaled(values[78], 100));
         addSample(Channel.custom('left_right_balance'), _asNumber(values[120]));
-        addVendorField(53);
-        addVendorField(73);
-        addVendorField(87);
-        addVendorField(107);
-        addVendorField(134);
-        addVendorField(135);
-        addVendorField(136);
-        addVendorField(143);
         for (final entry in values.entries) {
-          if (!_isDeveloperFieldKey(entry.key)) {
-            continue;
-          }
           final numeric = _asNumber(entry.value);
           if (numeric == null) {
             continue;
           }
-          final developerIndex = _developerIndexFromKey(entry.key);
-          final developerFieldNumber = _developerFieldNumberFromKey(entry.key);
-          addSample(
-            Channel.custom(
-              _developerChannelName(
-                developerIndex: developerIndex,
-                fieldNumber: developerFieldNumber,
+          if (_isDeveloperFieldKey(entry.key)) {
+            // field_description supplies the channel name and optional
+            // scale/offset (spec formula: raw / scale - offset); files
+            // without one fall back to the generic fit_dev_<i>_<n> name.
+            var value = numeric.toDouble();
+            final scale = developerFieldScales[entry.key];
+            if (scale != null) value = value / scale;
+            final offset = developerFieldOffsets[entry.key];
+            if (offset != null) value = value - offset;
+            addSample(
+              Channel.custom(
+                developerFieldNames[entry.key] ??
+                    _developerChannelName(
+                      developerIndex: _developerIndexFromKey(entry.key),
+                      fieldNumber: _developerFieldNumberFromKey(entry.key),
+                    ),
               ),
-            ),
-            numeric,
-          );
+              value,
+            );
+          } else if (!_dedicatedRecordFields.contains(entry.key)) {
+            // Unknown native record fields (e.g. running dynamics) are
+            // preserved generically as fit_field_<n> channels with their raw
+            // (unscaled) values so no sensor data is silently dropped.
+            addSample(Channel.custom('fit_field_${entry.key}'), numeric);
+          }
         }
         continue;
       }
@@ -452,8 +527,14 @@ class FitParser implements ActivityFormatParser {
               ? fitManufacturerNames[manufacturerId] ??
                     'manufacturer_$manufacturerId'
               : null;
+          final fileIdProductName = values[8];
           deviceMetadata = ActivityDeviceMetadata(
             manufacturer: manufacturerName,
+            model:
+                fileIdProductName is String &&
+                    fileIdProductName.trim().isNotEmpty
+                ? fileIdProductName.trim()
+                : null,
             product: productId?.toString(),
             serialNumber: serialId?.toString(),
             fitManufacturerId: manufacturerId,
@@ -475,28 +556,78 @@ class FitParser implements ActivityFormatParser {
           break;
         case 18: // session
           final sportValue = values[5];
-          if (sportValue is int) {
-            sport = _mapSport(sportValue);
-          }
-          summary = ActivitySummary(
-            elapsedTime: _decodeFitDuration(values[8]),
-            timerTime: _decodeFitDuration(values[9]),
-            totalDistanceMeters: _decodeFitDistance(values[11]),
-            calories: _asNumber(values[14])?.toDouble(),
-            avgSpeed: _decodeFitSpeed(values[16]),
-            maxSpeed: _decodeFitSpeed(values[17]),
-            avgHeartRate: _asNumber(values[18])?.toDouble(),
-            maxHeartRate: _asNumber(values[19])?.toDouble(),
-            avgCadence: _asNumber(values[20])?.toDouble(),
-            maxCadence: _asNumber(values[21])?.toDouble(),
-            avgPower: _asNumber(values[22])?.toDouble(),
-            maxPower: _asNumber(values[23])?.toDouble(),
+          final sessionSport = sportValue is int
+              ? sportFromFitId(sportValue)
+              : null;
+          // Field numbers follow the official FIT profile for the session
+          // message (global 18): 7 total_elapsed_time (s, scale 1000),
+          // 8 total_timer_time (s, scale 1000), 9 total_distance (m, scale
+          // 100), 11 total_calories, 14/15 avg/max_speed (m/s, scale 1000),
+          // 16/17 avg/max_heart_rate, 18/19 avg/max_cadence,
+          // 20/21 avg/max_power, 6 sub_sport, 10 total_cycles,
+          // 41 avg_stroke_count (strokes/length, scale 10), 43 swim_stroke,
+          // 44 pool_length (m, scale 100), 47 num_active_lengths.
+          final poolLengthRaw = _asNumber(values[44]);
+          final subSportRaw = _asNumber(values[6])?.toInt();
+          final totalCyclesRaw = _asNumber(values[10])?.toInt();
+          final avgStrokeRaw = _asNumber(values[41]);
+          final sessionSummary = ActivitySummary(
+            elapsedTime: _decodeFitDuration(values[7]),
+            timerTime: _decodeFitDuration(values[8]),
+            totalDistanceMeters: _decodeFitDistance(values[9]),
+            calories: _asNumber(values[11])?.toDouble(),
+            avgSpeed: _decodeFitSpeed(values[14]),
+            maxSpeed: _decodeFitSpeed(values[15]),
+            avgHeartRate: _asNumber(values[16])?.toDouble(),
+            maxHeartRate: _asNumber(values[17])?.toDouble(),
+            avgCadence: _asNumber(values[18])?.toDouble(),
+            maxCadence: _asNumber(values[19])?.toDouble(),
+            avgPower: _asNumber(values[20])?.toDouble(),
+            maxPower: _asNumber(values[21])?.toDouble(),
+            poolLengthMeters: poolLengthRaw != null
+                ? poolLengthRaw.toDouble() / 100.0
+                : null,
+            numActiveLengths: _asNumber(values[47])?.toInt(),
+            swimStroke: _decodeSwimStroke(_asNumber(values[43])?.toInt()),
+            avgStrokeCount: avgStrokeRaw != null
+                ? avgStrokeRaw.toDouble() / 10.0
+                : null,
+            subSport: subSportRaw != null && subSportRaw != 0
+                ? subSportRaw
+                : null,
+            totalCycles: totalCyclesRaw,
+            sport: sessionSport,
+            extraFitFields: _extraFitFields(values, _dedicatedSessionFields),
+            extraFitArrays: _extraFitArrays(values, _dedicatedSessionFields),
           );
+          // Multi-session files (e.g. triathlons): the first session becomes
+          // the primary summary and sport; later sessions are preserved in
+          // RawActivity.additionalSessions instead of overwriting it.
+          if (!primarySessionSeen) {
+            primarySessionSeen = true;
+            // Keep a timer time merged earlier by an activity message (34).
+            final existingTimer = summary?.timerTime;
+            summary = sessionSummary.timerTime == null && existingTimer != null
+                ? sessionSummary.copyWith(timerTime: existingTimer)
+                : sessionSummary;
+            if (sessionSport != null) {
+              sport = sessionSport;
+            }
+          } else {
+            additionalSessions.add(sessionSummary);
+          }
           break;
         case 19: // lap
+          // Field numbers follow the official FIT profile for the lap
+          // message (global 19): 2 start_time, 7 total_elapsed_time
+          // (s, scale 1000), 9 total_distance (m, scale 100),
+          // 11 total_calories, 13/14 avg/max_speed (m/s, scale 1000),
+          // 15/16 avg/max_heart_rate, 17/18 avg/max_cadence,
+          // 19/20 avg/max_power, 0 event, 1 event_type, 38 swim_stroke,
+          // 40 num_active_lengths.
           final start = _decodeTimestamp(values[2]);
           final totalTime = _decodeFitDuration(values[7]);
-          final distanceMeters = _decodeFitDistance(values[8]);
+          final distanceMeters = _decodeFitDistance(values[9]);
           if (start != null && totalTime != null) {
             final end = start.add(totalTime);
             laps.add(
@@ -505,7 +636,7 @@ class FitParser implements ActivityFormatParser {
                 endTime: end,
                 distanceMeters: distanceMeters,
                 name: 'Lap ${laps.length + 1}',
-                calories: _asNumber(values[21])?.toDouble(),
+                calories: _asNumber(values[11])?.toDouble(),
                 avgSpeed: _decodeFitSpeed(values[13]),
                 maxSpeed: _decodeFitSpeed(values[14]),
                 avgHeartRate: _asNumber(values[15])?.toDouble(),
@@ -516,15 +647,110 @@ class FitParser implements ActivityFormatParser {
                 maxPower: _asNumber(values[20])?.toDouble(),
                 event: _asNumber(values[0])?.toInt(),
                 eventType: _asNumber(values[1])?.toInt(),
+                numActiveLengths: _asNumber(values[40])?.toInt(),
+                swimStroke: _decodeSwimStroke(_asNumber(values[38])?.toInt()),
+                extraFitFields: _extraFitFields(values, _dedicatedLapFields),
+                extraFitArrays: _extraFitArrays(values, _dedicatedLapFields),
+              ),
+            );
+          }
+          break;
+        case 21: // event (timer start/stop, markers)
+          // Field numbers per the FIT profile: 253 timestamp, 0 event,
+          // 1 event_type, 3 data.
+          final eventTime = _decodeTimestamp(values[253]);
+          final eventRaw = _asNumber(values[0])?.toInt();
+          final eventTypeRaw = _asNumber(values[1])?.toInt();
+          if (eventTime != null && eventRaw != null && eventTypeRaw != null) {
+            events.add(
+              ActivityEvent(
+                time: eventTime,
+                event: eventRaw,
+                eventType: eventTypeRaw,
+                data: _asNumber(values[3])?.toInt(),
+              ),
+            );
+          }
+          break;
+        case 101: // length (per-length pool-swim data)
+          // Field numbers per the FIT profile: 253 timestamp (end),
+          // 2 start_time, 3 total_elapsed_time (s, scale 1000),
+          // 5 total_strokes, 6 avg_speed (m/s, scale 1000), 7 swim_stroke,
+          // 12 length_type (0 idle, 1 active).
+          final lengthStart = _decodeTimestamp(values[2]);
+          final lengthElapsed = _decodeFitDuration(values[3]);
+          final lengthEnd =
+              _decodeTimestamp(values[253]) ??
+              (lengthStart != null && lengthElapsed != null
+                  ? lengthStart.add(lengthElapsed)
+                  : null);
+          if (lengthStart != null && lengthEnd != null) {
+            swimLengths.add(
+              SwimLength(
+                startTime: lengthStart,
+                endTime: lengthEnd,
+                isActive: _asNumber(values[12])?.toInt() != 0,
+                totalStrokes: _asNumber(values[5])?.toInt(),
+                avgSpeed: _decodeFitSpeed(values[6]),
+                swimStroke: _decodeSwimStroke(_asNumber(values[7])?.toInt()),
+              ),
+            );
+          }
+          break;
+        case 225: // set (strength training)
+          // Field numbers follow the official FIT profile for the set
+          // message (global 225): 254 timestamp (set end), 6 start_time,
+          // 5 set_type (0 = rest, 1 = active), 3 repetitions,
+          // 4 weight (kg, scale 16), 7 category.
+          final setEnd = _decodeTimestamp(values[254]);
+          final setStart = _decodeTimestamp(values[6]);
+          final setDuration = _decodeFitDuration(values[0]);
+          final setTypeRaw = _asNumber(values[5])?.toInt();
+          if (setEnd != null) {
+            final start =
+                setStart ??
+                (setDuration != null ? setEnd.subtract(setDuration) : setEnd);
+            final weightRaw = _asNumber(values[4]);
+            final catRaw = _asNumber(values[7])?.toInt();
+            sets.add(
+              WorkoutSet(
+                startTime: start,
+                endTime: setEnd,
+                isRest: setTypeRaw == 0,
+                exerciseCategoryId: catRaw,
+                exerciseCategory: WorkoutSet.categoryLabel(catRaw),
+                repetitions: _asNumber(values[3])?.toInt(),
+                weightKg: weightRaw != null
+                    ? weightRaw.toDouble() / 16.0
+                    : null,
               ),
             );
           }
           break;
         case 23: // device_info
-          final manufacturerId = _asNumber(values[3])?.toInt();
-          final serialId = _asNumber(values[4])?.toInt();
-          final productId = _asNumber(values[5])?.toInt();
-          final softwareVersion = _formatFitSoftwareVersion(values[6]);
+          // Official profile: 0 device_index, 2 manufacturer,
+          // 3 serial_number, 4 product, 5 software_version (scale 100),
+          // 27 product_name. (Fields 2–5 were shifted by one before 0.7.0,
+          // reading hardware_version as the software version and the serial
+          // number as the manufacturer.)
+          //
+          // Real files carry one device_info per connected sensor;
+          // device_index 0 is the recording head unit ("creator"). Only its
+          // metadata describes the device — a paired speed sensor must not
+          // overwrite the head unit's name. Messages without a device_index
+          // are treated as the creator (some watches omit it).
+          final deviceIndex = _asNumber(values[0])?.toInt();
+          if (deviceIndex != null && deviceIndex != 0) {
+            break;
+          }
+          final manufacturerId = _asNumber(values[2])?.toInt();
+          final serialId = _asNumber(values[3])?.toInt();
+          final productId = _asNumber(values[4])?.toInt();
+          final softwareVersion = _formatFitSoftwareVersion(values[5]);
+          final productName = values[27];
+          final model = productName is String && productName.trim().isNotEmpty
+              ? productName.trim()
+              : null;
           final manufacturerName = manufacturerId != null
               ? fitManufacturerNames[manufacturerId] ??
                     'manufacturer_$manufacturerId'
@@ -532,7 +758,7 @@ class FitParser implements ActivityFormatParser {
           final previous = deviceMetadata;
           deviceMetadata = ActivityDeviceMetadata(
             manufacturer: manufacturerName ?? previous?.manufacturer,
-            model: previous?.model,
+            model: model ?? previous?.model,
             product: productId?.toString() ?? previous?.product,
             serialNumber: serialId?.toString() ?? previous?.serialNumber,
             softwareVersion: softwareVersion ?? previous?.softwareVersion,
@@ -576,6 +802,37 @@ class FitParser implements ActivityFormatParser {
                 : 'FIT FileCreator ${details.join(' ')}';
           }
           break;
+        case 206: // field_description — developer field metadata
+          // Official profile: 0 developer_data_index, 1
+          // field_definition_number, 2 fit_base_type_id, 3 field_name,
+          // 6 scale, 7 offset. Registers the name, base type, and scaling
+          // used when decoding this developer field in data messages.
+          final devIndex = _asNumber(values[0])?.toInt();
+          final devFieldNumber = _asNumber(values[1])?.toInt();
+          if (devIndex == null || devFieldNumber == null) {
+            break;
+          }
+          final devKey = _developerFieldKey(devIndex, devFieldNumber);
+          final devBaseType = _asNumber(values[2])?.toInt();
+          if (devBaseType != null) {
+            developerBaseTypes[devKey] = devBaseType;
+          }
+          final devName = values[3];
+          if (devName is String) {
+            final channelId = _sanitizeDeveloperFieldName(devName);
+            if (channelId != null) {
+              developerFieldNames[devKey] = channelId;
+            }
+          }
+          final devScale = _asNumber(values[6])?.toDouble();
+          if (devScale != null && devScale > 0 && devScale != 1) {
+            developerFieldScales[devKey] = devScale;
+          }
+          final devOffset = _asNumber(values[7])?.toDouble();
+          if (devOffset != null && devOffset != 0) {
+            developerFieldOffsets[devKey] = devOffset;
+          }
+          break;
         default:
           // Skip unhandled message types.
           break;
@@ -610,6 +867,9 @@ class FitParser implements ActivityFormatParser {
           message:
               'FIT file did not yield any usable activity data; the file may be corrupt or unsupported.',
           node: const ParseNodeReference(path: 'fit.file'),
+          suggestedFix:
+              'Verify the file is a valid activity FIT file (not a course or workout file). Re-export from the device, or inspect with Garmin FIT SDK tools.',
+          priority: 0,
         ),
       );
     }
@@ -621,6 +881,22 @@ class FitParser implements ActivityFormatParser {
           message:
               'Encountered ${unknownDefinitionCount - 5} additional unknown-definition messages while resynchronizing FIT stream.',
           node: const ParseNodeReference(path: 'fit.file'),
+          suggestedFix:
+              'The file uses non-standard message ordering. Parsed data may be incomplete; re-export the activity from the device for a clean file.',
+          priority: 2,
+        ),
+      );
+    }
+    if (additionalSessions.isNotEmpty) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.multi_session',
+          message:
+              'Multi-session FIT file (${additionalSessions.length + 1} '
+              'sessions); additional sessions preserved in '
+              'RawActivity.additionalSessions.',
+          node: const ParseNodeReference(path: 'fit.session'),
         ),
       );
     }
@@ -628,12 +904,16 @@ class FitParser implements ActivityFormatParser {
       points: filteredPoints,
       channels: channels,
       laps: laps,
+      sets: sets,
       sport: sport,
       creator: creator,
       device: deviceMetadata != null && deviceMetadata.isNotEmpty
           ? deviceMetadata
           : null,
       summary: summary,
+      additionalSessions: additionalSessions,
+      events: events,
+      lengths: swimLengths,
     );
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
@@ -740,7 +1020,98 @@ bool _resyncToDefinition(
   return false;
 }
 
+/// Record (global 20) field numbers with dedicated decoding in the parse
+/// loop; every other numeric native field becomes a `fit_field_<n>` channel.
+const Set<int> _dedicatedRecordFields = {
+  253, // timestamp
+  0, 1, 2, // position_lat, position_long, altitude
+  3, 4, 5, 6, 7, 13, // heart_rate, cadence, distance, speed, power, temp
+  8, // compressed_speed_distance (decoded into speed + distance channels)
+  78, 120, // grade, left_right_balance (named channels)
+};
+
+/// Session (global 18) field numbers mapped to dedicated [ActivitySummary]
+/// properties; every other numeric native field is preserved raw in
+/// [ActivitySummary.extraFitFields] so no session metric is silently dropped.
+const Set<int> _dedicatedSessionFields = {
+  253, 254, // timestamp
+  5, 6, // sport, sub_sport
+  7, 8, 9, 10, 11, // elapsed, timer, distance, cycles, calories
+  14, 15, 16, 17, 18, 19, 20, 21, // avg/max speed, hr, cadence, power
+  41, 43, 44, 47, // avg_stroke_count, swim_stroke, pool_length, active_lengths
+};
+
+/// Lap (global 19) field numbers mapped to dedicated [Lap] properties; every
+/// other numeric native field is preserved raw in [Lap.extraFitFields].
+const Set<int> _dedicatedLapFields = {
+  253, 254, // timestamp
+  0, 1, 2, // event, event_type, start_time
+  7, 9, 11, // elapsed, distance, calories
+  13, 14, 15, 16, 17, 18, 19, 20, // avg/max speed, hr, cadence, power
+  38, 40, // swim_stroke, num_active_lengths
+};
+
+/// Collects unknown scalar numeric native fields (excluding developer fields
+/// and arrays) into a raw field map keyed by FIT field number for lossless
+/// round-tripping.
+Map<int, double> _extraFitFields(Map<int, Object?> values, Set<int> dedicated) {
+  final extras = <int, double>{};
+  for (final entry in values.entries) {
+    if (dedicated.contains(entry.key) || _isDeveloperFieldKey(entry.key)) {
+      continue;
+    }
+    final numeric = _asNumber(entry.value);
+    if (numeric != null) {
+      extras[entry.key] = numeric.toDouble();
+    }
+  }
+  return extras;
+}
+
+/// Collects unknown numeric *array* native fields (values decoded as a
+/// `List<num>` by the reader) keyed by FIT field number, so multi-element
+/// fields like time_in_hr_zone are preserved rather than dropped.
+Map<int, List<double>> _extraFitArrays(
+  Map<int, Object?> values,
+  Set<int> dedicated,
+) {
+  final arrays = <int, List<double>>{};
+  for (final entry in values.entries) {
+    if (dedicated.contains(entry.key) || _isDeveloperFieldKey(entry.key)) {
+      continue;
+    }
+    final value = entry.value;
+    if (value is List<num>) {
+      arrays[entry.key] = [for (final element in value) element.toDouble()];
+    }
+  }
+  return arrays;
+}
+
+/// Global message numbers with dedicated handling in the parse loop.
+///
+/// These must never be rerouted through the fallback record heuristic below:
+/// e.g. a lap (global 19) with event (0), event_type (1), and timestamp (253)
+/// would otherwise be misread as a GPS record and silently dropped.
+const Set<int> _explicitlyHandledGlobalIds = {
+  0,
+  18,
+  19,
+  20,
+  21,
+  23,
+  34,
+  49,
+  101,
+  225,
+};
+
+/// Heuristic for vendor-specific messages that carry GPS record data under a
+/// non-standard global ID: timestamp (253) plus lat (0) and long (1).
 bool _looksLikeRecordDefinition(_FitMessageDefinition definition) {
+  if (_explicitlyHandledGlobalIds.contains(definition.globalId)) {
+    return false;
+  }
   final fieldNumbers = definition.fields
       .map((field) => field.fieldNumber)
       .toSet();
@@ -788,6 +1159,20 @@ const Map<(int, int), String> _knownDeveloperChannels = {
   (0, 0): 'running_power',
 };
 
+/// Converts a field_description `field_name` into a safe channel id:
+/// lowercase with non-alphanumeric runs collapsed to `_` (channel ids double
+/// as XML element names in GPX extensions, which forbid spaces and may not
+/// start with a digit). Returns null when nothing usable remains, in which
+/// case the generic `fit_dev_<i>_<n>` name is used instead.
+String? _sanitizeDeveloperFieldName(String name) {
+  var id = name.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+  id = id.replaceAll(RegExp(r'^_+|_+$'), '');
+  if (id.isEmpty || RegExp(r'^[0-9]').hasMatch(id)) {
+    return null;
+  }
+  return id;
+}
+
 String _developerChannelName({
   required int developerIndex,
   required int fieldNumber,
@@ -818,20 +1203,12 @@ String? _formatFitSoftwareVersion(Object? raw) {
   return trimmed;
 }
 
-Sport _mapSport(int value) {
-  switch (value) {
-    case 0:
-      return Sport.running;
-    case 1:
-      return Sport.cycling;
-    case 2:
-      return Sport.swimming;
-    case 11:
-      return Sport.walking;
-    default:
-      return Sport.other;
-  }
-}
+/// [SwimStroke] declares its values in FIT swim_stroke wire order (0–6),
+/// so the enum index is the FIT value.
+SwimStroke? _decodeSwimStroke(int? value) =>
+    value != null && value >= 0 && value < SwimStroke.values.length
+    ? SwimStroke.values[value]
+    : null;
 
 DateTime? _decodeTimestamp(Object? raw) {
   if (raw is! num) {
@@ -918,14 +1295,14 @@ List<GeoPoint> _filterContiguousPoints(
     if (currentGroup.length >= 3) {
       if (i == 0) {
         // Check first point against second
-        final dist = _distance(point, currentGroup[1]);
+        final dist = haversineMeters(point, currentGroup[1]);
         // If first point is >100km from second, it's likely corrupt
         if (dist > 100000) {
           isValid = false;
         }
       } else if (i == currentGroup.length - 1) {
         // Check last point against second-to-last
-        final dist = _distance(point, currentGroup[i - 1]);
+        final dist = haversineMeters(point, currentGroup[i - 1]);
         // If last point is >100km from previous, it's likely corrupt
         if (dist > 100000) {
           isValid = false;
@@ -954,23 +1331,6 @@ List<GeoPoint> _filterContiguousPoints(
   return filtered;
 }
 
-/// Calculate approximate distance in meters between two points using Haversine formula
-double _distance(GeoPoint a, GeoPoint b) {
-  const earthRadius = 6371000.0; // meters
-  final lat1 = a.latitude * 0.017453292519943295; // degrees to radians
-  final lat2 = b.latitude * 0.017453292519943295;
-  final dLat = lat2 - lat1;
-  final dLon = (b.longitude - a.longitude) * 0.017453292519943295;
-
-  final sinDLat = math.sin(dLat / 2);
-  final sinDLon = math.sin(dLon / 2);
-  final a2 =
-      sinDLat * sinDLat + math.cos(lat1) * math.cos(lat2) * sinDLon * sinDLon;
-  final c = 2 * math.asin(math.sqrt(a2));
-
-  return earthRadius * c;
-}
-
 double? _decodeAltitude(Object? raw) {
   if (raw is! num) {
     return null;
@@ -985,7 +1345,9 @@ double? _decodeAltitude(Object? raw) {
 Duration? _decodeFitDuration(Object? raw) {
   final value = _asNumber(raw)?.toDouble();
   if (value == null) return null;
-  return Duration(milliseconds: (value * 1000).round());
+  // FIT total_elapsed_time / total_timer_time / duration fields are uint32
+  // with scale 1000, i.e. the raw value is in milliseconds.
+  return Duration(milliseconds: value.round());
 }
 
 double? _decodeFitDistance(Object? raw) {
@@ -1097,8 +1459,13 @@ class _FitMessageDefinition {
       final globalMessage = reader.readUint16(
         endian: littleEndian ? Endian.little : Endian.big,
       );
+      // fieldCount is a uint8 (0–255). Real Garmin session/lap definitions
+      // routinely exceed 100 fields, so this must not cap below 255 — an
+      // over-tight limit rejected the definition, orphaned its data messages,
+      // and derailed the whole stream via resync (a 1.4 MB ride collapsed to a
+      // handful of points). Only a genuinely impossible count is rejected.
       final fieldCount = reader.readUint8();
-      if (fieldCount > 96) {
+      if (fieldCount > 255) {
         return null;
       }
       final fields = <_FitFieldDefinition>[];
@@ -1150,6 +1517,7 @@ class _FitMessageDefinition {
   Map<int, Object?>? readValues(
     _FitByteReader reader, {
     bool compressedTimestamp = false,
+    Map<int, int> developerBaseTypes = const {},
   }) {
     final values = <int, Object?>{};
     for (final field in fields) {
@@ -1168,16 +1536,26 @@ class _FitMessageDefinition {
     }
     for (final developerField in developerFields) {
       if (developerField.size > 0) {
-        final value = reader.readDeveloperValue(
-          developerField.size,
-          endian: isLittleEndian ? Endian.little : Endian.big,
+        final key = _developerFieldKey(
+          developerField.developerIndex,
+          developerField.fieldNumber,
         );
+        // Decode with the base type declared in the field_description
+        // message when available; the size-based fallback reads every value
+        // as an unsigned integer, which corrupts signed and float fields.
+        final baseType = developerBaseTypes[key];
+        final value = baseType != null
+            ? reader.readBaseType(
+                baseType,
+                developerField.size,
+                endian: isLittleEndian ? Endian.little : Endian.big,
+              )
+            : reader.readDeveloperValue(
+                developerField.size,
+                endian: isLittleEndian ? Endian.little : Endian.big,
+              );
         if (value != null) {
-          values[_developerFieldKey(
-                developerField.developerIndex,
-                developerField.fieldNumber,
-              )] =
-              value;
+          values[key] = value;
         }
       }
     }
@@ -1290,47 +1668,43 @@ class _FitByteReader {
         if (raw == 0x7F) return null;
         value = raw;
         break;
-      case 0x03: // sint16
-        if (position + 2 > bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = data.getInt16(position, endian);
-        position += 2;
-        if (raw == 0x7FFF) return null;
-        value = raw;
+      case 0x03: // sint16 (scalar or array)
+        value = _readNumeric(
+          size,
+          2,
+          signed: true,
+          invalid: 0x7FFF,
+          endian: endian,
+        );
         break;
       case 0x04: // uint16
       case 0x0B: // uint16z
-        if (position + 2 > bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = data.getUint16(position, endian);
-        position += 2;
-        if (raw == 0xFFFF) return null;
-        value = raw;
+        value = _readNumeric(
+          size,
+          2,
+          signed: false,
+          invalid: 0xFFFF,
+          endian: endian,
+        );
         break;
       case 0x05: // sint32
-        if (position + 4 > bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = data.getInt32(position, endian);
-        position += 4;
-        if (raw == 0x7FFFFFFF) return null;
-        value = raw;
+        value = _readNumeric(
+          size,
+          4,
+          signed: true,
+          invalid: 0x7FFFFFFF,
+          endian: endian,
+        );
         break;
       case 0x06: // uint32
       case 0x0C: // uint32z
-        if (position + 4 > bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = data.getUint32(position, endian);
-        position += 4;
-        if (raw == 0xFFFFFFFF) return null;
-        value = raw;
+        value = _readNumeric(
+          size,
+          4,
+          signed: false,
+          invalid: 0xFFFFFFFF,
+          endian: endian,
+        );
         break;
       case 0x07: // string
         final rawBytes = readBytes(size);
@@ -1338,12 +1712,154 @@ class _FitByteReader {
         final slice = nul >= 0 ? rawBytes.sublist(0, nul) : rawBytes;
         value = utf8.decode(slice, allowMalformed: true);
         break;
+      case 0x08: // float32
+        value = _readFloat(size, 4, endian: endian);
+        break;
+      case 0x09: // float64
+        value = _readFloat(size, 8, endian: endian);
+        break;
+      case 0x0E: // sint64
+      case 0x0F: // uint64
+      case 0x10: // uint64z
+        value = _readInt64(
+          size,
+          signed: (baseType & 0x1F) == 0x0E,
+          endian: endian,
+        );
+        break;
       default:
         final rawBytes = readBytes(size);
         value = rawBytes;
         break;
     }
     return value;
+  }
+
+  /// Reads a 16/32-bit numeric field, consuming the full [size] so array
+  /// fields (size larger than [width]) no longer misalign the stream. Returns
+  /// a scalar `num` for single values, a `List<num>` for arrays, or null when
+  /// every element is the invalid sentinel. [width] is the element byte width.
+  Object? _readNumeric(
+    int size,
+    int width, {
+    required bool signed,
+    required int invalid,
+    required Endian endian,
+  }) {
+    if (size <= 0 || position >= bytes.length) {
+      position = bytes.length;
+      return null;
+    }
+    final available = bytes.length - position;
+    final safe = size > available ? available : size;
+    final count = safe ~/ width;
+    if (count <= 0) {
+      position += safe;
+      return null;
+    }
+    final data = bytes.buffer.asByteData();
+    final values = <num>[];
+    var allInvalid = true;
+    for (var i = 0; i < count; i++) {
+      final offset = position + i * width;
+      final raw = width == 2
+          ? (signed
+                ? data.getInt16(offset, endian)
+                : data.getUint16(offset, endian))
+          : (signed
+                ? data.getInt32(offset, endian)
+                : data.getUint32(offset, endian));
+      if (raw != invalid) allInvalid = false;
+      values.add(raw);
+    }
+    position += safe; // Consume the whole field, including any odd remainder.
+    if (allInvalid) return null;
+    if (count == 1) return values.first;
+    return values;
+  }
+
+  /// Reads a float32/float64 field ([width] 4 or 8), consuming the full
+  /// [size]. The FIT invalid sentinel is the all-ones bit pattern (a NaN
+  /// encoding), detected on the raw bits before conversion. Returns a scalar
+  /// `num`, a `List<num>` for arrays, or null when every element is invalid.
+  Object? _readFloat(int size, int width, {required Endian endian}) {
+    if (size <= 0 || position >= bytes.length) {
+      position = bytes.length;
+      return null;
+    }
+    final available = bytes.length - position;
+    final safe = size > available ? available : size;
+    final count = safe ~/ width;
+    if (count <= 0) {
+      position += safe;
+      return null;
+    }
+    final data = bytes.buffer.asByteData();
+    final values = <num>[];
+    var allInvalid = true;
+    for (var i = 0; i < count; i++) {
+      final offset = position + i * width;
+      final bool invalid;
+      final double raw;
+      if (width == 4) {
+        invalid = data.getUint32(offset, endian) == 0xFFFFFFFF;
+        raw = data.getFloat32(offset, endian);
+      } else {
+        invalid =
+            data.getUint32(offset, endian) == 0xFFFFFFFF &&
+            data.getUint32(offset + 4, endian) == 0xFFFFFFFF;
+        raw = data.getFloat64(offset, endian);
+      }
+      if (!invalid) allInvalid = false;
+      values.add(raw);
+    }
+    position += safe;
+    if (allInvalid) return null;
+    if (count == 1) return values.first;
+    return values;
+  }
+
+  /// Reads a 64-bit integer field, consuming the full [size]. Values are
+  /// combined from two 32-bit halves in double arithmetic (web-safe; exact up
+  /// to 2^53, beyond which sensor data does not occur in practice). Returns a
+  /// scalar `num`, a `List<num>` for arrays, or null when every element is
+  /// the invalid sentinel (sint64 0x7FFF…, uint64 0xFFFF…).
+  Object? _readInt64(int size, {required bool signed, required Endian endian}) {
+    if (size <= 0 || position >= bytes.length) {
+      position = bytes.length;
+      return null;
+    }
+    final available = bytes.length - position;
+    final safe = size > available ? available : size;
+    final count = safe ~/ 8;
+    if (count <= 0) {
+      position += safe;
+      return null;
+    }
+    final data = bytes.buffer.asByteData();
+    final values = <num>[];
+    var allInvalid = true;
+    for (var i = 0; i < count; i++) {
+      final offset = position + i * 8;
+      final first = data.getUint32(offset, endian);
+      final second = data.getUint32(offset + 4, endian);
+      final lo = endian == Endian.little ? first : second;
+      final hi = endian == Endian.little ? second : first;
+      final invalid = signed
+          ? hi == 0x7FFFFFFF && lo == 0xFFFFFFFF
+          : hi == 0xFFFFFFFF && lo == 0xFFFFFFFF;
+      if (!invalid) allInvalid = false;
+      final unsignedValue = hi.toDouble() * 4294967296.0 + lo.toDouble();
+      values.add(
+        signed && (hi & 0x80000000) != 0
+            ? unsignedValue - 18446744073709551616.0
+            : unsignedValue,
+      );
+    }
+    position += safe;
+    if (allInvalid) return null;
+    if (count == 1) return values.first;
+    return values;
   }
 
   Object? readDeveloperValue(int size, {Endian endian = Endian.little}) {
