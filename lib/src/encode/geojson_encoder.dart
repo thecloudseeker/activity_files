@@ -102,11 +102,17 @@ class GeojsonEncoder {
           'type': 'Feature',
           'geometry': {
             'type': 'Point',
-            'coordinates': [p.longitude, p.latitude],
+            // Third coordinate is elevation per the GeoJSON spec (RFC 7946
+            // §3.1.1); omitted when the point has none so nulls round-trip.
+            'coordinates': [
+              p.longitude,
+              p.latitude,
+              if (p.elevation != null) p.elevation,
+            ],
           },
           'properties': {
             'timestamp': p.time.toIso8601String(),
-            'altitude': p.elevation ?? 0,
+            if (p.elevation != null) 'altitude': p.elevation,
             // Every channel (built-in and custom) is written under its
             // channel id so no sensor data is lost.
             if (includeChannels)

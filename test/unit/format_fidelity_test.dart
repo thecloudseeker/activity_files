@@ -214,6 +214,36 @@ void main() {
       expect(parsed.channel(Channel.custom('core_temp')).first.value, 37.2);
       expect(parsed.channel(Channel.heartRate).first.value, 133.0);
     });
+
+    test('point features preserve elevation via the third coordinate', () {
+      final points = pointsAt(t0, 3);
+      final activity = RawActivity(points: points, sport: Sport.hiking);
+
+      final encoded = GeojsonEncoder.encodeAsPoints(activity);
+      final parsed = ActivityParser.parseBytes(
+        Uint8List.fromList(utf8.encode(encoded)),
+        ActivityFileFormat.geojson,
+      ).activity;
+      expect(parsed.points, hasLength(3));
+      for (var i = 0; i < 3; i++) {
+        expect(parsed.points[i].elevation, closeTo(300.0 + i, 0.001));
+      }
+    });
+
+    test('point features omit altitude for points without elevation', () {
+      final activity = RawActivity(
+        points: [GeoPoint(latitude: 48.0, longitude: 9.0, time: t0)],
+        sport: Sport.walking,
+      );
+
+      final encoded = GeojsonEncoder.encodeAsPoints(activity);
+      expect(encoded, isNot(contains('altitude')));
+      final parsed = ActivityParser.parseBytes(
+        Uint8List.fromList(utf8.encode(encoded)),
+        ActivityFileFormat.geojson,
+      ).activity;
+      expect(parsed.points.single.elevation, isNull);
+    });
   });
 
   group('CSV round-trip', () {
