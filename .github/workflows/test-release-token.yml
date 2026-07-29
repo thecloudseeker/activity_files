@@ -1,0 +1,42 @@
+name: Test RELEASE_TOKEN (temporary)
+
+# Throwaway verification that RELEASE_TOKEN is a real PAT rather than the
+# default GITHUB_TOKEN: push-test-tag pushes a tag that doesn't match
+# publish.yml's `v*.*.*` pattern, so this can never trigger a real publish.
+# If the tag push fires confirm-tag-triggered-a-run as a second, separate
+# workflow run, RELEASE_TOKEN is wired correctly. Delete this file (and any
+# release-token-check-* tags it created) once confirmed.
+
+on:
+  push:
+    branches:
+      - 'release/0.7.1'
+    tags:
+      - 'release-token-check-*'
+
+jobs:
+  push-test-tag:
+    if: startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Push a throwaway test tag
+        run: |
+          TAG="release-token-check-$(date +%s)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Pushed $TAG — a second workflow run should appear shortly if RELEASE_TOKEN works."
+
+  confirm-tag-triggered-a-run:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Success — this run was triggered by the tag push above, authenticated with RELEASE_TOKEN instead of GITHUB_TOKEN. The real fix in test.yml will work the same way."
