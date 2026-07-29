@@ -1,7 +1,8 @@
 # Changelog
 ## 0.7.1
 ### Fixed
-- GitHub workflow fix
+- No changes to the package itself
+- GitHub workflow fix (fixes automated publishing to pub.dev)
 
 ## 0.7.0
 ### Breaking
