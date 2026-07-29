@@ -59,14 +59,21 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-    outputs:
-      tag: v${{ steps.version.outputs.version }}
-      created: ${{ steps.tag.outputs.created }}
+      contents: read
     steps:
+      # RELEASE_TOKEN is a PAT with `contents: write` on this repo, stored as
+      # a repo secret — not the default GITHUB_TOKEN. GitHub suppresses other
+      # workflows from being triggered by GITHUB_TOKEN-authored pushes, so a
+      # tag pushed that way would never fire publish.yml's `on: push: tags:`
+      # listener below. Separately, pub.dev's trusted-publisher check requires
+      # the *publishing* workflow run itself to have been triggered by an
+      # actual tag ref (ref_type == 'tag') — calling the publish workflow
+      # directly from this branch-triggered run doesn't satisfy that, so
+      # publishing has to happen via publish.yml's own tag-triggered run.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
 
       - name: Read pubspec version
         id: version
@@ -77,28 +84,13 @@ jobs:
       # Idempotent: a push to main whose version already has a tag (e.g. a
       # docs-only follow-up commit) just skips instead of failing.
       - name: Create and push tag if missing
-        id: tag
         run: |
           TAG="v${{ steps.version.outputs.version }}"
           if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists, skipping."
-            echo "created=false" >> "$GITHUB_OUTPUT"
           else
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag -a "$TAG" -m "$TAG"
             git push origin "$TAG"
-            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
-
-  publish:
-    name: Publish to pub.dev
-    needs: tag-release
-    # A tag pushed with the default GITHUB_TOKEN above does not itself
-    # trigger publish.yml's tag-push listener (GitHub suppresses
-    # workflow-triggering for GITHUB_TOKEN-authored pushes), so this job
-    # calls the same reusable workflow directly instead of relying on that.
-    if: needs.tag-release.outputs.created == 'true'
-    permissions:
-      id-token: write
-    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1

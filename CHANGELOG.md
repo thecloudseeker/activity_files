@@ -1,4 +1,8 @@
 # Changelog
+## 0.7.1
+### Fixed
+- GitHub workflow fix
+
 ## 0.7.0
 ### Breaking
 - FIT parsing is now remapped to the official FIT profile. Since 0.6.0, session/lap stats and the sport value were parsed incorrectly 
