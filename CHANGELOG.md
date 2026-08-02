@@ -1,4 +1,9 @@
 # Changelog
+## 0.7.2
+### Fixed
+- `ActivityFiles.channelSamplesFrom()` emitted second-resolution timestamps instead of milliseconds, which didn't match what `builderFromStreams()`/`convertAndExport()` expect — round-tripping through it silently produced dates near 1970 instead of the correct time. If you built on this in 0.7.0/0.7.1, re-check any stored output.
+- `convertAndExport(location: ..., autoFix: ...)` silently ignored `autoFix` when building from raw streams instead of a source file.
+
 ## 0.7.1
 ### Fixed
 - No changes to the package itself

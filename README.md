@@ -52,7 +52,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.7.1
+  activity_files: ^0.7.2
 ```
 
 Then install dependencies:

@@ -499,9 +499,10 @@ class ActivityFiles {
   /// ready to pass directly to [convertAndExport].
   ///
   /// This removes the per-channel reconstruction glue when re-exporting a
-  /// previously imported [RawActivity]. Note that [ChannelStreamSample]
-  /// timestamps have whole-second resolution, so sub-second sample timing
-  /// (recordings above 1 Hz) is truncated:
+  /// previously imported [RawActivity]. Timestamps are milliseconds since the
+  /// epoch, matching [ChannelStreamSample]'s [StreamTimestampDecoder]
+  /// contract used by [convertAndExport] — round-tripping through this
+  /// method does not lose sub-second precision.
   ///
   /// ```dart
   /// final channels = ActivityFiles.channelSamplesFrom(stored);
@@ -519,10 +520,7 @@ class ActivityFiles {
       if (entry.value.isEmpty) continue;
       result[entry.key] = [
         for (final sample in entry.value)
-          (
-            timestamp: sample.time.millisecondsSinceEpoch ~/ 1000,
-            value: sample.value,
-          ),
+          (timestamp: sample.time.millisecondsSinceEpoch, value: sample.value),
       ];
     }
     return result;
@@ -1458,6 +1456,7 @@ class ActivityFiles {
         normalize: normalize,
         runValidation: runValidation,
         exportInIsolate: exportInIsolate,
+        autoFix: autoFix,
       ),
     );
   }

@@ -2854,9 +2854,9 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // ActivityFiles.channelSamplesFrom (0.7.0)
+  // ActivityFiles.channelSamplesFrom
   // ---------------------------------------------------------------------------
-  group('ActivityFiles.channelSamplesFrom (0.7.0)', () {
+  group('ActivityFiles.channelSamplesFrom', () {
     test('returns empty map for activity with no channels', () {
       final activity = RawActivity(
         points: [
@@ -2874,10 +2874,11 @@ void main() {
     });
 
     test(
-      'converts HR samples to ChannelStreamSample with unix-second timestamps',
+      'converts HR samples to ChannelStreamSample with millisecond timestamps '
+      'matching builderFromStreams/StreamTimestampDecoder',
       () {
-        final t0 = DateTime.utc(2024, 1, 1, 10, 0, 0);
-        final t1 = DateTime.utc(2024, 1, 1, 10, 0, 10);
+        final t0 = DateTime.utc(2024, 1, 1, 10, 0, 0, 250);
+        final t1 = DateTime.utc(2024, 1, 1, 10, 0, 10, 750);
         final activity = RawActivity(
           channels: {
             Channel.heartRate: [
@@ -2892,10 +2893,29 @@ void main() {
         expect(result, contains(Channel.heartRate));
         final samples = result[Channel.heartRate]!;
         expect(samples, hasLength(2));
-        expect(samples[0].timestamp, equals(t0.millisecondsSinceEpoch ~/ 1000));
+        expect(samples[0].timestamp, equals(t0.millisecondsSinceEpoch));
         expect(samples[0].value, equals(140));
-        expect(samples[1].timestamp, equals(t1.millisecondsSinceEpoch ~/ 1000));
+        expect(samples[1].timestamp, equals(t1.millisecondsSinceEpoch));
         expect(samples[1].value, equals(145));
+
+        // Round-trips through the default StreamTimestampDecoder without
+        // losing sub-second precision (this used to silently divide by 1000).
+        final builder = ActivityFiles.builderFromStreams(
+          location: [
+            (
+              timestamp: samples[0].timestamp,
+              latitude: 40.0,
+              longitude: -105.0,
+              elevation: null,
+            ),
+          ],
+          channels: {Channel.heartRate: samples},
+        );
+        final rebuilt = builder.build(normalize: false);
+        expect(
+          rebuilt.channel(Channel.heartRate).first.time,
+          equals(t0.toUtc()),
+        );
       },
     );
 
@@ -2948,9 +2968,9 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // ActivityFiles.loadBatch + BatchImportResult / BatchImportFailure (0.7.0)
+  // ActivityFiles.loadBatch + BatchImportResult / BatchImportFailure
   // ---------------------------------------------------------------------------
-  group('ActivityFiles.loadBatch (0.7.0)', () {
+  group('ActivityFiles.loadBatch', () {
     test('loads multiple valid sources and all succeed', () async {
       final result = await ActivityFiles.loadBatch([
         sampleGpx,
@@ -3045,5 +3065,51 @@ void main() {
       expect(str, contains('BatchImportFailure'));
       expect(str, contains('bad source'));
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // ActivityFiles.convertAndExport(location: ..., autoFix: ...) — regression:
+  // autoFix was silently ignored when building from raw streams instead of a
+  // source file.
+  // ---------------------------------------------------------------------------
+  group('convertAndExport(location: ...) autoFix threading', () {
+    test(
+      'threads autoFix through (previously silently ignored for streams)',
+      () async {
+        final base = DateTime.utc(2024, 5, 4, 6);
+        final ts0 = base.millisecondsSinceEpoch;
+        final List<LocationStreamSample> location = [
+          (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
+          (
+            timestamp: ts0 + 300000,
+            latitude: 40.009,
+            longitude: -105.0,
+            elevation: 1600,
+          ),
+        ];
+
+        final result = await ActivityFiles.convertAndExport(
+          location: location,
+          sport: Sport.running,
+          to: ActivityFileFormat.gpx,
+          autoFix: const ActivityAutoFixOptions(
+            fixInvalidGps: false,
+            fixChannelDrift: false,
+            fixDistanceDrift: false,
+            fixTimestampGaps: false,
+            autoLapByDistance: true,
+            autoLapDistanceMeters: 100,
+          ),
+        );
+
+        expect(result.activity.laps, isNotEmpty);
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'autofix.laps.auto_generated',
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 }
