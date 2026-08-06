@@ -6,16 +6,16 @@ import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
 
-/// Regression coverage for two FIT decoder defects that silently destroyed
-/// most of a real activity:
+/// Coverage for two FIT definition-parsing requirements that real Garmin
+/// files depend on:
 ///
-/// 1. Definitions with more than 96 fields were rejected outright. Modern
-///    Garmin session/lap messages routinely carry 130+ fields, so the rejected
-///    definition orphaned its data message, tripped stream resync, and
-///    cascaded into garbage — a 1.4 MB ride collapsed to ~5 points.
-/// 2. 16/32-bit array fields (e.g. session `time_in_hr_zone`) advanced the
-///    reader by the base-type width instead of the field size, misaligning
-///    every field after them in the same message.
+/// 1. Definitions with more than 96 fields must be accepted. Modern Garmin
+///    session/lap messages routinely carry 130+ fields; rejecting the
+///    definition orphans its data message, trips stream resync, and
+///    cascades into garbage, collapsing a 1.4 MB ride to ~5 points.
+/// 2. 16/32-bit array fields (e.g. session `time_in_hr_zone`) must advance
+///    the reader by the field size, not the base-type width, or every field
+///    after them in the same message misaligns.
 void main() {
   const base = 1000000000; // FIT seconds → a 2021 timestamp, passes validation.
 

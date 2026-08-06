@@ -3,7 +3,7 @@ import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
 /// GPX round-trip coverage for waypoints, routes, per-point GPS attributes,
-/// and multi-segment tracks — the structures that used to be dropped.
+/// and multi-segment tracks.
 void main() {
   RawActivity roundTrip(String gpx) {
     final activity = ActivityParser.parse(gpx, ActivityFileFormat.gpx).activity;

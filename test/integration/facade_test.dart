@@ -2899,7 +2899,7 @@ void main() {
         expect(samples[1].value, equals(145));
 
         // Round-trips through the default StreamTimestampDecoder without
-        // losing sub-second precision (this used to silently divide by 1000).
+        // losing sub-second precision.
         final builder = ActivityFiles.builderFromStreams(
           location: [
             (
@@ -2924,7 +2924,7 @@ void main() {
       final activity = RawActivity(
         channels: {
           Channel.heartRate: [Sample(time: t0, value: 140)],
-          Channel.cadence: [], // empty — should be skipped
+          Channel.cadence: [], // empty, should be skipped
         },
       );
 

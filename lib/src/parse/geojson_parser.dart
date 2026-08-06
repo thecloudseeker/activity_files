@@ -115,7 +115,11 @@ class GeojsonParser implements ActivityFormatParser {
         if (coordinates == null || coordinates.length < 2) {
           continue;
         }
-        final point = _coordinateToGeoPoint(coordinates, properties);
+        final point = _coordinateToGeoPoint(
+          coordinates,
+          properties,
+          diagnostics,
+        );
         if (point == null) {
           continue;
         }
@@ -215,6 +219,7 @@ class GeojsonParser implements ActivityFormatParser {
         final point = _coordinateToGeoPoint(
           coord,
           properties,
+          diagnostics,
           timeOverride: times != null && i < times.length ? times[i] : null,
         );
         if (point != null) {
@@ -224,7 +229,7 @@ class GeojsonParser implements ActivityFormatParser {
       }
     } else if (geomType == 'Point') {
       // Point: [lon, lat, ...]
-      final point = _coordinateToGeoPoint(coordinates, properties);
+      final point = _coordinateToGeoPoint(coordinates, properties, diagnostics);
       if (point != null) {
         points.add(point);
         _collectChannelSamples(point.time, properties, channelMap);
@@ -235,7 +240,7 @@ class GeojsonParser implements ActivityFormatParser {
         if (lineCoords is! List) continue;
         for (final coord in lineCoords) {
           if (coord is! List || coord.length < 2) continue;
-          final point = _coordinateToGeoPoint(coord, properties);
+          final point = _coordinateToGeoPoint(coord, properties, diagnostics);
           if (point != null) {
             points.add(point);
             _collectChannelSamples(point.time, properties, channelMap);
@@ -254,6 +259,7 @@ class GeojsonParser implements ActivityFormatParser {
           final point = _coordinateToGeoPoint(
             coord,
             properties,
+            diagnostics,
             timeOverride: times != null && i < times.length ? times[i] : null,
           );
           if (point != null) {
@@ -337,19 +343,43 @@ class GeojsonParser implements ActivityFormatParser {
     ];
   }
 
-  /// Convert GeoJSON coordinate to GeoPoint
+  /// Convert GeoJSON coordinate to GeoPoint. Malformed coordinates are
+  /// dropped (skip the point, keep going); an invalid `timestamp` property
+  /// falls back to the epoch, mirroring the GPX parser's
+  /// `gpx.wpt.invalid_timestamp` behavior.
   static GeoPoint? _coordinateToGeoPoint(
     List coord,
-    Map properties, {
+    Map properties,
+    List<ParseDiagnostic> diagnostics, {
     DateTime? timeOverride,
   }) {
     try {
-      if (coord.length < 2) return null;
+      if (coord.length < 2) {
+        diagnostics.add(
+          const ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.point.invalid_coordinate',
+            message: 'Coordinate has fewer than 2 elements; point skipped.',
+          ),
+        );
+        return null;
+      }
 
       final longitude = _toDouble(coord[0]);
       final latitude = _toDouble(coord[1]);
 
-      if (latitude == null || longitude == null) return null;
+      if (latitude == null || longitude == null) {
+        diagnostics.add(
+          const ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.point.invalid_coordinate',
+            message:
+                'Coordinate longitude/latitude is not numeric; point '
+                'skipped.',
+          ),
+        );
+        return null;
+      }
 
       // GeoJSON is [lon, lat, elevation?, ...] per spec
       final altitude = coord.length > 2 ? _toDouble(coord[2]) : null;
@@ -359,7 +389,17 @@ class GeojsonParser implements ActivityFormatParser {
       if (timestamp == null && properties['timestamp'] != null) {
         try {
           timestamp = DateTime.parse(properties['timestamp'].toString());
-        } catch (_) {}
+        } catch (_) {
+          diagnostics.add(
+            const ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'geojson.point.invalid_timestamp',
+              message:
+                  'Point "timestamp" property is not a valid ISO 8601 '
+                  'date; point kept with an epoch fallback time.',
+            ),
+          );
+        }
       }
       timestamp ??= _geojsonFallbackTimestamp;
 
@@ -371,7 +411,14 @@ class GeojsonParser implements ActivityFormatParser {
       );
 
       return point;
-    } catch (_) {
+    } catch (e) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'geojson.point.invalid_coordinate',
+          message: 'Failed to read coordinate: $e. Point skipped.',
+        ),
+      );
       return null;
     }
   }

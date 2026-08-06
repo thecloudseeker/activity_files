@@ -3,11 +3,10 @@
 /// cross-checked with the python-fitparse reference implementation of the
 /// official FIT profile.
 ///
-/// Background: prior to 0.7.0 the session message mapping was shifted against
-/// the FIT profile (e.g. avg_speed was read from field 16, which is
-/// avg_heart_rate) and durations were decoded without the scale-1000 factor,
-/// so a 16-minute ride reported an elapsed time of ~265 hours. These tests
-/// exist so field renumbering can never silently regress again.
+/// Session field numbering must exactly match the profile (e.g. avg_speed is
+/// field 16, not avg_heart_rate) and durations must decode with the
+/// scale-1000 factor applied. These tests exist so field renumbering can
+/// never silently regress.
 library;
 
 import 'dart:io';
@@ -20,8 +19,7 @@ void main() {
     'committed real-world sample.fit decodes lap durations at scale 1000',
     () {
       // Ground truth via python-fitparse: 1 session (sport running), 2 laps,
-      // lap[0].total_elapsed_time == 20.0 s. The pre-0.7.0 decoder returned
-      // 20000 s for this lap.
+      // lap[0].total_elapsed_time == 20.0 s.
       final bytes = File(
         'test/fixtures/real_world/sample.fit',
       ).readAsBytesSync();

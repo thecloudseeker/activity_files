@@ -43,12 +43,34 @@ class CsvParser implements ActivityFormatParser {
         if (row.isEmpty || row.every((v) => v.isEmpty)) continue;
 
         final timestamp = _parseDateTime(row, headerMap, 'timestamp');
-        if (timestamp == null) continue;
+        if (timestamp == null) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'csv.row.invalid_timestamp',
+              message:
+                  'Row ${i + 1} has a missing or unparseable "timestamp" '
+                  'column; row skipped.',
+            ),
+          );
+          continue;
+        }
 
         final latitude = _parseDouble(row, headerMap, 'latitude');
         final longitude = _parseDouble(row, headerMap, 'longitude');
 
-        if (latitude == null || longitude == null) continue;
+        if (latitude == null || longitude == null) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'csv.row.invalid_coordinates',
+              message:
+                  'Row ${i + 1} has a missing or unparseable "latitude"/'
+                  '"longitude" column; row skipped.',
+            ),
+          );
+          continue;
+        }
 
         final point = GeoPoint(
           latitude: latitude,

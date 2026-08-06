@@ -266,7 +266,7 @@ void main() {
         expect(properties['max_heart_rate'], equals(155));
       });
 
-      test('defaults missing properties to defaults', () {
+      test('omits total_calories when the activity has no summary', () {
         final activity = RawActivity(
           points: [
             GeoPoint(
@@ -284,8 +284,30 @@ void main() {
         final decoded = jsonDecode(geojson);
         final properties = decoded['features'][0]['properties'];
 
-        expect(properties['total_calories'], equals(0));
-        expect(properties['total_steps'], equals(0));
+        expect(properties, isNot(contains('total_calories')));
+        expect(properties, isNot(contains('total_steps')));
+      });
+
+      test('total_calories reflects the actual activity summary', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+          summary: const ActivitySummary(calories: 512),
+        );
+
+        final geojson = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.geojson,
+        );
+        final decoded = jsonDecode(geojson);
+        final properties = decoded['features'][0]['properties'];
+
+        expect(properties['total_calories'], equals(512));
       });
     });
 

@@ -156,6 +156,12 @@ void main() {
         final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'csv.row.invalid_coordinates',
+          ),
+          isTrue,
+        );
       });
 
       test('skips rows with missing longitude', () {
@@ -167,6 +173,12 @@ void main() {
         final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'csv.row.invalid_coordinates',
+          ),
+          isTrue,
+        );
       });
 
       test('skips rows with missing timestamp', () {
@@ -178,6 +190,10 @@ void main() {
         final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
+        expect(
+          result.diagnostics.any((d) => d.code == 'csv.row.invalid_timestamp'),
+          isTrue,
+        );
       });
 
       test('skips empty rows', () {
