@@ -1,4 +1,9 @@
 # Changelog
+## 0.7.3
+### Fixed
+- GeoJSON LineString export no longer fabricates `total_calories`/`total_steps` as `0`.
+- GeoJSON/CSV parsers now warn (`geojson.point.*`, `csv.row.*`) instead of silently dropping malformed points/rows, with correct per-feature diagnostics and CSV row numbers.
+
 ## 0.7.2
 ### Fixed
 - `ActivityFiles.channelSamplesFrom()` emitted second-resolution timestamps instead of milliseconds, which didn't match what `builderFromStreams()`/`convertAndExport()` expect — round-tripping through it silently produced dates near 1970 instead of the correct time. If you built on this in 0.7.0/0.7.1, re-check any stored output.
