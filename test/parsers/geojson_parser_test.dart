@@ -238,6 +238,46 @@ void main() {
         // Should fall back to parsing first feature
         expect(result.activity.points, isNotEmpty);
       });
+
+      test(
+        'reports a warning and skips a malformed point in a Point FeatureCollection',
+        () {
+          final geojson = {
+            'type': 'FeatureCollection',
+            'features': [
+              {
+                'type': 'Feature',
+                'geometry': {
+                  'type': 'Point',
+                  'coordinates': [-105.0, 40.0],
+                },
+                'properties': {'timestamp': '2024-01-01T10:00:00Z'},
+              },
+              {
+                'type': 'Feature',
+                'geometry': {
+                  'type': 'Point',
+                  'coordinates': [-105.0005], // too short
+                },
+                'properties': {'timestamp': '2024-01-01T10:00:10Z'},
+              },
+            ],
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(result.activity.points, hasLength(1));
+          expect(
+            result.diagnostics.any(
+              (d) => d.code == 'geojson.point.invalid_coordinate',
+            ),
+            isTrue,
+          );
+        },
+      );
     });
 
     group('Error handling', () {
@@ -331,6 +371,37 @@ void main() {
           isNotEmpty,
         );
       });
+
+      test(
+        'reports a warning and skips a coordinate with non-numeric lon/lat',
+        () {
+          final geojson = {
+            'type': 'Feature',
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': [
+                [-105.0, 40.0],
+                ['bad', 'coord'],
+                [-105.1, 40.1],
+              ],
+            },
+            'properties': {},
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(
+            result.diagnostics.any(
+              (d) => d.code == 'geojson.point.invalid_coordinate',
+            ),
+            isTrue,
+          );
+          expect(result.activity.points, hasLength(2));
+        },
+      );
     });
 
     group('Timestamp handling', () {
@@ -368,6 +439,63 @@ void main() {
         );
 
         expect(result.activity.points[0].time, isA<DateTime>());
+      });
+
+      test(
+        'reports a warning and falls back to epoch for an unparseable timestamp',
+        () {
+          final geojson = {
+            'type': 'Feature',
+            'geometry': {
+              'type': 'Point',
+              'coordinates': [-105.0, 40.0],
+            },
+            'properties': {'timestamp': 'not-a-date'},
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(
+            result.diagnostics.any(
+              (d) => d.code == 'geojson.point.invalid_timestamp',
+            ),
+            isTrue,
+          );
+          expect(
+            result.activity.points[0].time,
+            equals(DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)),
+          );
+        },
+      );
+
+      test('reports one warning, not one per point, for a shared invalid '
+          'feature-level timestamp', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (var i = 0; i < 50; i++) [-105.0 - i * 0.001, 40.0],
+            ],
+          },
+          'properties': {'timestamp': 'not-a-date'},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(50));
+        expect(
+          result.diagnostics
+              .where((d) => d.code == 'geojson.point.invalid_timestamp')
+              .length,
+          equals(1),
+        );
       });
     });
 

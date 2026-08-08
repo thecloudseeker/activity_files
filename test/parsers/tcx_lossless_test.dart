@@ -3,7 +3,7 @@ import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
 /// TCX round-trip coverage for Notes, Author, lap Intensity/TriggerMethod, and
-/// multi-sport activity structure — previously dropped or merged away.
+/// multi-sport activity structure.
 void main() {
   RawActivity parse(String tcx) =>
       ActivityParser.parse(tcx, ActivityFileFormat.tcx).activity;

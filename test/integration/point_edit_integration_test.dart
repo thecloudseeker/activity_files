@@ -242,7 +242,7 @@ void main() {
     });
   });
 
-  group('shiftTime regression: sets are shifted (fix verification)', () {
+  group('shiftTime and sets', () {
     test('sets are shifted after shiftTime is called', () {
       final base = DateTime.utc(2024, 8, 6, 6);
       final activity = RawActivity(

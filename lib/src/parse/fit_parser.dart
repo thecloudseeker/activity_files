@@ -730,9 +730,9 @@ class FitParser implements ActivityFormatParser {
         case 23: // device_info
           // Official profile: 0 device_index, 2 manufacturer,
           // 3 serial_number, 4 product, 5 software_version (scale 100),
-          // 27 product_name. (Fields 2–5 were shifted by one before 0.7.0,
-          // reading hardware_version as the software version and the serial
-          // number as the manufacturer.)
+          // 27 product_name. These offsets must match exactly: reading
+          // fields 2–5 shifted by one swaps hardware_version in as the
+          // software version and the serial number as the manufacturer.
           //
           // Real files carry one device_info per connected sensor;
           // device_index 0 is the recording head unit ("creator"). Only its

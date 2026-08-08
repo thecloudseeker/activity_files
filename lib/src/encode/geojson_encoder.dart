@@ -58,8 +58,8 @@ class GeojsonEncoder {
       'duration': points.isNotEmpty
           ? points.last.time.difference(points.first.time).inSeconds.toDouble()
           : 0,
-      'total_calories': 0,
-      'total_steps': 0,
+      if (activity.summary?.calories != null)
+        'total_calories': activity.summary!.calories,
       if (laps.isNotEmpty) ...{
         'num_laps': laps.length,
         'avg_heart_rate':

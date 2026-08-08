@@ -112,10 +112,21 @@ class GeojsonParser implements ActivityFormatParser {
         final geometry = feature['geometry'] as Map;
         final properties = feature['properties'] as Map? ?? {};
         final coordinates = geometry['coordinates'] as List?;
-        if (coordinates == null || coordinates.length < 2) {
+        if (coordinates == null) {
+          diagnostics.add(
+            const ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'geojson.point.invalid_coordinate',
+              message: 'Feature geometry missing coordinates; point skipped.',
+            ),
+          );
           continue;
         }
-        final point = _coordinateToGeoPoint(coordinates, properties);
+        final point = _coordinateToGeoPoint(
+          coordinates,
+          properties,
+          diagnostics,
+        );
         if (point == null) {
           continue;
         }
@@ -207,15 +218,26 @@ class GeojsonParser implements ActivityFormatParser {
     if (geomType == 'LineString') {
       // LineString: array of [lon, lat, ...] coordinates. Per-point times may
       // be present as properties.coordinateProperties.times (togeojson/Mapbox
-      // convention), parallel to the coordinates array.
+      // convention), parallel to the coordinates array. All coordinates share
+      // one feature-level `properties` map, so its `timestamp` is resolved
+      // once here rather than per point (avoids diagnostic spam for a single
+      // bad value shared across every coordinate).
       final times = _coordinateTimes(properties);
+      final sharedTimestamp = _resolvePropertyTimestamp(
+        properties,
+        diagnostics,
+      );
       for (var i = 0; i < coordinates.length; i++) {
         final coord = coordinates[i];
         if (coord is! List || coord.length < 2) continue;
         final point = _coordinateToGeoPoint(
           coord,
           properties,
-          timeOverride: times != null && i < times.length ? times[i] : null,
+          diagnostics,
+          timeOverride:
+              (times != null && i < times.length ? times[i] : null) ??
+              sharedTimestamp,
+          resolvePropertyTimestamp: false,
         );
         if (point != null) {
           points.add(point);
@@ -224,18 +246,29 @@ class GeojsonParser implements ActivityFormatParser {
       }
     } else if (geomType == 'Point') {
       // Point: [lon, lat, ...]
-      final point = _coordinateToGeoPoint(coordinates, properties);
+      final point = _coordinateToGeoPoint(coordinates, properties, diagnostics);
       if (point != null) {
         points.add(point);
         _collectChannelSamples(point.time, properties, channelMap);
       }
     } else if (geomType == 'MultiLineString') {
-      // MultiLineString: array of LineStrings
+      // MultiLineString: array of LineStrings, all sharing one feature-level
+      // `properties` map — resolve `timestamp` once, see LineString above.
+      final sharedTimestamp = _resolvePropertyTimestamp(
+        properties,
+        diagnostics,
+      );
       for (final lineCoords in coordinates) {
         if (lineCoords is! List) continue;
         for (final coord in lineCoords) {
           if (coord is! List || coord.length < 2) continue;
-          final point = _coordinateToGeoPoint(coord, properties);
+          final point = _coordinateToGeoPoint(
+            coord,
+            properties,
+            diagnostics,
+            timeOverride: sharedTimestamp,
+            resolvePropertyTimestamp: false,
+          );
           if (point != null) {
             points.add(point);
             _collectChannelSamples(point.time, properties, channelMap);
@@ -248,13 +281,21 @@ class GeojsonParser implements ActivityFormatParser {
       final exterior = coordinates.isNotEmpty ? coordinates[0] : null;
       if (exterior is List) {
         final times = _coordinateTimes(properties);
+        final sharedTimestamp = _resolvePropertyTimestamp(
+          properties,
+          diagnostics,
+        );
         for (var i = 0; i < exterior.length; i++) {
           final coord = exterior[i];
           if (coord is! List || coord.length < 2) continue;
           final point = _coordinateToGeoPoint(
             coord,
             properties,
-            timeOverride: times != null && i < times.length ? times[i] : null,
+            diagnostics,
+            timeOverride:
+                (times != null && i < times.length ? times[i] : null) ??
+                sharedTimestamp,
+            resolvePropertyTimestamp: false,
           );
           if (point != null) {
             points.add(point);
@@ -337,29 +378,84 @@ class GeojsonParser implements ActivityFormatParser {
     ];
   }
 
-  /// Convert GeoJSON coordinate to GeoPoint
+  /// Parses `properties['timestamp']`, if present. Callers that share one
+  /// `properties` map across many coordinates (LineString/MultiLineString/
+  /// Polygon) call this once per feature and thread the result through
+  /// [_coordinateToGeoPoint]'s `timeOverride`, so an invalid value reports
+  /// `geojson.point.invalid_timestamp` once per feature, not once per point.
+  static DateTime? _resolvePropertyTimestamp(
+    Map properties,
+    List<ParseDiagnostic> diagnostics,
+  ) {
+    final raw = properties['timestamp'];
+    if (raw == null) return null;
+    try {
+      return DateTime.parse(raw.toString());
+    } catch (_) {
+      diagnostics.add(
+        const ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'geojson.point.invalid_timestamp',
+          message:
+              'Point "timestamp" property is not a valid ISO 8601 '
+              'date; point kept with an epoch fallback time.',
+        ),
+      );
+      return null;
+    }
+  }
+
+  /// Convert GeoJSON coordinate to GeoPoint. Malformed coordinates are
+  /// dropped (skip the point, keep going); an invalid `timestamp` property
+  /// falls back to the epoch, mirroring the GPX parser's
+  /// `gpx.wpt.invalid_timestamp` behavior.
+  ///
+  /// Pass [resolvePropertyTimestamp]: false when the caller already resolved
+  /// `properties['timestamp']` once (via [_resolvePropertyTimestamp]) and
+  /// threaded it through [timeOverride], to avoid re-resolving (and
+  /// re-diagnosing) it per coordinate.
   static GeoPoint? _coordinateToGeoPoint(
     List coord,
-    Map properties, {
+    Map properties,
+    List<ParseDiagnostic> diagnostics, {
     DateTime? timeOverride,
+    bool resolvePropertyTimestamp = true,
   }) {
     try {
-      if (coord.length < 2) return null;
+      if (coord.length < 2) {
+        diagnostics.add(
+          const ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.point.invalid_coordinate',
+            message: 'Coordinate has fewer than 2 elements; point skipped.',
+          ),
+        );
+        return null;
+      }
 
       final longitude = _toDouble(coord[0]);
       final latitude = _toDouble(coord[1]);
 
-      if (latitude == null || longitude == null) return null;
+      if (latitude == null || longitude == null) {
+        diagnostics.add(
+          const ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.point.invalid_coordinate',
+            message:
+                'Coordinate longitude/latitude is not numeric; point '
+                'skipped.',
+          ),
+        );
+        return null;
+      }
 
       // GeoJSON is [lon, lat, elevation?, ...] per spec
       final altitude = coord.length > 2 ? _toDouble(coord[2]) : null;
 
       // Extract time from properties if available
       DateTime? timestamp = timeOverride;
-      if (timestamp == null && properties['timestamp'] != null) {
-        try {
-          timestamp = DateTime.parse(properties['timestamp'].toString());
-        } catch (_) {}
+      if (timestamp == null && resolvePropertyTimestamp) {
+        timestamp = _resolvePropertyTimestamp(properties, diagnostics);
       }
       timestamp ??= _geojsonFallbackTimestamp;
 
@@ -371,7 +467,14 @@ class GeojsonParser implements ActivityFormatParser {
       );
 
       return point;
-    } catch (_) {
+    } catch (e) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'geojson.point.invalid_coordinate',
+          message: 'Failed to read coordinate: $e. Point skipped.',
+        ),
+      );
       return null;
     }
   }

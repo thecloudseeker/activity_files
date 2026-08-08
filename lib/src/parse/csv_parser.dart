@@ -14,8 +14,11 @@ class CsvParser implements ActivityFormatParser {
     final diagnostics = <ParseDiagnostic>[];
 
     try {
-      // CSV 8.0.0: Use new Csv API with skipEmptyLines enabled
-      final csvData = Csv(skipEmptyLines: true).decode(input);
+      // CSV 8.0.0: Use new Csv API. skipEmptyLines is intentionally off so
+      // `csvData`'s row indices (used in diagnostic messages below) line up
+      // with physical file lines; blank rows are filtered manually in the
+      // loop instead.
+      final csvData = Csv(skipEmptyLines: false).decode(input);
 
       if (csvData.isEmpty) {
         diagnostics.add(
@@ -43,12 +46,34 @@ class CsvParser implements ActivityFormatParser {
         if (row.isEmpty || row.every((v) => v.isEmpty)) continue;
 
         final timestamp = _parseDateTime(row, headerMap, 'timestamp');
-        if (timestamp == null) continue;
+        if (timestamp == null) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'csv.row.invalid_timestamp',
+              message:
+                  'Row ${i + 1} has a missing or unparseable "timestamp" '
+                  'column; row skipped.',
+            ),
+          );
+          continue;
+        }
 
         final latitude = _parseDouble(row, headerMap, 'latitude');
         final longitude = _parseDouble(row, headerMap, 'longitude');
 
-        if (latitude == null || longitude == null) continue;
+        if (latitude == null || longitude == null) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.warning,
+              code: 'csv.row.invalid_coordinates',
+              message:
+                  'Row ${i + 1} has a missing or unparseable "latitude"/'
+                  '"longitude" column; row skipped.',
+            ),
+          );
+          continue;
+        }
 
         final point = GeoPoint(
           latitude: latitude,
