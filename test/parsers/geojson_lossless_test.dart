@@ -71,6 +71,35 @@ void main() {
     });
 
     test(
+      'Polygon exterior ring picks up per-point coordinateProperties.times',
+      () {
+        const json = '''
+{"type":"Feature",
+ "geometry":{"type":"Polygon","coordinates":[
+   [[11.0,47.0],[11.001,47.0],[11.001,47.001],[11.0,47.0]]
+ ]},
+ "properties":{
+   "activity_type":"hiking",
+   "coordinateProperties":{"times":[
+     "2024-01-01T10:00:00Z","2024-01-01T10:00:01Z",
+     "2024-01-01T10:00:02Z","2024-01-01T10:00:03Z"
+   ]}
+ }}''';
+
+        final result = ActivityParser.parse(json, ActivityFileFormat.geojson);
+        expect(result.activity.points, hasLength(4));
+        expect(
+          result.activity.points[0].time,
+          equals(DateTime.parse('2024-01-01T10:00:00Z')),
+        );
+        expect(
+          result.activity.points[3].time,
+          equals(DateTime.parse('2024-01-01T10:00:03Z')),
+        );
+      },
+    );
+
+    test(
       'non-GeoJSON-sourced activity keeps computed defaults (no metadata)',
       () {
         final activity = RawActivity(
