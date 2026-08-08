@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+import 'timestamp_utils.dart';
 
 /// Parser for the GPX file format.
 class GpxParser implements ActivityFormatParser {
@@ -224,7 +225,7 @@ class GpxParser implements ActivityFormatParser {
           }
           DateTime? time;
           try {
-            time = DateTime.parse(timeText).toUtc();
+            time = parseTimestampAssumeUtc(timeText);
           } catch (_) {
             diagnostics.add(
               ParseDiagnostic(
@@ -511,7 +512,7 @@ GeoPoint? _parseGpxPoint(
   DateTime? time;
   if (timeText != null && timeText.isNotEmpty) {
     try {
-      time = DateTime.parse(timeText).toUtc();
+      time = parseTimestampAssumeUtc(timeText);
     } catch (_) {
       diagnostics.add(
         ParseDiagnostic(

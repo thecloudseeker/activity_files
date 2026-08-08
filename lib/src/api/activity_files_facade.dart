@@ -268,7 +268,7 @@ class ActivityFiles {
       );
     }
     final exportResult = await exportAsync(
-      activity: activity,
+      activity: exportActivity,
       to: to,
       options: options,
       normalize: false,

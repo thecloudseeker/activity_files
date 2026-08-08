@@ -354,6 +354,29 @@ void main() {
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
+
+      test(
+        'treats a timestamp without a UTC offset as UTC, not local time',
+        () {
+          const gpx = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0">
+        <time>2024-01-01T10:00:00</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+
+          final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+
+          expect(
+            result.activity.points[0].time,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+          );
+        },
+      );
     });
 
     group('Waypoint parsing', () {

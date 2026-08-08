@@ -266,6 +266,65 @@ void main() {
         expect(properties['max_heart_rate'], equals(155));
       });
 
+      test('excludes laps with no heart rate data from avg_heart_rate', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+          laps: [
+            Lap(
+              startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+              endTime: DateTime.utc(2024, 1, 1, 10, 0, 10),
+              avgHeartRate: 160,
+            ),
+            Lap(
+              startTime: DateTime.utc(2024, 1, 1, 10, 0, 10),
+              endTime: DateTime.utc(2024, 1, 1, 10, 0, 20),
+            ),
+          ],
+        );
+
+        final geojson = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.geojson,
+        );
+        final decoded = jsonDecode(geojson);
+        final properties = decoded['features'][0]['properties'];
+
+        expect(properties['avg_heart_rate'], equals(160));
+      });
+
+      test('omits avg_heart_rate when no lap has heart rate data', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+          laps: [
+            Lap(
+              startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+              endTime: DateTime.utc(2024, 1, 1, 10, 0, 10),
+            ),
+          ],
+        );
+
+        final geojson = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.geojson,
+        );
+        final decoded = jsonDecode(geojson);
+        final properties = decoded['features'][0]['properties'];
+
+        expect(properties, isNot(contains('avg_heart_rate')));
+      });
+
       test('omits total_calories when the activity has no summary', () {
         final activity = RawActivity(
           points: [

@@ -317,6 +317,14 @@ class GeoPoint {
     gpxExtensions: gpxExtensions ?? this.gpxExtensions,
     gpxAttributes: gpxAttributes ?? this.gpxAttributes,
   );
+
+  GeoPoint copyWithoutElevation() => GeoPoint(
+    latitude: latitude,
+    longitude: longitude,
+    time: time,
+    gpxExtensions: gpxExtensions,
+    gpxAttributes: gpxAttributes,
+  );
 }
 
 /// A GPX route (`<rte>`): an ordered list of route points (`<rtept>`) with an

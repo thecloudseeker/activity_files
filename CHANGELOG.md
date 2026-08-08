@@ -5,6 +5,11 @@
 - `normalize: true` no longer skips sentinel repairs on already-sorted input.
 - `splitBySport()` no longer duplicates a point sitting exactly on a shared lap boundary.
 - TCX export no longer duplicates a trackpoint across overlapping lap boundaries.
+- `trimInvalid()` no longer drops GPX extensions/attributes when clearing a sentinel elevation.
+- GeoJSON export no longer fabricates `avg_heart_rate: 0` for laps with no heart rate data.
+- GeoJSON metadata no longer goes stale after an edit.
+- `convert()`'s isolate branch no longer exports the pre-autoFix activity.
+- GPX/TCX timestamps without a UTC offset are now treated as UTC instead of local time.
 
 ## 0.7.3
 ### Fixed

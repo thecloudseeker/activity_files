@@ -358,7 +358,7 @@ class GeojsonParser implements ActivityFormatParser {
     for (final entry in properties.entries) {
       final key = entry.key;
       final value = entry.value;
-      if (key is! String || key == 'coordinateProperties') continue;
+      if (key is! String || _metaPropertyKeys.contains(key)) continue;
       if (value == null || value is Map || value is List) continue;
       metadata[key] = value;
     }

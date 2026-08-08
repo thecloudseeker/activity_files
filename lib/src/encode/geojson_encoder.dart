@@ -50,6 +50,7 @@ class GeojsonEncoder {
   static Map<String, dynamic> _getProperties(RawActivity activity) {
     final points = activity.points;
     final laps = activity.laps;
+    final avgHeartRates = laps.map((lap) => lap.avgHeartRate).nonNulls.toList();
     return {
       'activity_type': activity.sport.name.toLowerCase(),
       'start_time': points.isNotEmpty
@@ -62,9 +63,10 @@ class GeojsonEncoder {
         'total_calories': activity.summary!.calories,
       if (laps.isNotEmpty) ...{
         'num_laps': laps.length,
-        'avg_heart_rate':
-            laps.fold<double>(0, (sum, lap) => sum + (lap.avgHeartRate ?? 0)) /
-            laps.length,
+        if (avgHeartRates.isNotEmpty)
+          'avg_heart_rate':
+              avgHeartRates.fold<double>(0, (sum, hr) => sum + hr) /
+              avgHeartRates.length,
         'max_heart_rate': laps
             .map((lap) => lap.maxHeartRate)
             .nonNulls
