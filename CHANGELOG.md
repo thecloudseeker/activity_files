@@ -1,4 +1,11 @@
 # Changelog
+## 0.7.4
+### Fixed
+- `exportAsync(useIsolate: true)` no longer drops most of `RawActivity` crossing the isolate boundary.
+- `normalize: true` no longer skips sentinel repairs on already-sorted input.
+- `splitBySport()` no longer duplicates a point sitting exactly on a shared lap boundary.
+- TCX export no longer duplicates a trackpoint across overlapping lap boundaries.
+
 ## 0.7.3
 ### Fixed
 - GeoJSON LineString export no longer fabricates `total_calories`/`total_steps` as `0`.

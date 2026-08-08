@@ -87,6 +87,7 @@ class TcxEncoder implements ActivityFormatEncoder {
           activity.channels,
           maxDelta: searchDelta,
         );
+        final writtenPointTimes = <DateTime>{};
         // Re-split laps into one <Activity> per consecutive sport, so a merged
         // multi-sport (triathlon) activity round-trips back to multiple
         // <Activity> elements. A single-sport activity yields exactly one.
@@ -187,8 +188,10 @@ class TcxEncoder implements ActivityFormatEncoder {
                             for (final point in points.where(
                               (p) =>
                                   !p.time.isBefore(lap.startTime) &&
-                                  !p.time.isAfter(lap.endTime),
+                                  !p.time.isAfter(lap.endTime) &&
+                                  !writtenPointTimes.contains(p.time),
                             )) {
+                              writtenPointTimes.add(point.time);
                               final snapshot = channelCursor.snapshot(
                                 point.time,
                               );

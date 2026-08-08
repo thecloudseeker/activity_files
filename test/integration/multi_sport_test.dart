@@ -534,6 +534,60 @@ void main() {
         expect(bike.channels[Channel.heartRate]!.length, 2);
       });
 
+      test('splitBySport does not duplicate a point/sample sitting exactly on '
+          'a shared lap boundary', () {
+        final boundary = DateTime.utc(2024, 7, 21, 6, 20);
+        final triathlon = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 47.55,
+              longitude: -122.28,
+              time: DateTime.utc(2024, 7, 21, 6, 0),
+            ),
+            GeoPoint(latitude: 47.552, longitude: -122.282, time: boundary),
+            GeoPoint(
+              latitude: 47.58,
+              longitude: -122.31,
+              time: DateTime.utc(2024, 7, 21, 6, 40),
+            ),
+          ],
+          channels: {
+            Channel.heartRate: [
+              Sample(time: DateTime.utc(2024, 7, 21, 6, 0), value: 120),
+              Sample(time: boundary, value: 150),
+              Sample(time: DateTime.utc(2024, 7, 21, 6, 40), value: 170),
+            ],
+          },
+          laps: [
+            Lap(
+              startTime: DateTime.utc(2024, 7, 21, 6, 0),
+              endTime: boundary,
+              sport: Sport.swimming,
+            ),
+            Lap(
+              startTime: boundary,
+              endTime: DateTime.utc(2024, 7, 21, 6, 40),
+              sport: Sport.cycling,
+            ),
+          ],
+          sport: Sport.swimming,
+        );
+
+        final splits = ActivityFiles.splitBySport(triathlon, normalize: false);
+
+        final swim = splits[Sport.swimming]!;
+        final bike = splits[Sport.cycling]!;
+
+        expect(swim.points.length + bike.points.length, 3);
+        expect(
+          swim.channels[Channel.heartRate]!.length +
+              bike.channels[Channel.heartRate]!.length,
+          3,
+        );
+        expect(bike.points.first.time, equals(boundary));
+        expect(swim.points.any((p) => p.time == boundary), isFalse);
+      });
+
       test('splitBySport returns single activity unchanged', () {
         final activity = RawActivity(
           points: [

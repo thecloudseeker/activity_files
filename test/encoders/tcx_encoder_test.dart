@@ -348,6 +348,55 @@ void main() {
         expect(lapElements.length, equals(2));
       });
 
+      test(
+        'does not duplicate a trackpoint into two laps with overlapping ranges',
+        () {
+          final activity = RawActivity(
+            points: [
+              GeoPoint(
+                latitude: 40.0,
+                longitude: -105.0,
+                time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+              ),
+              GeoPoint(
+                latitude: 40.0001,
+                longitude: -105.0001,
+                time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+              ),
+              GeoPoint(
+                latitude: 40.0002,
+                longitude: -105.0002,
+                time: DateTime.utc(2024, 1, 1, 10, 0, 15),
+              ),
+              GeoPoint(
+                latitude: 40.0003,
+                longitude: -105.0003,
+                time: DateTime.utc(2024, 1, 1, 10, 0, 20),
+              ),
+            ],
+            laps: [
+              Lap(
+                startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+                endTime: DateTime.utc(2024, 1, 1, 10, 0, 10),
+              ),
+              Lap(
+                startTime: DateTime.utc(2024, 1, 1, 10, 0, 5),
+                endTime: DateTime.utc(2024, 1, 1, 10, 0, 20),
+              ),
+            ],
+          );
+
+          final tcxString = ActivityEncoder.encode(
+            activity,
+            ActivityFileFormat.tcx,
+          );
+          final doc = XmlDocument.parse(tcxString);
+          final times = doc.findAllElements('Time').toList();
+
+          expect(times, hasLength(4));
+        },
+      );
+
       test('encodes lap distance', () {
         final activity = RawActivity(
           points: [
