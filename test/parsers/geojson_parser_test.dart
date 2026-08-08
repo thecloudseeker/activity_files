@@ -238,6 +238,46 @@ void main() {
         // Should fall back to parsing first feature
         expect(result.activity.points, isNotEmpty);
       });
+
+      test(
+        'reports a warning and skips a malformed point in a Point FeatureCollection',
+        () {
+          final geojson = {
+            'type': 'FeatureCollection',
+            'features': [
+              {
+                'type': 'Feature',
+                'geometry': {
+                  'type': 'Point',
+                  'coordinates': [-105.0, 40.0],
+                },
+                'properties': {'timestamp': '2024-01-01T10:00:00Z'},
+              },
+              {
+                'type': 'Feature',
+                'geometry': {
+                  'type': 'Point',
+                  'coordinates': [-105.0005], // too short
+                },
+                'properties': {'timestamp': '2024-01-01T10:00:10Z'},
+              },
+            ],
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(result.activity.points, hasLength(1));
+          expect(
+            result.diagnostics.any(
+              (d) => d.code == 'geojson.point.invalid_coordinate',
+            ),
+            isTrue,
+          );
+        },
+      );
     });
 
     group('Error handling', () {
@@ -430,6 +470,33 @@ void main() {
           );
         },
       );
+
+      test('reports one warning, not one per point, for a shared invalid '
+          'feature-level timestamp', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              for (var i = 0; i < 50; i++) [-105.0 - i * 0.001, 40.0],
+            ],
+          },
+          'properties': {'timestamp': 'not-a-date'},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(50));
+        expect(
+          result.diagnostics
+              .where((d) => d.code == 'geojson.point.invalid_timestamp')
+              .length,
+          equals(1),
+        );
+      });
     });
 
     group('Channel property parsing', () {

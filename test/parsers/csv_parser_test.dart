@@ -207,6 +207,25 @@ void main() {
         expect(result.activity.points.length, equals(2));
       });
 
+      test(
+        'diagnostic row number accounts for blank lines above the bad row',
+        () {
+          const csv =
+              'timestamp,latitude,longitude\n'
+              '2024-01-01T10:00:00Z,40.0,-105.0\n'
+              '\n'
+              '\n'
+              'not-a-date,40.001,-105.001';
+
+          final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+          final diagnostic = result.diagnostics.firstWhere(
+            (d) => d.code == 'csv.row.invalid_timestamp',
+          );
+          expect(diagnostic.message, contains('Row 5'));
+        },
+      );
+
       test('handles numeric parsing with different formats', () {
         const csv = '''timestamp,latitude,longitude,heart_rate
 2024-01-01T10:00:00Z,40,-105,140
