@@ -32,6 +32,23 @@ void main() {
       expect(hr.single.value, equals(140));
     });
 
+    test('preserves laps when no points survive the trim', () {
+      final base = DateTime.utc(2024, 1, 1, 6);
+      final activity = RawActivity(
+        laps: [
+          Lap(startTime: base, endTime: base.add(const Duration(minutes: 5))),
+          Lap(
+            startTime: base.add(const Duration(minutes: 5)),
+            endTime: base.add(const Duration(minutes: 10)),
+          ),
+        ],
+      );
+
+      final trimmed = RawEditor(activity).trimInvalid().activity;
+
+      expect(trimmed.laps, hasLength(2));
+    });
+
     test('continues to trim channels to the valid time window', () {
       final base = DateTime.utc(2024, 1, 1, 6);
       final invalid = GeoPoint(latitude: 200, longitude: 0, time: base);

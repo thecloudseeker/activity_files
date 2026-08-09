@@ -160,25 +160,28 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-    final trimmedLaps = <Lap>[];
-    if (start != null && end != null) {
+    final List<Lap> trimmedLaps;
+    if (start == null || end == null) {
+      // Preserve sensor-only activities (indoor/trainer sessions) by
+      // keeping laps unchanged, same as the channels branch above.
+      trimmedLaps = List<Lap>.from(_activity.laps);
+    } else {
       final startUtc = start;
       final endUtc = end;
-      trimmedLaps.addAll(
-        _activity.laps
-            .where(
-              (lap) =>
-                  !lap.endTime.isBefore(startUtc) &&
-                  !lap.startTime.isAfter(endUtc),
-            )
-            .map((lap) {
-              final lapStart = lap.startTime.isBefore(startUtc)
-                  ? startUtc
-                  : lap.startTime;
-              final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
-              return lap.copyWith(startTime: lapStart, endTime: lapEnd);
-            }),
-      );
+      trimmedLaps = _activity.laps
+          .where(
+            (lap) =>
+                !lap.endTime.isBefore(startUtc) &&
+                !lap.startTime.isAfter(endUtc),
+          )
+          .map((lap) {
+            final lapStart = lap.startTime.isBefore(startUtc)
+                ? startUtc
+                : lap.startTime;
+            final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
+            return lap.copyWith(startTime: lapStart, endTime: lapEnd);
+          })
+          .toList();
     }
     _activity = _activity.copyWith(
       points: retainedPoints,
@@ -213,23 +216,40 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-    final croppedLaps = _activity.laps
-        .where((lap) {
-          return !lap.endTime.isBefore(startUtc) &&
-              !lap.startTime.isAfter(endUtc);
-        })
-        .map((lap) {
-          final lapStart = lap.startTime.isBefore(startUtc)
-              ? startUtc
-              : lap.startTime;
-          final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
-          return lap.copyWith(startTime: lapStart, endTime: lapEnd);
-        })
+    final croppedLaps = _clipRangesForCrop(
+      _activity.laps,
+      startUtc,
+      endUtc,
+      startOf: (lap) => lap.startTime,
+      endOf: (lap) => lap.endTime,
+      rebuild: _rebuildLap,
+    );
+    final croppedSets = _clipRangesForCrop(
+      _activity.sets,
+      startUtc,
+      endUtc,
+      startOf: (s) => s.startTime,
+      endOf: (s) => s.endTime,
+      rebuild: _rebuildSet,
+    );
+    final croppedLengths = _clipRangesForCrop(
+      _activity.lengths,
+      startUtc,
+      endUtc,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final croppedEvents = _activity.events
+        .where((e) => !e.time.isBefore(startUtc) && !e.time.isAfter(endUtc))
         .toList();
     _activity = _activity.copyWith(
       points: croppedPoints,
       channels: croppedChannels,
       laps: croppedLaps,
+      sets: croppedSets,
+      events: croppedEvents,
+      lengths: croppedLengths,
     );
     return this;
   }
@@ -388,12 +408,26 @@ class RawEditor {
       endOf: (s) => s.endTime,
       rebuild: _rebuildSet,
     );
+    final adjustedLengths = _clipRangesForDelete(
+      _activity.lengths,
+      fromUtc,
+      toUtc,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final adjustedEvents = [
+      for (final e in _activity.events)
+        if (e.time.isBefore(fromUtc) || e.time.isAfter(toUtc)) e,
+    ];
 
     _activity = _activity.copyWith(
       points: filteredPoints,
       channels: filteredChannels,
       laps: adjustedLaps,
       sets: adjustedSets,
+      events: adjustedEvents,
+      lengths: adjustedLengths,
     );
     return this;
   }
@@ -432,12 +466,26 @@ class RawEditor {
       endOf: (s) => s.endTime,
       rebuild: _rebuildSet,
     );
+    final adjustedLengths = _shiftRangesAfter(
+      _activity.lengths,
+      atUtc,
+      duration,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final adjustedEvents = [
+      for (final e in _activity.events)
+        e.time.isAfter(atUtc) ? e.copyWith(time: e.time.add(duration)) : e,
+    ];
 
     _activity = _activity.copyWith(
       points: shiftedPoints,
       channels: shiftedChannels,
       laps: adjustedLaps,
       sets: adjustedSets,
+      events: adjustedEvents,
+      lengths: adjustedLengths,
     );
     return this;
   }
@@ -486,12 +534,28 @@ class RawEditor {
       endOf: (s) => s.endTime,
       rebuild: _rebuildSet,
     );
+    final adjustedLengths = _closeGapInRanges(
+      _activity.lengths,
+      fromUtc,
+      toUtc,
+      gap,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final adjustedEvents = [
+      for (final e in _activity.events)
+        if (!(e.time.isAfter(fromUtc) && e.time.isBefore(toUtc)))
+          e.time.isBefore(toUtc) ? e : e.copyWith(time: e.time.subtract(gap)),
+    ];
 
     _activity = _activity.copyWith(
       points: adjustedPoints,
       channels: adjustedChannels,
       laps: adjustedLaps,
       sets: adjustedSets,
+      events: adjustedEvents,
+      lengths: adjustedLengths,
     );
     return this;
   }
@@ -806,6 +870,30 @@ Lap _rebuildLap(Lap lap, {DateTime? start, DateTime? end}) =>
 
 WorkoutSet _rebuildSet(WorkoutSet s, {DateTime? start, DateTime? end}) =>
     s.copyWith(startTime: start, endTime: end);
+
+SwimLength _rebuildLength(SwimLength l, {DateTime? start, DateTime? end}) =>
+    l.copyWith(startTime: start, endTime: end);
+
+/// Applies the [RawEditor.crop] clipping rules to laps, sets, or lengths:
+/// ranges entirely outside `[startUtc, endUtc]` are dropped, ranges
+/// straddling a boundary are clipped to it, matching the point/channel
+/// filter in the same method.
+List<T> _clipRangesForCrop<T>(
+  List<T> items,
+  DateTime startUtc,
+  DateTime endUtc, {
+  required DateTime Function(T) startOf,
+  required DateTime Function(T) endOf,
+  required _RangeRebuild<T> rebuild,
+}) => [
+  for (final item in items)
+    if (!endOf(item).isBefore(startUtc) && !startOf(item).isAfter(endUtc))
+      rebuild(
+        item,
+        start: startOf(item).isBefore(startUtc) ? startUtc : startOf(item),
+        end: endOf(item).isAfter(endUtc) ? endUtc : endOf(item),
+      ),
+];
 
 /// Applies the [RawEditor.deleteRange] clipping rules to laps or sets:
 /// ranges fully inside `[fromUtc, toUtc]` are dropped, ranges straddling one

@@ -6,6 +6,8 @@
 - FIT: fields 78/120 (altitude, grade, balance, ebike assist) were mapped to the wrong numbers. fixed.
 - `load()`/`convert()`/`convertAndExport()` crashed on a `Stream<List<int>>` source with isolates on (the default). fixed.
 - `ActivityConverter.convert()` was quietly dropping repair diagnostics. stopped that.
+- `trimInvalid()` was dropping laps on activities with no surviving GPS points (indoor/trainer). fixed.
+- `crop()`/`deleteRange()`/`insertPause()`/`removePause()` now carry `events`/`lengths`/`sets` forward, like `shiftTime()` already did.
 
 ## 0.7.4
 ### Fixed
