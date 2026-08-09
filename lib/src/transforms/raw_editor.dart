@@ -22,7 +22,7 @@ class RawEditor {
     final alreadySortedPoints = _isSortedByTime(_activity.points);
     final sortedPoints = alreadySortedPoints
         ? _activity.points
-        : ([..._activity.points]..sort((a, b) => a.time.compareTo(b.time)));
+        : _stableSortByTime(_activity.points, (p) => p.time);
     final dedupedPoints = <GeoPoint>[];
     GeoPoint? previous;
     for (final point in sortedPoints) {
@@ -40,7 +40,7 @@ class RawEditor {
     final sortedChannels = _activity.channels.map((channel, samples) {
       final sorted = _isSortedSamples(samples)
           ? samples
-          : ([...samples]..sort((a, b) => a.time.compareTo(b.time)));
+          : _stableSortByTime(samples, (s) => s.time);
       final deduped = <Sample>[];
       Sample? last;
       for (final sample in sorted) {
@@ -56,8 +56,7 @@ class RawEditor {
     });
     final sortedLaps = _isSortedByStart(_activity.laps)
         ? _activity.laps
-        : ([..._activity.laps]
-            ..sort((a, b) => a.startTime.compareTo(b.startTime)));
+        : _stableSortByTime(_activity.laps, (lap) => lap.startTime);
     _activity = _activity.copyWith(
       points: dedupedPoints,
       channels: sortedChannels, // Already a Map, no need to copy again
@@ -348,7 +347,7 @@ class RawEditor {
       time: time,
     );
     if (time != null) {
-      points.sort((a, b) => a.time.compareTo(b.time));
+      mergeSort(points, compare: (a, b) => a.time.compareTo(b.time));
     }
     _activity = _activity.copyWith(points: points);
     return this;
@@ -850,6 +849,15 @@ bool _isSortedSamples(List<Sample> samples) =>
 
 bool _isSortedByStart(List<Lap> laps) =>
     _isSortedBy(laps, (lap) => lap.startTime);
+
+/// Sorts a copy of [items] by [timeOf] with a stable sort, so equal
+/// timestamps keep their original relative order instead of `List.sort`'s
+/// unspecified (and in practice non-stable, above ~32 elements) tie-break.
+List<T> _stableSortByTime<T>(List<T> items, DateTime Function(T item) timeOf) {
+  final sorted = List<T>.of(items);
+  mergeSort(sorted, compare: (a, b) => timeOf(a).compareTo(timeOf(b)));
+  return sorted;
+}
 
 bool _isStrictlyIncreasing<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {

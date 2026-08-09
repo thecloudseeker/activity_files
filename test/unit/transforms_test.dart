@@ -165,5 +165,52 @@ void main() {
       expect(hr.length, 1);
       expect(hr.single.value, closeTo(155, 1e-9));
     });
+
+    test(
+      'keeps the later reading for a duplicate timestamp in a large, '
+      'genuinely out-of-order track (needs a stable sort, not List.sort)',
+      () {
+        final base = DateTime.utc(2024, 1, 4, 7);
+        const n = 200;
+        final points = <GeoPoint>[
+          for (var i = 0; i < n; i++)
+            GeoPoint(
+              latitude: 1.0,
+              longitude: 0,
+              time: base.add(Duration(seconds: i)),
+            ),
+        ];
+
+        // One point recorded/merged out of order.
+        final moved = points.removeAt(180);
+        points.insert(150, moved);
+
+        // One duplicate-timestamp pair: a stale reading followed by a
+        // corrected one for the same instant. The corrected (second,
+        // later-added) reading should survive dedup.
+        final duplicateTime = base.add(const Duration(seconds: 205));
+        final staleReading = GeoPoint(
+          latitude: 40.0,
+          longitude: -105.0,
+          time: duplicateTime,
+        );
+        final correctedReading = GeoPoint(
+          latitude: 40.5,
+          longitude: -105.5,
+          time: duplicateTime,
+        );
+        points.addAll([staleReading, correctedReading]);
+
+        final result = RawEditor(
+          RawActivity(points: points),
+        ).sortAndDedup().activity;
+
+        final survivor = result.points.singleWhere(
+          (p) => p.time.isAtSameMomentAs(duplicateTime),
+        );
+        expect(survivor.latitude, closeTo(correctedReading.latitude, 1e-9));
+        expect(survivor.longitude, closeTo(correctedReading.longitude, 1e-9));
+      },
+    );
   });
 }

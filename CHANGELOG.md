@@ -8,6 +8,7 @@
 - `ActivityConverter.convert()` was quietly dropping repair diagnostics. stopped that.
 - `trimInvalid()` was dropping laps on activities with no surviving GPS points (indoor/trainer). fixed.
 - `crop()`/`deleteRange()`/`insertPause()`/`removePause()` now carry `events`/`lengths`/`sets` forward, like `shiftTime()` already did.
+- `sortAndDedup()`/`updatePoint()` sort stably now. duplicate timestamps used to pick a winner at random.
 
 ## 0.7.4
 ### Fixed
