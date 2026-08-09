@@ -4,6 +4,8 @@
 - TCX: laps with more than one `<Track>` (pause/resume) only read the first one. now reads all of them.
 - GeoJSON/CSV: timestamps with no UTC offset were treated as local time. now UTC, matching GPX/TCX.
 - FIT: fields 78/120 (altitude, grade, balance, ebike assist) were mapped to the wrong numbers. fixed.
+- `load()`/`convert()`/`convertAndExport()` crashed on a `Stream<List<int>>` source with isolates on (the default). fixed.
+- `ActivityConverter.convert()` was quietly dropping repair diagnostics. stopped that.
 
 ## 0.7.4
 ### Fixed

@@ -521,6 +521,37 @@ void main() {
         );
       });
 
+      test('reports a repaired.* diagnostic for the sentinel it removes', () {
+        const gpxWithSentinel = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><trkseg>
+    <trkpt lat="0.0" lon="0.0">
+      <time>2024-01-01T10:00:00Z</time>
+    </trkpt>
+    <trkpt lat="40.0" lon="-105.0">
+      <time>2024-01-01T10:00:10Z</time>
+    </trkpt>
+  </trkseg></trk>
+</gpx>''';
+
+        final diagnostics = <ParseDiagnostic>[];
+        ActivityConverter.convert(
+          gpxWithSentinel,
+          from: ActivityFileFormat.gpx,
+          to: ActivityFileFormat.csv,
+          normalize: true,
+          diagnostics: diagnostics,
+        );
+
+        expect(
+          diagnostics.any((d) => d.code == 'repaired.sentinel_coords_removed'),
+          isTrue,
+          reason:
+              'the point was silently repaired, so the diagnostics sink '
+              'must say so',
+        );
+      });
+
       test('keeps null-island sentinel when normalize is false', () {
         const gpxWithSentinel = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">

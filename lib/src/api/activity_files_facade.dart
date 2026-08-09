@@ -1781,10 +1781,7 @@ class ActivityFiles {
   }) async {
     if (payload is _ReplayableStreamPayload) {
       final bytes = await payload.materialize(maxBytes: maxPayloadBytes);
-      return isolate_runner.runWithIsolation(
-        () => _parseBytesWithBom(bytes, format, encoding),
-        useIsolate: useIsolate,
-      );
+      return _parseBytesIsolated(bytes, format, encoding, useIsolate);
     }
     if (payload is Stream<List<int>>) {
       return ActivityParser.parseStream(
@@ -1800,6 +1797,25 @@ class ActivityFiles {
     }
     return isolate_runner.runWithIsolation(
       () => _parseSync(payload, format, encoding),
+      useIsolate: useIsolate,
+    );
+  }
+
+  /// Runs [_parseBytesWithBom] with optional isolate offloading.
+  ///
+  /// Kept as a standalone function, not inlined at the call site:
+  /// `Isolate.run` rejects a closure whose enclosing scope holds any
+  /// non-sendable value, even one the closure body never references, so
+  /// inlining this would put the non-sendable `_ReplayableStreamPayload`
+  /// local in scope and crash.
+  static Future<ActivityParseResult> _parseBytesIsolated(
+    Uint8List bytes,
+    ActivityFileFormat format,
+    Encoding encoding,
+    bool useIsolate,
+  ) {
+    return isolate_runner.runWithIsolation(
+      () => _parseBytesWithBom(bytes, format, encoding),
       useIsolate: useIsolate,
     );
   }

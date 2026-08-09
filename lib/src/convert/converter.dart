@@ -39,7 +39,11 @@ class ActivityConverter {
     }
     var activity = parseResult.activity;
     if (normalize) {
-      activity = RawEditor(activity).sortAndDedup().trimInvalid().activity;
+      final editor = RawEditor(activity).sortAndDedup().trimInvalid();
+      activity = editor.activity;
+      diagnostics?.addAll(
+        editor.repairDiagnostics.map((d) => d.toParseDiagnostic()),
+      );
     }
     return ActivityEncoder.encode(activity, to, options: encoderOptions);
   }
