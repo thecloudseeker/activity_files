@@ -3,6 +3,7 @@
 ### Fixed
 - TCX: laps with more than one `<Track>` (pause/resume) only read the first one. now reads all of them.
 - GeoJSON/CSV: timestamps with no UTC offset were treated as local time. now UTC, matching GPX/TCX.
+- FIT: fields 78/120 (altitude, grade, balance, ebike assist) were mapped to the wrong numbers. fixed.
 
 ## 0.7.4
 ### Fixed

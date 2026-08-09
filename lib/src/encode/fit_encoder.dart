@@ -1173,9 +1173,10 @@ class _OptionalRecordField {
   final double scale;
 }
 
-/// Well-known channels with dedicated FIT record field numbers. `grade` and
-/// `left_right_balance` mirror the names the parser assigns to record fields
-/// 78 and 120 so those round-trip natively instead of via `fit_field_<n>`.
+/// Well-known channels with dedicated FIT record field numbers. `grade`,
+/// `left_right_balance`, and `ebike_assist_level_percent` mirror the names
+/// the parser assigns to record fields 9, 30, and 120 so those round-trip
+/// natively instead of via `fit_field_<n>`.
 final List<_OptionalRecordField> _knownRecordChannels = [
   const _OptionalRecordField(
     channel: Channel.heartRate,
@@ -1221,16 +1222,23 @@ final List<_OptionalRecordField> _knownRecordChannels = [
   ),
   _OptionalRecordField(
     channel: Channel.custom('grade'),
-    number: 78,
+    number: 9,
     size: 2,
     type: _FitBaseType.sint16,
     scale: 100,
   ),
   _OptionalRecordField(
     channel: Channel.custom('left_right_balance'),
+    number: 30,
+    size: 1,
+    type: _FitBaseType.uint8,
+    scale: 1,
+  ),
+  _OptionalRecordField(
+    channel: Channel.custom('ebike_assist_level_percent'),
     number: 120,
-    size: 2,
-    type: _FitBaseType.uint16,
+    size: 1,
+    type: _FitBaseType.uint8,
     scale: 1,
   ),
 ];

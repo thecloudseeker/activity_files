@@ -412,7 +412,10 @@ class FitParser implements ActivityFormatParser {
         if (isFallbackRecord && (lat == null || lon == null)) {
           continue;
         }
-        final altitude = _decodeAltitude(values[2]);
+        // enhanced_altitude (78) shares altitude (2)'s scale/offset formula
+        // but is uint32-wide; prefer it when present.
+        final altitude =
+            _decodeAltitude(values[78]) ?? _decodeAltitude(values[2]);
         if (lat != null && lon != null) {
           points.add(
             GeoPoint(
@@ -478,8 +481,12 @@ class FitParser implements ActivityFormatParser {
         if (temp != null) {
           tempSamples.add(Sample(time: recordTime, value: temp.toDouble()));
         }
-        addSample(Channel.custom('grade'), _decodeFitScaled(values[78], 100));
-        addSample(Channel.custom('left_right_balance'), _asNumber(values[120]));
+        addSample(Channel.custom('grade'), _decodeFitScaled(values[9], 100));
+        addSample(Channel.custom('left_right_balance'), _asNumber(values[30]));
+        addSample(
+          Channel.custom('ebike_assist_level_percent'),
+          _asNumber(values[120]),
+        );
         for (final entry in values.entries) {
           final numeric = _asNumber(entry.value);
           if (numeric == null) {
@@ -1024,10 +1031,10 @@ bool _resyncToDefinition(
 /// loop; every other numeric native field becomes a `fit_field_<n>` channel.
 const Set<int> _dedicatedRecordFields = {
   253, // timestamp
-  0, 1, 2, // position_lat, position_long, altitude
+  0, 1, 2, 78, // position_lat, position_long, altitude, enhanced_altitude
   3, 4, 5, 6, 7, 13, // heart_rate, cadence, distance, speed, power, temp
   8, // compressed_speed_distance (decoded into speed + distance channels)
-  78, 120, // grade, left_right_balance (named channels)
+  9, 30, 120, // grade, left_right_balance, ebike_assist_level_percent
 };
 
 /// Session (global 18) field numbers mapped to dedicated [ActivitySummary]
@@ -1336,7 +1343,10 @@ double? _decodeAltitude(Object? raw) {
     return null;
   }
   final value = raw.toInt();
-  if (value == 0xFFFF) {
+  // 0xFFFF is the uint16 sentinel (field 2); 0xFFFFFFFF is the uint32
+  // sentinel (field 78). A uint16 value can never equal the larger one, so
+  // checking both is safe for either field.
+  if (value == 0xFFFF || value == 0xFFFFFFFF) {
     return null;
   }
   return (value / 5.0) - 500.0;

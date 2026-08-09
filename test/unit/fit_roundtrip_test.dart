@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
+
+import '../helpers/fit_helpers.dart';
 
 /// FIT → FIT round-trip coverage for the full 0.7.0 data model:
 /// session summary (incl. swim metrics, sub-sport, total cycles), per-lap
@@ -318,9 +321,15 @@ void main() {
         points: pointsAt(t0, 4),
         sport: Sport.cycling,
         channels: {
-          // Named record fields the parser assigns to fields 78 and 120.
+          // Named record fields the parser assigns to fields 9, 30, 120.
           Channel.custom('grade'): series([-3.5, 0.0, 2.5, 4.0]),
           Channel.custom('left_right_balance'): series([48, 49, 50, 51]),
+          Channel.custom('ebike_assist_level_percent'): series([
+            25,
+            50,
+            75,
+            100,
+          ]),
           // Generic captured native fields; 88 carries negatives (→ signed).
           Channel.custom('fit_field_90'): series([200, 210, 220, 230]),
           Channel.custom('fit_field_88'): series([-5, -2, 3, 7]),
@@ -340,6 +349,12 @@ void main() {
           .toList();
       expect(balance, [48, 49, 50, 51]);
 
+      final ebikeAssist = parsed
+          .channel(Channel.custom('ebike_assist_level_percent'))
+          .map((s) => s.value)
+          .toList();
+      expect(ebikeAssist, [25, 50, 75, 100]);
+
       final f90 = parsed
           .channel(Channel.custom('fit_field_90'))
           .map((s) => s.value)
@@ -351,6 +366,37 @@ void main() {
           .map((s) => s.value)
           .toList();
       expect(f88, [-5, -2, 3, 7]);
+    });
+
+    test('enhanced_altitude (field 78) drives elevation, preferred over '
+        'the legacy 16-bit altitude (field 2) when both are present', () {
+      // Build minimal FIT records with only field 78 present, bypassing
+      // ActivityEncoder (which only ever writes elevation via field 2) since
+      // this exercises the *parser's* dedicated decoding of field 78.
+      final bytes = _buildMinimalFitWithEnhancedAltitude(
+        rawEnhancedAltitude: 3728, // (245.6 + 500) * 5
+      );
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      expect(
+        result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+        isEmpty,
+      );
+      expect(result.activity.points, hasLength(1));
+      expect(result.activity.points.single.elevation, closeTo(245.6, 0.01));
+      // No bogus "grade" channel should be fabricated from field 78 anymore.
+      expect(result.activity.channel(Channel.custom('grade')), isEmpty);
+    });
+
+    test('enhanced_altitude sentinel (0xFFFFFFFF) decodes to null, not a '
+        'huge bogus elevation', () {
+      final bytes = _buildMinimalFitWithEnhancedAltitude(
+        rawEnhancedAltitude: 0xFFFFFFFF,
+      );
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      expect(result.activity.points, hasLength(1));
+      expect(result.activity.points.single.elevation, isNull);
     });
 
     test('unmodeled session and lap fields survive raw (incl. negatives)', () {
@@ -579,4 +625,40 @@ void main() {
       expect(reparsed.sets.single.weightKg, closeTo(60.0, 0.01));
     });
   });
+}
+
+/// Builds a minimal single-record FIT byte stream carrying only field 78
+/// (enhanced_altitude, uint32) alongside timestamp/lat/lon, with no field 2
+/// altitude, so the test exercises the parser's field-78 decoding directly
+/// (ActivityEncoder itself never writes field 78).
+Uint8List _buildMinimalFitWithEnhancedAltitude({
+  required int rawEnhancedAltitude,
+}) {
+  final definition = BytesBuilder()
+    ..add([0x40, 0x00, 0x00]) // definition header, local 0, little-endian
+    ..add(uint16LeBytes(20)) // global message 20 (record)
+    ..addByte(4) // field count
+    ..add([0xFD, 4, 0x86]) // timestamp (uint32)
+    ..add([0x00, 4, 0x85]) // position_lat (sint32)
+    ..add([0x01, 4, 0x85]) // position_long (sint32)
+    ..add([78, 4, 0x86]); // field 78 (uint32): enhanced_altitude
+  final record = BytesBuilder()
+    ..addByte(0x00)
+    ..add(uint32LeBytes(1000))
+    ..add(int32LeBytes(encodeSemicircles(47.0)))
+    ..add(int32LeBytes(encodeSemicircles(8.0)))
+    ..add(uint32LeBytes(rawEnhancedAltitude));
+  final fullData =
+      (BytesBuilder()
+            ..add(definition.toBytes())
+            ..add(record.toBytes()))
+          .toBytes();
+  final crc = fitCrc(fullData);
+  final header = buildFitHeader(fullData.length);
+  return Uint8List.fromList([
+    ...header,
+    ...fullData,
+    crc & 0xFF,
+    (crc >> 8) & 0xFF,
+  ]);
 }
