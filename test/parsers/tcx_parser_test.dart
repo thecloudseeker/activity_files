@@ -438,6 +438,44 @@ void main() {
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
+
+      test(
+        'treats a Trackpoint Time and Lap StartTime without a UTC offset as UTC',
+        () {
+          const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00">
+        <TotalTimeSeconds>20</TotalTimeSeconds>
+        <DistanceMeters>100</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00</Time>
+            <Position>
+              <LatitudeDegrees>40.0</LatitudeDegrees>
+              <LongitudeDegrees>-105.0</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+
+          final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+          expect(
+            result.activity.points[0].time,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+          );
+          expect(
+            result.activity.laps.single.startTime,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+          );
+        },
+      );
     });
 
     group('Lap information', () {

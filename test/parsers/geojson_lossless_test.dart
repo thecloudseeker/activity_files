@@ -45,6 +45,38 @@ void main() {
       expect(reparsed.metadata.containsKey('coordinateProperties'), isFalse);
     });
 
+    test('computed properties do not go stale after an edit', () {
+      const json = '''
+{"type":"Feature",
+ "geometry":{"type":"LineString","coordinates":[
+   [11.0,47.0],[11.001,47.001],[11.002,47.002],[11.003,47.003]
+ ]},
+ "properties":{
+   "activity_type":"running",
+   "start_time":"2024-01-01T10:00:00.000Z",
+   "duration":1800.0,
+   "total_calories":500,
+   "coordinateProperties":{"times":[
+     "2024-01-01T10:00:00Z","2024-01-01T10:10:00Z",
+     "2024-01-01T10:20:00Z","2024-01-01T10:30:00Z"
+   ]}
+ }}''';
+
+      final activity = parse(json);
+      final cropped = RawEditor(
+        activity,
+      ).crop(activity.points[0].time, activity.points[1].time).activity;
+      final encoded = ActivityEncoder.encode(
+        cropped,
+        ActivityFileFormat.geojson,
+      );
+      final reparsed = parse(encoded);
+
+      expect(reparsed.points, hasLength(2));
+      expect(reparsed.metadata['duration'], isNot(1800.0));
+      expect(reparsed.metadata['total_calories'], isNot(500));
+    });
+
     test('Polygon exterior ring is parsed as the track', () {
       const json = '''
 {"type":"Feature",
@@ -71,6 +103,35 @@ void main() {
     });
 
     test(
+      'Polygon exterior ring picks up per-point coordinateProperties.times',
+      () {
+        const json = '''
+{"type":"Feature",
+ "geometry":{"type":"Polygon","coordinates":[
+   [[11.0,47.0],[11.001,47.0],[11.001,47.001],[11.0,47.0]]
+ ]},
+ "properties":{
+   "activity_type":"hiking",
+   "coordinateProperties":{"times":[
+     "2024-01-01T10:00:00Z","2024-01-01T10:00:01Z",
+     "2024-01-01T10:00:02Z","2024-01-01T10:00:03Z"
+   ]}
+ }}''';
+
+        final result = ActivityParser.parse(json, ActivityFileFormat.geojson);
+        expect(result.activity.points, hasLength(4));
+        expect(
+          result.activity.points[0].time,
+          equals(DateTime.parse('2024-01-01T10:00:00Z')),
+        );
+        expect(
+          result.activity.points[3].time,
+          equals(DateTime.parse('2024-01-01T10:00:03Z')),
+        );
+      },
+    );
+
+    test(
       'non-GeoJSON-sourced activity keeps computed defaults (no metadata)',
       () {
         final activity = RawActivity(
@@ -89,8 +150,7 @@ void main() {
           ActivityFileFormat.geojson,
         );
         final reparsed = parse(encoded);
-        // Computed activity_type from sport still present.
-        expect(reparsed.metadata['activity_type'], 'cycling');
+        expect(reparsed.sport, Sport.cycling);
       },
     );
   });

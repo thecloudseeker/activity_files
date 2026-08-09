@@ -350,15 +350,19 @@ class GeojsonParser implements ActivityFormatParser {
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
 
-  /// Captures all scalar feature properties (String/num/bool) as activity
-  /// metadata, so free-form properties — numeric and non-numeric — round-trip.
-  /// Structural nested objects/arrays (e.g. `coordinateProperties`) are skipped.
+  /// Captures scalar feature properties (String/num/bool) as activity
+  /// metadata, so free-form properties (numeric and non-numeric) round-trip.
+  /// Skips structural nested objects/arrays (e.g. `coordinateProperties`)
+  /// and keys in [_metaPropertyKeys]: those are computed fields the encoder
+  /// regenerates from the activity itself, so keeping a stale copy in
+  /// `metadata` would let old values survive an edit and contradict the
+  /// freshly re-encoded output.
   static Map<String, Object?> _collectMetadata(Map properties) {
     final metadata = <String, Object?>{};
     for (final entry in properties.entries) {
       final key = entry.key;
       final value = entry.value;
-      if (key is! String || key == 'coordinateProperties') continue;
+      if (key is! String || _metaPropertyKeys.contains(key)) continue;
       if (value == null || value is Map || value is List) continue;
       metadata[key] = value;
     }

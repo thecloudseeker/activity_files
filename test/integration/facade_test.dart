@@ -1010,6 +1010,40 @@ void main() {
       expect(result.processingStats.normalization, isNotNull);
     });
 
+    test(
+      'convert() applies autoFix identically regardless of exportInIsolate',
+      () async {
+        final inline = await ActivityFiles.convert(
+          source: sampleGpx,
+          to: ActivityFileFormat.csv,
+          useIsolate: false,
+          exportInIsolate: false,
+          autoFix: const ActivityAutoFixOptions(),
+        );
+        final isolated = await ActivityFiles.convert(
+          source: sampleGpx,
+          to: ActivityFileFormat.csv,
+          useIsolate: false,
+          exportInIsolate: true,
+          autoFix: const ActivityAutoFixOptions(),
+        );
+
+        expect(
+          inline.diagnostics.any(
+            (d) => d.code == 'autofix.distance.recomputed',
+          ),
+          isTrue,
+        );
+        expect(
+          isolated.diagnostics.any(
+            (d) => d.code == 'autofix.distance.recomputed',
+          ),
+          isTrue,
+        );
+        expect(isolated.encoded, equals(inline.encoded));
+      },
+    );
+
     test('exportAsync offloads when requested', () async {
       final baseTime = DateTime.utc(2024, 9, 1, 6);
       final activity = ActivityFiles.builder()

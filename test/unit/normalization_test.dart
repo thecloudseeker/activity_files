@@ -167,5 +167,108 @@ void main() {
 
       expect(normalized.points.length, activity.points.length);
     });
+
+    test(
+      'normalizeActivity removes a Null Island point even on time-sorted input',
+      () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 0.0,
+              longitude: 0.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+            ),
+          ],
+        );
+
+        final normalized = ActivityFiles.normalizeActivity(
+          activity,
+          trimInvalid: true,
+        );
+
+        expect(normalized.points, hasLength(1));
+        expect(normalized.points.single.latitude, equals(40.0));
+
+        final exported = ActivityFiles.export(
+          activity: activity,
+          to: ActivityFileFormat.csv,
+          normalize: true,
+        );
+        expect(
+          exported.diagnostics.any(
+            (d) => d.code == 'repaired.sentinel_coords_removed',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'normalizeActivity clears a sentinel elevation even on time-sorted input',
+      () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              elevation: -500.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.001,
+              longitude: -105.001,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+            ),
+          ],
+        );
+
+        final normalized = ActivityFiles.normalizeActivity(
+          activity,
+          trimInvalid: true,
+        );
+
+        expect(normalized.points, hasLength(2));
+        expect(normalized.points.first.elevation, isNull);
+      },
+    );
+
+    test('normalizeActivity clips a lap extending past the point range even on '
+        'time-sorted, coordinate-valid input', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+          ),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+          ),
+        ],
+        laps: [
+          Lap(
+            startTime: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            endTime: DateTime.utc(2024, 1, 1, 10, 5, 0),
+          ),
+        ],
+      );
+
+      final normalized = ActivityFiles.normalizeActivity(
+        activity,
+        trimInvalid: true,
+      );
+
+      expect(
+        normalized.laps.single.endTime,
+        equals(DateTime.utc(2024, 1, 1, 10, 0, 10)),
+      );
+    });
   });
 }

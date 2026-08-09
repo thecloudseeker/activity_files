@@ -108,13 +108,7 @@ class RawEditor {
       if (point.elevation != null && point.elevation! <= -499.0) {
         allValid = false;
         sentinelElevationCount++;
-        validPoints.add(
-          GeoPoint(
-            latitude: point.latitude,
-            longitude: point.longitude,
-            time: point.time,
-          ),
-        );
+        validPoints.add(point.copyWithoutElevation());
         continue;
       }
       validPoints.add(point);

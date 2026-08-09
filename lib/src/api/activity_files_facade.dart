@@ -268,7 +268,7 @@ class ActivityFiles {
       );
     }
     final exportResult = await exportAsync(
-      activity: activity,
+      activity: exportActivity,
       to: to,
       options: options,
       normalize: false,
@@ -662,7 +662,9 @@ class ActivityFiles {
             p.latitude <= 90 &&
             p.longitude.isFinite &&
             p.longitude >= -180 &&
-            p.longitude <= 180,
+            p.longitude <= 180 &&
+            !(p.latitude.abs() < 1e-6 && p.longitude.abs() < 1e-6) &&
+            (p.elevation == null || p.elevation! > -499.0),
       );
       if (!validCoordinates) return false;
       if (activity.points.isNotEmpty) {
@@ -674,6 +676,10 @@ class ActivityFiles {
           ),
         );
         if (!channelsInRange) return false;
+        final lapsInRange = activity.laps.every(
+          (lap) => !lap.startTime.isBefore(start) && !lap.endTime.isAfter(end),
+        );
+        if (!lapsInRange) return false;
       }
     }
     return true;
@@ -853,30 +859,42 @@ class ActivityFiles {
     // Create separate activities for each sport
     final result = <Sport, RawActivity>{};
 
+    final rangesBySport = <Sport, ({DateTime start, DateTime end})>{
+      for (final entry in lapsBySport.entries)
+        entry.key: (
+          start: entry.value
+              .map((lap) => lap.startTime)
+              .reduce((a, b) => a.isBefore(b) ? a : b),
+          end: entry.value
+              .map((lap) => lap.endTime)
+              .reduce((a, b) => a.isAfter(b) ? a : b),
+        ),
+    };
+
     for (final entry in lapsBySport.entries) {
       final sport = entry.key;
       final laps = entry.value;
 
-      // Find time range for this sport's laps
-      final startTime = laps
-          .map((lap) => lap.startTime)
-          .reduce((a, b) => a.isBefore(b) ? a : b);
-      final endTime = laps
-          .map((lap) => lap.endTime)
-          .reduce((a, b) => a.isAfter(b) ? a : b);
+      final range = rangesBySport[sport]!;
+      final startTime = range.start;
+      final endTime = range.end;
+      final sharesEndBoundary = rangesBySport.entries.any(
+        (other) => other.key != sport && other.value.start == endTime,
+      );
+      bool withinRange(DateTime time) =>
+          !time.isBefore(startTime) &&
+          (sharesEndBoundary ? time.isBefore(endTime) : !time.isAfter(endTime));
 
       // Filter points to this time range
       final sportPoints = activity.points
-          .where((p) => !p.time.isBefore(startTime) && !p.time.isAfter(endTime))
+          .where((p) => withinRange(p.time))
           .toList();
 
       // Filter channels to this time range
       final sportChannels = <Channel, List<Sample>>{};
       for (final channelEntry in activity.channels.entries) {
         final samples = channelEntry.value
-            .where(
-              (s) => !s.time.isBefore(startTime) && !s.time.isAfter(endTime),
-            )
+            .where((s) => withinRange(s.time))
             .toList();
         if (samples.isNotEmpty) {
           sportChannels[channelEntry.key] = samples;

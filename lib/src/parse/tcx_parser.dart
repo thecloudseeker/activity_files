@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+import 'timestamp_utils.dart';
 
 /// Parser for the TCX file format.
 ///
@@ -126,7 +127,7 @@ class TcxParser implements ActivityFormatParser {
         DateTime? lapStart;
         if (lapStartAttribute != null) {
           try {
-            lapStart = DateTime.parse(lapStartAttribute).toUtc();
+            lapStart = parseTimestampAssumeUtc(lapStartAttribute);
           } catch (_) {
             diagnostics.add(
               ParseDiagnostic(
@@ -211,7 +212,7 @@ class TcxParser implements ActivityFormatParser {
           }
           DateTime time;
           try {
-            time = DateTime.parse(timeText).toUtc();
+            time = parseTimestampAssumeUtc(timeText);
           } catch (_) {
             diagnostics.add(
               ParseDiagnostic(

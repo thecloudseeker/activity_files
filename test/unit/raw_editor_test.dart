@@ -311,6 +311,33 @@ void main() {
       expect(editor.activity.points.last.elevation, equals(1200.0));
     });
 
+    test(
+      'clearing a sentinel elevation keeps gpxExtensions and gpxAttributes',
+      () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              elevation: -500.0,
+              time: base,
+              gpxExtensions: [GpxExtensionNode(name: 'speed', value: '3.1')],
+              gpxAttributes: {'hdop': '1.2'},
+            ),
+          ],
+        );
+
+        final editor = RawEditor(activity)..trimInvalid();
+        final point = editor.activity.points.single;
+
+        expect(point.elevation, isNull);
+        expect(point.gpxExtensions, hasLength(1));
+        expect(point.gpxExtensions!.single.name, equals('speed'));
+        expect(point.gpxAttributes, equals({'hdop': '1.2'}));
+      },
+    );
+
     test('accumulates diagnostics from both sentinel types in one pass', () {
       final base = DateTime.utc(2024, 1, 1, 10);
       final activity = RawActivity(

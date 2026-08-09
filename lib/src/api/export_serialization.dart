@@ -10,15 +10,7 @@ class ExportSerialization {
   const ExportSerialization._();
 
   static Map<String, Object?> activityToJson(RawActivity activity) => {
-    'points': [
-      for (final point in activity.points)
-        {
-          'lat': point.latitude,
-          'lon': point.longitude,
-          'ele': point.elevation,
-          'time': point.time.toUtc().toIso8601String(),
-        },
-    ],
+    'points': [for (final point in activity.points) geoPointToJson(point)],
     'channels': {
       for (final entry in activity.channels.entries)
         entry.key.id: [
@@ -29,18 +21,18 @@ class ExportSerialization {
             },
         ],
     },
-    'laps': [
-      for (final lap in activity.laps)
-        {
-          'start': lap.startTime.toUtc().toIso8601String(),
-          'end': lap.endTime.toUtc().toIso8601String(),
-          'distance': lap.distanceMeters,
-          'name': lap.name,
-        },
+    'laps': [for (final lap in activity.laps) lapToJson(lap)],
+    'sets': [for (final set in activity.sets) workoutSetToJson(set)],
+    'events': [for (final event in activity.events) activityEventToJson(event)],
+    'lengths': [
+      for (final length in activity.lengths) swimLengthToJson(length),
     ],
     'sport': activity.sport.index,
     'creator': activity.creator,
     'device': deviceToJson(activity.device),
+    'summary': activity.summary == null
+        ? null
+        : summaryToJson(activity.summary!),
     'gpxMetadataName': activity.gpxMetadataName,
     'gpxMetadataDescription': activity.gpxMetadataDescription,
     'gpxIncludeCreatorMetadataDescription':
@@ -55,21 +47,29 @@ class ExportSerialization {
     'trackExtensions': [
       for (final node in activity.gpxTrackExtensions) extensionNodeToJson(node),
     ],
+    'additionalTracks': [
+      for (final track in activity.additionalTracks) activityToJson(track),
+    ],
+    'additionalSessions': [
+      for (final session in activity.additionalSessions) summaryToJson(session),
+    ],
+    'gpxWaypoints': [
+      for (final point in activity.gpxWaypoints) geoPointToJson(point),
+    ],
+    'gpxRoutes': [
+      for (final route in activity.gpxRoutes) gpxRouteToJson(route),
+    ],
+    'gpxTrackSegments': activity.gpxTrackSegments,
+    'tcxNotes': activity.tcxNotes,
+    'tcxAuthor': activity.tcxAuthor,
+    'metadata': activity.metadata,
   };
 
   static RawActivity activityFromJson(Map<String, Object?> data) {
     final points = (data['points'] as List<dynamic>)
-        .map((entry) {
-          final map = (entry as Map).cast<String, Object?>();
-          return GeoPoint(
-            latitude: (map['lat'] as num).toDouble(),
-            longitude: (map['lon'] as num).toDouble(),
-            elevation: map['ele'] is num
-                ? (map['ele'] as num).toDouble()
-                : null,
-            time: DateTime.parse(map['time'] as String),
-          );
-        })
+        .map(
+          (entry) => geoPointFromJson((entry as Map).cast<String, Object?>()),
+        )
         .toList(growable: false);
     final channelsRaw = (data['channels'] as Map).cast<String, Object?>();
     final channels = <Channel, List<Sample>>{};
@@ -86,17 +86,23 @@ class ExportSerialization {
       channels[_channelFromId(id)] = samples;
     });
     final laps = (data['laps'] as List<dynamic>)
-        .map((entry) {
-          final map = (entry as Map).cast<String, Object?>();
-          return Lap(
-            startTime: DateTime.parse(map['start'] as String),
-            endTime: DateTime.parse(map['end'] as String),
-            distanceMeters: map['distance'] is num
-                ? (map['distance'] as num).toDouble()
-                : null,
-            name: map['name'] as String?,
-          );
-        })
+        .map((entry) => lapFromJson((entry as Map).cast<String, Object?>()))
+        .toList(growable: false);
+    final sets = (data['sets'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => workoutSetFromJson((entry as Map).cast<String, Object?>()),
+        )
+        .toList(growable: false);
+    final events = (data['events'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) =>
+              activityEventFromJson((entry as Map).cast<String, Object?>()),
+        )
+        .toList(growable: false);
+    final lengths = (data['lengths'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => swimLengthFromJson((entry as Map).cast<String, Object?>()),
+        )
         .toList(growable: false);
     final metadataExtensions = (data['metadataExtensions'] as List<dynamic>)
         .map(
@@ -110,13 +116,43 @@ class ExportSerialization {
               extensionNodeFromJson((entry as Map).cast<String, Object?>()),
         )
         .toList(growable: false);
+    final additionalTracks =
+        (data['additionalTracks'] as List<dynamic>? ?? const [])
+            .map(
+              (entry) =>
+                  activityFromJson((entry as Map).cast<String, Object?>()),
+            )
+            .toList(growable: false);
+    final additionalSessions =
+        (data['additionalSessions'] as List<dynamic>? ?? const [])
+            .map(
+              (entry) =>
+                  summaryFromJson((entry as Map).cast<String, Object?>()),
+            )
+            .toList(growable: false);
+    final gpxWaypoints = (data['gpxWaypoints'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => geoPointFromJson((entry as Map).cast<String, Object?>()),
+        )
+        .toList(growable: false);
+    final gpxRoutes = (data['gpxRoutes'] as List<dynamic>? ?? const [])
+        .map(
+          (entry) => gpxRouteFromJson((entry as Map).cast<String, Object?>()),
+        )
+        .toList(growable: false);
     return RawActivity(
       points: points,
       channels: channels,
       laps: laps,
+      sets: sets,
+      events: events,
+      lengths: lengths,
       sport: Sport.values[data['sport'] as int],
       creator: data['creator'] as String?,
       device: deviceFromJson((data['device'] as Map?)?.cast<String, Object?>()),
+      summary: data['summary'] is Map
+          ? summaryFromJson((data['summary'] as Map).cast<String, Object?>())
+          : null,
       gpxMetadataName: data['gpxMetadataName'] as String?,
       gpxMetadataDescription: data['gpxMetadataDescription'] as String?,
       gpxIncludeCreatorMetadataDescription:
@@ -126,8 +162,223 @@ class ExportSerialization {
       gpxTrackType: data['gpxTrackType'] as String?,
       gpxMetadataExtensions: metadataExtensions,
       gpxTrackExtensions: trackExtensions,
+      additionalTracks: additionalTracks,
+      additionalSessions: additionalSessions,
+      gpxWaypoints: gpxWaypoints,
+      gpxRoutes: gpxRoutes,
+      gpxTrackSegments: (data['gpxTrackSegments'] as List<dynamic>? ?? const [])
+          .cast<int>(),
+      tcxNotes: data['tcxNotes'] as String?,
+      tcxAuthor: data['tcxAuthor'] as String?,
+      metadata: (data['metadata'] as Map?)?.cast<String, Object?>(),
     );
   }
+
+  static Map<String, Object?> geoPointToJson(GeoPoint point) => {
+    'lat': point.latitude,
+    'lon': point.longitude,
+    'ele': point.elevation,
+    'time': point.time.toUtc().toIso8601String(),
+    'gpxExt': point.gpxExtensions == null
+        ? null
+        : [for (final node in point.gpxExtensions!) extensionNodeToJson(node)],
+    'gpxAttr': point.gpxAttributes,
+  };
+
+  static GeoPoint geoPointFromJson(Map<String, Object?> map) => GeoPoint(
+    latitude: (map['lat'] as num).toDouble(),
+    longitude: (map['lon'] as num).toDouble(),
+    elevation: map['ele'] is num ? (map['ele'] as num).toDouble() : null,
+    time: DateTime.parse(map['time'] as String),
+    gpxExtensions: map['gpxExt'] == null
+        ? null
+        : [
+            for (final entry in map['gpxExt'] as List<dynamic>)
+              extensionNodeFromJson((entry as Map).cast<String, Object?>()),
+          ],
+    gpxAttributes: (map['gpxAttr'] as Map?)?.cast<String, String>(),
+  );
+
+  static Map<String, Object?> lapToJson(Lap lap) => {
+    'start': lap.startTime.toUtc().toIso8601String(),
+    'end': lap.endTime.toUtc().toIso8601String(),
+    'distance': lap.distanceMeters,
+    'name': lap.name,
+    'sport': lap.sport?.index,
+    'calories': lap.calories,
+    'avgSpeed': lap.avgSpeed,
+    'maxSpeed': lap.maxSpeed,
+    'avgHeartRate': lap.avgHeartRate,
+    'maxHeartRate': lap.maxHeartRate,
+    'avgCadence': lap.avgCadence,
+    'maxCadence': lap.maxCadence,
+    'avgPower': lap.avgPower,
+    'maxPower': lap.maxPower,
+    'event': lap.event,
+    'eventType': lap.eventType,
+    'numActiveLengths': lap.numActiveLengths,
+    'swimStroke': lap.swimStroke?.index,
+    'tcxIntensity': lap.tcxIntensity,
+    'tcxTriggerMethod': lap.tcxTriggerMethod,
+    'extraFitFields': lap.extraFitFields,
+    'extraFitArrays': lap.extraFitArrays,
+  };
+
+  static Lap lapFromJson(Map<String, Object?> map) => Lap(
+    startTime: DateTime.parse(map['start'] as String),
+    endTime: DateTime.parse(map['end'] as String),
+    distanceMeters: (map['distance'] as num?)?.toDouble(),
+    name: map['name'] as String?,
+    sport: map['sport'] is int ? Sport.values[map['sport'] as int] : null,
+    calories: (map['calories'] as num?)?.toDouble(),
+    avgSpeed: (map['avgSpeed'] as num?)?.toDouble(),
+    maxSpeed: (map['maxSpeed'] as num?)?.toDouble(),
+    avgHeartRate: (map['avgHeartRate'] as num?)?.toDouble(),
+    maxHeartRate: (map['maxHeartRate'] as num?)?.toDouble(),
+    avgCadence: (map['avgCadence'] as num?)?.toDouble(),
+    maxCadence: (map['maxCadence'] as num?)?.toDouble(),
+    avgPower: (map['avgPower'] as num?)?.toDouble(),
+    maxPower: (map['maxPower'] as num?)?.toDouble(),
+    event: map['event'] as int?,
+    eventType: map['eventType'] as int?,
+    numActiveLengths: map['numActiveLengths'] as int?,
+    swimStroke: map['swimStroke'] is int
+        ? SwimStroke.values[map['swimStroke'] as int]
+        : null,
+    tcxIntensity: map['tcxIntensity'] as String?,
+    tcxTriggerMethod: map['tcxTriggerMethod'] as String?,
+    extraFitFields: (map['extraFitFields'] as Map?)?.cast<int, double>(),
+    extraFitArrays: (map['extraFitArrays'] as Map?)?.cast<int, List<double>>(),
+  );
+
+  static Map<String, Object?> workoutSetToJson(WorkoutSet set) => {
+    'start': set.startTime.toUtc().toIso8601String(),
+    'end': set.endTime.toUtc().toIso8601String(),
+    'isRest': set.isRest,
+    'exerciseCategoryId': set.exerciseCategoryId,
+    'exerciseCategory': set.exerciseCategory,
+    'repetitions': set.repetitions,
+    'weightKg': set.weightKg,
+  };
+
+  static WorkoutSet workoutSetFromJson(Map<String, Object?> map) => WorkoutSet(
+    startTime: DateTime.parse(map['start'] as String),
+    endTime: DateTime.parse(map['end'] as String),
+    isRest: map['isRest'] as bool,
+    exerciseCategoryId: map['exerciseCategoryId'] as int?,
+    exerciseCategory: map['exerciseCategory'] as String?,
+    repetitions: map['repetitions'] as int?,
+    weightKg: (map['weightKg'] as num?)?.toDouble(),
+  );
+
+  static Map<String, Object?> activityEventToJson(ActivityEvent event) => {
+    'time': event.time.toUtc().toIso8601String(),
+    'event': event.event,
+    'eventType': event.eventType,
+    'data': event.data,
+  };
+
+  static ActivityEvent activityEventFromJson(Map<String, Object?> map) =>
+      ActivityEvent(
+        time: DateTime.parse(map['time'] as String),
+        event: map['event'] as int,
+        eventType: map['eventType'] as int,
+        data: map['data'] as int?,
+      );
+
+  static Map<String, Object?> swimLengthToJson(SwimLength length) => {
+    'start': length.startTime.toUtc().toIso8601String(),
+    'end': length.endTime.toUtc().toIso8601String(),
+    'isActive': length.isActive,
+    'totalStrokes': length.totalStrokes,
+    'avgSpeed': length.avgSpeed,
+    'swimStroke': length.swimStroke?.index,
+  };
+
+  static SwimLength swimLengthFromJson(Map<String, Object?> map) => SwimLength(
+    startTime: DateTime.parse(map['start'] as String),
+    endTime: DateTime.parse(map['end'] as String),
+    isActive: map['isActive'] as bool,
+    totalStrokes: map['totalStrokes'] as int?,
+    avgSpeed: (map['avgSpeed'] as num?)?.toDouble(),
+    swimStroke: map['swimStroke'] is int
+        ? SwimStroke.values[map['swimStroke'] as int]
+        : null,
+  );
+
+  static Map<String, Object?> summaryToJson(ActivitySummary summary) => {
+    'elapsedMicros': summary.elapsedTime?.inMicroseconds,
+    'timerMicros': summary.timerTime?.inMicroseconds,
+    'totalDistanceMeters': summary.totalDistanceMeters,
+    'avgSpeed': summary.avgSpeed,
+    'maxSpeed': summary.maxSpeed,
+    'avgHeartRate': summary.avgHeartRate,
+    'maxHeartRate': summary.maxHeartRate,
+    'avgCadence': summary.avgCadence,
+    'maxCadence': summary.maxCadence,
+    'avgPower': summary.avgPower,
+    'maxPower': summary.maxPower,
+    'calories': summary.calories,
+    'poolLengthMeters': summary.poolLengthMeters,
+    'numActiveLengths': summary.numActiveLengths,
+    'swimStroke': summary.swimStroke?.index,
+    'avgStrokeCount': summary.avgStrokeCount,
+    'subSport': summary.subSport,
+    'totalCycles': summary.totalCycles,
+    'sport': summary.sport?.index,
+    'extraFitFields': summary.extraFitFields,
+    'extraFitArrays': summary.extraFitArrays,
+  };
+
+  static ActivitySummary summaryFromJson(Map<String, Object?> map) =>
+      ActivitySummary(
+        elapsedTime: map['elapsedMicros'] is int
+            ? Duration(microseconds: map['elapsedMicros'] as int)
+            : null,
+        timerTime: map['timerMicros'] is int
+            ? Duration(microseconds: map['timerMicros'] as int)
+            : null,
+        totalDistanceMeters: (map['totalDistanceMeters'] as num?)?.toDouble(),
+        avgSpeed: (map['avgSpeed'] as num?)?.toDouble(),
+        maxSpeed: (map['maxSpeed'] as num?)?.toDouble(),
+        avgHeartRate: (map['avgHeartRate'] as num?)?.toDouble(),
+        maxHeartRate: (map['maxHeartRate'] as num?)?.toDouble(),
+        avgCadence: (map['avgCadence'] as num?)?.toDouble(),
+        maxCadence: (map['maxCadence'] as num?)?.toDouble(),
+        avgPower: (map['avgPower'] as num?)?.toDouble(),
+        maxPower: (map['maxPower'] as num?)?.toDouble(),
+        calories: (map['calories'] as num?)?.toDouble(),
+        poolLengthMeters: (map['poolLengthMeters'] as num?)?.toDouble(),
+        numActiveLengths: map['numActiveLengths'] as int?,
+        swimStroke: map['swimStroke'] is int
+            ? SwimStroke.values[map['swimStroke'] as int]
+            : null,
+        avgStrokeCount: (map['avgStrokeCount'] as num?)?.toDouble(),
+        subSport: map['subSport'] as int?,
+        totalCycles: map['totalCycles'] as int?,
+        sport: map['sport'] is int ? Sport.values[map['sport'] as int] : null,
+        extraFitFields:
+            (map['extraFitFields'] as Map?)?.cast<int, double>() ?? const {},
+        extraFitArrays:
+            (map['extraFitArrays'] as Map?)?.cast<int, List<double>>() ??
+            const {},
+      );
+
+  static Map<String, Object?> gpxRouteToJson(GpxRoute route) => {
+    'name': route.name,
+    'points': [for (final point in route.points) geoPointToJson(point)],
+    'metadata': route.metadata,
+  };
+
+  static GpxRoute gpxRouteFromJson(Map<String, Object?> map) => GpxRoute(
+    name: map['name'] as String?,
+    points: (map['points'] as List<dynamic>)
+        .map(
+          (entry) => geoPointFromJson((entry as Map).cast<String, Object?>()),
+        )
+        .toList(growable: false),
+    metadata: (map['metadata'] as Map?)?.cast<String, String>() ?? const {},
+  );
 
   static Map<String, Object?>? deviceToJson(ActivityDeviceMetadata? device) {
     if (device == null) {

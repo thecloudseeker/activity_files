@@ -77,6 +77,33 @@ void main() {
         expect(result.activity.points.length, equals(3));
       });
 
+      test('parses Feature with MultiLineString geometry', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'MultiLineString',
+            'coordinates': [
+              [
+                [-105.0, 40.0],
+                [-105.0005, 40.0005],
+              ],
+              [
+                [-106.0, 41.0],
+                [-106.0005, 41.0005],
+              ],
+            ],
+          },
+          'properties': {'timestamp': '2024-01-01T10:00:00Z'},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points.length, equals(4));
+      });
+
       test('parses Feature properties as channel data', () {
         final geojson = {
           'type': 'Feature',
@@ -278,6 +305,41 @@ void main() {
           );
         },
       );
+
+      test('reports a warning and skips a Point feature with no coordinates '
+          'in a FeatureCollection', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'Point',
+                'coordinates': [-105.0, 40.0],
+              },
+              'properties': {'timestamp': '2024-01-01T10:00:00Z'},
+            },
+            {
+              'type': 'Feature',
+              'geometry': {'type': 'Point'}, // no 'coordinates' key
+              'properties': {'timestamp': '2024-01-01T10:00:10Z'},
+            },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(1));
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'geojson.point.invalid_coordinate',
+          ),
+          isTrue,
+        );
+      });
     });
 
     group('Error handling', () {
