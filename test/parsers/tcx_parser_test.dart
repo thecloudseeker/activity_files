@@ -171,6 +171,61 @@ void main() {
         expect(result.activity.laps.length, equals(2));
         expect(result.activity.points.length, equals(2));
       });
+
+      test('reads every Track in a Lap, not just the first', () {
+        const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>40</TotalTimeSeconds>
+        <DistanceMeters>100</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position>
+              <LatitudeDegrees>40.0</LatitudeDegrees>
+              <LongitudeDegrees>-105.0</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:10Z</Time>
+            <Position>
+              <LatitudeDegrees>40.0001</LatitudeDegrees>
+              <LongitudeDegrees>-105.0001</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+        </Track>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:30Z</Time>
+            <Position>
+              <LatitudeDegrees>40.0002</LatitudeDegrees>
+              <LongitudeDegrees>-105.0002</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:40Z</Time>
+            <Position>
+              <LatitudeDegrees>40.0003</LatitudeDegrees>
+              <LongitudeDegrees>-105.0003</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.points.length, equals(4));
+        expect(
+          result.activity.laps.single.endTime,
+          equals(DateTime.utc(2024, 1, 1, 10, 0, 40)),
+        );
+      });
     });
 
     group('Sport type parsing', () {

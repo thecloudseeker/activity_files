@@ -485,6 +485,62 @@ void main() {
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
 
+      test('treats a properties.timestamp without a UTC offset as UTC', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'Point',
+            'coordinates': [-105.0, 40.0],
+          },
+          'properties': {'timestamp': '2024-01-01T10:00:00'},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.activity.points[0].time,
+          equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+        );
+      });
+
+      test(
+        'treats coordinateProperties.times entries without a UTC offset as UTC',
+        () {
+          final geojson = {
+            'type': 'Feature',
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': [
+                [-105.0, 40.0],
+                [-105.001, 40.001],
+              ],
+            },
+            'properties': {
+              'coordinateProperties': {
+                'times': ['2024-01-01T10:00:00', '2024-01-01T10:00:10'],
+              },
+            },
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(
+            result.activity.points[0].time,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+          );
+          expect(
+            result.activity.points[1].time,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 10)),
+          );
+        },
+      );
+
       test('uses fallback timestamp if not provided', () {
         final geojson = {
           'type': 'Feature',

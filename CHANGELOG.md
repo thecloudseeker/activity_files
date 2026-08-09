@@ -1,4 +1,9 @@
 # Changelog
+## 0.7.5
+### Fixed
+- TCX: laps with more than one `<Track>` (pause/resume) only read the first one. now reads all of them.
+- GeoJSON/CSV: timestamps with no UTC offset were treated as local time. now UTC, matching GPX/TCX.
+
 ## 0.7.4
 ### Fixed
 - `exportAsync(useIsolate: true)` no longer drops most of `RawActivity` crossing the isolate boundary.

@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+import 'timestamp_utils.dart';
 
 final DateTime _geojsonFallbackTimestamp = DateTime.fromMillisecondsSinceEpoch(
   0,
@@ -378,8 +379,16 @@ class GeojsonParser implements ActivityFormatParser {
     if (times is! List) return null;
     return [
       for (final t in times)
-        t == null ? null : DateTime.tryParse(t.toString())?.toUtc(),
+        t == null ? null : _tryParseTimestampAssumeUtc(t.toString()),
     ];
+  }
+
+  static DateTime? _tryParseTimestampAssumeUtc(String text) {
+    try {
+      return parseTimestampAssumeUtc(text);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Parses `properties['timestamp']`, if present. Callers that share one
@@ -394,7 +403,7 @@ class GeojsonParser implements ActivityFormatParser {
     final raw = properties['timestamp'];
     if (raw == null) return null;
     try {
-      return DateTime.parse(raw.toString());
+      return parseTimestampAssumeUtc(raw.toString());
     } catch (_) {
       diagnostics.add(
         const ParseDiagnostic(
