@@ -1410,7 +1410,14 @@ class RawActivity {
             .putIfAbsent(entry.key, () => <Sample>[])
             .addAll(entry.value);
       }
-      mergedLaps.addAll(flat.laps);
+      // A lap with sport:null inherits its own track's sport while that
+      // track stands alone; backfill it explicitly before the track
+      // boundary disappears, so a multi-sport merge doesn't leave every
+      // non-primary lap silently inheriting the primary track's sport.
+      mergedLaps.addAll([
+        for (final lap in flat.laps)
+          lap.sport == null ? lap.copyWith(sport: track.sport) : lap,
+      ]);
       mergedSets.addAll(flat.sets);
       mergedEvents.addAll(flat.events);
       mergedLengths.addAll(flat.lengths);

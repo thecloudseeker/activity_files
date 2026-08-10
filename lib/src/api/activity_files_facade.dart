@@ -859,42 +859,38 @@ class ActivityFiles {
     // Create separate activities for each sport
     final result = <Sport, RawActivity>{};
 
-    final rangesBySport = <Sport, ({DateTime start, DateTime end})>{
-      for (final entry in lapsBySport.entries)
-        entry.key: (
-          start: entry.value
-              .map((lap) => lap.startTime)
-              .reduce((a, b) => a.isBefore(b) ? a : b),
-          end: entry.value
-              .map((lap) => lap.endTime)
-              .reduce((a, b) => a.isAfter(b) ? a : b),
-        ),
-    };
+    // A lap's end boundary is exclusive only when another lap (any sport)
+    // starts exactly there, so a point sitting on that instant is claimed by
+    // exactly one lap. Membership is checked per lap (union of that sport's
+    // own lap windows) rather than one aggregate min..max range per sport,
+    // so a sport whose laps bracket another sport's laps (a brick workout:
+    // run/bike/run) doesn't swallow the bracketed sport's window.
+    final lapStartTimes = activity.laps.map((lap) => lap.startTime).toSet();
+    bool withinLap(DateTime time, Lap lap) {
+      final endExclusive = lapStartTimes.contains(lap.endTime);
+      return !time.isBefore(lap.startTime) &&
+          (endExclusive
+              ? time.isBefore(lap.endTime)
+              : !time.isAfter(lap.endTime));
+    }
+
+    bool withinAnyLap(DateTime time, List<Lap> laps) =>
+        laps.any((lap) => withinLap(time, lap));
 
     for (final entry in lapsBySport.entries) {
       final sport = entry.key;
       final laps = entry.value;
 
-      final range = rangesBySport[sport]!;
-      final startTime = range.start;
-      final endTime = range.end;
-      final sharesEndBoundary = rangesBySport.entries.any(
-        (other) => other.key != sport && other.value.start == endTime,
-      );
-      bool withinRange(DateTime time) =>
-          !time.isBefore(startTime) &&
-          (sharesEndBoundary ? time.isBefore(endTime) : !time.isAfter(endTime));
-
-      // Filter points to this time range
+      // Filter points to this sport's lap windows
       final sportPoints = activity.points
-          .where((p) => withinRange(p.time))
+          .where((p) => withinAnyLap(p.time, laps))
           .toList();
 
-      // Filter channels to this time range
+      // Filter channels to this sport's lap windows
       final sportChannels = <Channel, List<Sample>>{};
       for (final channelEntry in activity.channels.entries) {
         final samples = channelEntry.value
-            .where((s) => withinRange(s.time))
+            .where((s) => withinAnyLap(s.time, laps))
             .toList();
         if (samples.isNotEmpty) {
           sportChannels[channelEntry.key] = samples;

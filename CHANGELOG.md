@@ -9,6 +9,8 @@
 - `trimInvalid()` was dropping laps on activities with no surviving GPS points (indoor/trainer). fixed.
 - `crop()`/`deleteRange()`/`insertPause()`/`removePause()` now carry `events`/`lengths`/`sets` forward, like `shiftTime()` already did.
 - `sortAndDedup()`/`updatePoint()` sort stably now. duplicate timestamps used to pick a winner at random.
+- `splitBySport()` bled points between sports on brick workouts (run/bike/run). now it's per-lap.
+- `flattened()` gave every lap the primary track's sport. each lap keeps its own now.
 
 ## 0.7.4
 ### Fixed
