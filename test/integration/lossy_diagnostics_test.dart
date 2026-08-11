@@ -93,6 +93,37 @@ void main() {
       expect(codes, isNot(contains('lossy.laps_dropped')));
     });
 
+    test('GeoJSON reports no diagnostic for channel data (holds it all)', () {
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 3; i++)
+            GeoPoint(
+              latitude: 47.0 + i * 0.001,
+              longitude: 11.0,
+              time: t0.add(Duration(seconds: i * 5)),
+            ),
+        ],
+        channels: {
+          Channel.heartRate: [
+            for (var i = 0; i < 3; i++)
+              Sample(time: t0.add(Duration(seconds: i * 5)), value: 140.0),
+          ],
+          Channel.custom('running_smoothness'): [Sample(time: t0, value: 5.2)],
+        },
+        sport: Sport.running,
+      );
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+        normalize: false,
+        runValidation: false,
+      );
+      expect(
+        result.diagnostics.where((d) => d.code.contains('channel')),
+        isEmpty,
+      );
+    });
+
     test('an activity with no extra features yields no lossy diagnostics', () {
       final plain = RawActivity(
         points: [

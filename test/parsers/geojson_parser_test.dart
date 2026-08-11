@@ -674,6 +674,35 @@ void main() {
           isEmpty,
         );
       });
+
+      test(
+        'a scalar feature-level numeric property on a multi-point '
+        'LineString becomes metadata, not a channel broadcast at every point',
+        () {
+          final geojson = {
+            'type': 'Feature',
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': [
+                for (var i = 0; i < 5; i++) [-105.0 - i * 0.001, 40.0],
+              ],
+            },
+            'properties': {'elevation_gain': 150},
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(result.activity.points, hasLength(5));
+          expect(
+            result.activity.channel(Channel.custom('elevation_gain')),
+            isEmpty,
+          );
+          expect(result.activity.metadata['elevation_gain'], 150);
+        },
+      );
     });
   });
 }

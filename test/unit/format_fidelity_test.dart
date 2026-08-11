@@ -309,6 +309,20 @@ void main() {
         parsed.channel(Channel.custom('vertical_osc')).single.value,
         closeTo(8.5, 0.001),
       );
+
+      // Re-encoding must write the custom channel back as an extra
+      // gpxtpx: tag, so it survives a full parse -> encode -> parse cycle,
+      // not just the parse half.
+      final encoded = ActivityEncoder.encode(parsed, ActivityFileFormat.gpx);
+      expect(encoded, contains('<gpxtpx:vertical_osc>'));
+      final reparsed = ActivityParser.parseBytes(
+        Uint8List.fromList(utf8.encode(encoded)),
+        ActivityFileFormat.gpx,
+      ).activity;
+      expect(
+        reparsed.channel(Channel.custom('vertical_osc')).single.value,
+        closeTo(8.5, 0.001),
+      );
     });
 
     test('foreign point extension nodes are preserved and re-encoded', () {

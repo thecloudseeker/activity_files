@@ -45,6 +45,50 @@ void main() {
       expect(reparsed.metadata.containsKey('coordinateProperties'), isFalse);
     });
 
+    test('heart rate and a custom channel survive a full parse -> encode -> '
+        'parse cycle through the default (LineString) export path', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 47.0,
+            longitude: 11.0,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+          ),
+          GeoPoint(
+            latitude: 47.001,
+            longitude: 11.001,
+            time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+          ),
+        ],
+        channels: {
+          Channel.heartRate: [
+            Sample(time: DateTime.utc(2024, 1, 1, 10, 0, 0), value: 140),
+            Sample(time: DateTime.utc(2024, 1, 1, 10, 0, 10), value: 145),
+          ],
+          Channel.custom('running_smoothness'): [
+            Sample(time: DateTime.utc(2024, 1, 1, 10, 0, 0), value: 5.2),
+          ],
+        },
+      );
+
+      final encoded = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.geojson,
+      );
+      final reparsed = parse(encoded);
+
+      expect(reparsed.channel(Channel.heartRate).map((s) => s.value), [
+        140.0,
+        145.0,
+      ]);
+      expect(
+        reparsed
+            .channel(Channel.custom('running_smoothness'))
+            .map((s) => s.value),
+        [5.2],
+      );
+    });
+
     test('computed properties do not go stale after an edit', () {
       const json = '''
 {"type":"Feature",

@@ -368,6 +368,38 @@ void main() {
 
         expect(properties['total_calories'], equals(512));
       });
+
+      test('coordinateProperties.channels carries per-point channel data', () {
+        final t0 = DateTime.utc(2024, 1, 1, 10, 0, 0);
+        final t1 = t0.add(const Duration(seconds: 10));
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 40.0, longitude: -105.0, time: t0),
+            GeoPoint(latitude: 40.001, longitude: -105.001, time: t1),
+          ],
+          channels: {
+            Channel.heartRate: [
+              Sample(time: t0, value: 140),
+              Sample(time: t1, value: 145),
+            ],
+            Channel.custom('running_smoothness'): [
+              Sample(time: t0, value: 5.2),
+            ],
+          },
+        );
+
+        final geojson = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.geojson,
+        );
+        final decoded = jsonDecode(geojson);
+        final channels =
+            decoded['features'][0]['properties']['coordinateProperties']['channels'];
+
+        expect(channels['heart_rate'], equals([140.0, 145.0]));
+        // No sample at t1: null, not dropped or defaulted to 0.
+        expect(channels['running_smoothness'], equals([5.2, null]));
+      });
     });
 
     group('Sport types', () {

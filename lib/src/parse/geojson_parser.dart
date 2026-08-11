@@ -224,6 +224,7 @@ class GeojsonParser implements ActivityFormatParser {
       // once here rather than per point (avoids diagnostic spam for a single
       // bad value shared across every coordinate).
       final times = _coordinateTimes(properties);
+      final coordinateChannels = _coordinateChannels(properties);
       final sharedTimestamp = _resolvePropertyTimestamp(
         properties,
         diagnostics,
@@ -242,7 +243,12 @@ class GeojsonParser implements ActivityFormatParser {
         );
         if (point != null) {
           points.add(point);
-          _collectChannelSamples(point.time, properties, channelMap);
+          _collectCoordinateChannelSamples(
+            point.time,
+            i,
+            coordinateChannels,
+            channelMap,
+          );
         }
       }
     } else if (geomType == 'Point') {
@@ -259,6 +265,11 @@ class GeojsonParser implements ActivityFormatParser {
         properties,
         diagnostics,
       );
+      // No coordinateProperties.channels precedent exists for MultiLineString
+      // (only LineString/Polygon carry per-point parallel arrays), so unlike
+      // those two, no per-point channel data is collected here: a scalar
+      // property on this geometry type is feature-level metadata, not a
+      // per-point broadcast.
       for (final lineCoords in coordinates) {
         if (lineCoords is! List) continue;
         for (final coord in lineCoords) {
@@ -272,7 +283,6 @@ class GeojsonParser implements ActivityFormatParser {
           );
           if (point != null) {
             points.add(point);
-            _collectChannelSamples(point.time, properties, channelMap);
           }
         }
       }
@@ -282,6 +292,7 @@ class GeojsonParser implements ActivityFormatParser {
       final exterior = coordinates.isNotEmpty ? coordinates[0] : null;
       if (exterior is List) {
         final times = _coordinateTimes(properties);
+        final coordinateChannels = _coordinateChannels(properties);
         final sharedTimestamp = _resolvePropertyTimestamp(
           properties,
           diagnostics,
@@ -300,7 +311,12 @@ class GeojsonParser implements ActivityFormatParser {
           );
           if (point != null) {
             points.add(point);
-            _collectChannelSamples(point.time, properties, channelMap);
+            _collectCoordinateChannelSamples(
+              point.time,
+              i,
+              coordinateChannels,
+              channelMap,
+            );
           }
         }
       }
@@ -388,6 +404,41 @@ class GeojsonParser implements ActivityFormatParser {
       return parseTimestampAssumeUtc(text);
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Parses `properties.coordinateProperties.channels` (one parallel array
+  /// per channel id, index-aligned with the coordinates array), if present.
+  static Map<String, List>? _coordinateChannels(Map properties) {
+    final coordinateProperties = properties['coordinateProperties'];
+    if (coordinateProperties is! Map) return null;
+    final channels = coordinateProperties['channels'];
+    if (channels is! Map) return null;
+    return {
+      for (final entry in channels.entries)
+        if (entry.key is String && entry.value is List)
+          entry.key as String: entry.value as List,
+    };
+  }
+
+  /// Reads channel values for coordinate [index] from [coordinateChannels]
+  /// (the per-index parallel arrays), not the shared feature-level scalar
+  /// properties, so a scalar summary property on a multi-point geometry
+  /// isn't broadcast as an identical sample at every point.
+  static void _collectCoordinateChannelSamples(
+    DateTime timestamp,
+    int index,
+    Map<String, List>? coordinateChannels,
+    Map<Channel, List<Sample>> channelMap,
+  ) {
+    if (coordinateChannels == null) return;
+    for (final entry in coordinateChannels.entries) {
+      if (index >= entry.value.length) continue;
+      final value = entry.value[index];
+      if (value is! num) continue;
+      channelMap
+          .putIfAbsent(Channel.custom(entry.key), () => [])
+          .add(Sample(time: timestamp, value: value.toDouble()));
     }
   }
 

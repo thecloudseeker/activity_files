@@ -11,6 +11,9 @@
 - `sortAndDedup()`/`updatePoint()` sort stably now. duplicate timestamps used to pick a winner at random.
 - `splitBySport()` bled points between sports on brick workouts (run/bike/run). now it's per-lap.
 - `flattened()` gave every lap the primary track's sport. each lap keeps its own now.
+- GeoJSON export was dropping every channel (HR, power, all of it). now written as `coordinateProperties.channels`.
+- GeoJSON was smearing one feature property across every point. now it's just metadata.
+- GPX export dropped anything outside the usual 9 channels. now written as extra `gpxtpx:` tags.
 
 ## 0.7.4
 ### Fixed
