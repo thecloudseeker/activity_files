@@ -14,6 +14,7 @@
 - GeoJSON export was dropping every channel (HR, power, all of it). now written as `coordinateProperties.channels`.
 - GeoJSON was smearing one feature property across every point. now it's just metadata.
 - GPX export dropped anything outside the usual 9 channels. now written as extra `gpxtpx:` tags.
+- TCX export now reports `lossy.channels_dropped` instead of dropping a channel with no warning.
 
 ## 0.7.4
 ### Fixed

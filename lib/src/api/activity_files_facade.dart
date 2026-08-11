@@ -378,6 +378,33 @@ class ActivityFiles {
         fix: 'Export to TCX or FIT to preserve laps.',
       );
     }
+    // TCX's TPX extension only carries these five channels; there's no
+    // fallback slot for arbitrary custom channels (unlike GPX's
+    // TrackPointExtension, which round-trips unknown tags), so anything
+    // else is dropped rather than invented as a non-standard tag.
+    if (to == ActivityFileFormat.tcx) {
+      final tcxChannels = {
+        Channel.heartRate,
+        Channel.cadence,
+        Channel.speed,
+        Channel.power,
+        Channel.distance,
+      };
+      final droppedChannels =
+          activity.channels.keys
+              .where((channel) => !tcxChannels.contains(channel))
+              .map((channel) => channel.id)
+              .toList()
+            ..sort();
+      if (droppedChannels.isNotEmpty) {
+        add(
+          'channels_dropped',
+          'Channel(s) ${droppedChannels.join(', ')} cannot be represented '
+              'in TCX and are dropped.',
+          fix: 'Export to FIT, GPX, GeoJSON, or CSV to preserve them.',
+        );
+      }
+    }
     return diagnostics;
   }
 
