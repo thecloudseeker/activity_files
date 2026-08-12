@@ -9,7 +9,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('FIT problem files', () {
-    test('sundaygreenloop keeps best-effort extraction stable', () async {
+    test('sundaygreenloop extracts a full, clean point set', () async {
       final candidates = [
         'dev/fixtures/user_data/sundaygreenloop.fit',
         'scripts/test_files/user_data/sundaygreenloop.fit',
@@ -41,14 +41,6 @@ void main() {
       expect(
         result.diagnostics.where((d) => d.severity == ParseSeverity.error),
         isEmpty,
-      );
-      expect(
-        result.diagnostics.any(
-          (d) =>
-              d.code == 'fit.record.recovered_timestamp' ||
-              d.code == 'fit.data.unknown_definition',
-        ),
-        isTrue,
       );
     });
   });

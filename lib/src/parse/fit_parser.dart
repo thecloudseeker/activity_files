@@ -348,10 +348,7 @@ class FitParser implements ActivityFormatParser {
           lastKnownTimestamp = rawTimestamp.toInt();
         }
       }
-      final isCanonicalRecord = definition.globalId == 20;
-      final isFallbackRecord =
-          !isCanonicalRecord && _looksLikeRecordDefinition(definition);
-      if (isCanonicalRecord || isFallbackRecord) {
+      if (definition.globalId == 20) {
         DateTime? timestamp = _decodeTimestamp(values[253]);
         if (timestamp == null) {
           final recoveredSeconds =
@@ -409,9 +406,6 @@ class FitParser implements ActivityFormatParser {
 
         final lat = _decodeSemicircles(values[0]);
         final lon = _decodeSemicircles(values[1]);
-        if (isFallbackRecord && (lat == null || lon == null)) {
-          continue;
-        }
         // enhanced_altitude (78) shares altitude (2)'s scale/offset formula
         // but is uint32-wide; prefer it when present.
         final altitude =
@@ -1093,38 +1087,6 @@ Map<int, List<double>> _extraFitArrays(
     }
   }
   return arrays;
-}
-
-/// Global message numbers with dedicated handling in the parse loop.
-///
-/// These must never be rerouted through the fallback record heuristic below:
-/// e.g. a lap (global 19) with event (0), event_type (1), and timestamp (253)
-/// would otherwise be misread as a GPS record and silently dropped.
-const Set<int> _explicitlyHandledGlobalIds = {
-  0,
-  18,
-  19,
-  20,
-  21,
-  23,
-  34,
-  49,
-  101,
-  225,
-};
-
-/// Heuristic for vendor-specific messages that carry GPS record data under a
-/// non-standard global ID: timestamp (253) plus lat (0) and long (1).
-bool _looksLikeRecordDefinition(_FitMessageDefinition definition) {
-  if (_explicitlyHandledGlobalIds.contains(definition.globalId)) {
-    return false;
-  }
-  final fieldNumbers = definition.fields
-      .map((field) => field.fieldNumber)
-      .toSet();
-  return fieldNumbers.contains(253) &&
-      fieldNumbers.contains(0) &&
-      fieldNumbers.contains(1);
 }
 
 Uint8List _decodePayload(String input, List<ParseDiagnostic> diagnostics) {

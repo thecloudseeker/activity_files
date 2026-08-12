@@ -1,6 +1,8 @@
 # Changelog
 ## 0.7.5
 ### Fixed
+- FIT: was mistaking Garmin's vendor-specific messages for GPS records. garbage coords/altitude/HR on real files. fixed.
+- GPX: trackpoints missing `<time>` were getting dropped. now they just get an epoch timestamp and stay.
 - TCX: laps with more than one `<Track>` (pause/resume) only read the first one. now reads all of them.
 - GeoJSON/CSV: timestamps with no UTC offset were treated as local time. now UTC, matching GPX/TCX.
 - FIT: fields 78/120 (altitude, grade, balance, ebike assist) were mapped to the wrong numbers. fixed.

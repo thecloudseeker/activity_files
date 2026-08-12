@@ -377,6 +377,57 @@ void main() {
           );
         },
       );
+
+      test('keeps a trackpoint without a <time> element (epoch fallback)', () {
+        // Regression test: trkpt without <time> used to be silently dropped,
+        // which turned entire real-world files (e.g. GDAL-exported route
+        // tracks with no per-point timestamps) into empty activities.
+        const gpx = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0"></trkpt>
+      <trkpt lat="40.0005" lon="-105.0005"></trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+
+        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+
+        expect(result.activity.points, hasLength(2));
+        expect(result.activity.points[0].latitude, equals(40.0));
+        expect(
+          result.activity.points[0].time,
+          equals(DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)),
+        );
+      });
+
+      test('keeps a trackpoint with an unparsable <time> (epoch fallback)', () {
+        const gpx = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0">
+        <time>not-a-timestamp</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+
+        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+
+        expect(result.activity.points, hasLength(1));
+        expect(
+          result.activity.points[0].time,
+          equals(DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)),
+        );
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'gpx.trackpoint.invalid_timestamp',
+          ),
+          isTrue,
+        );
+      });
     });
 
     group('Waypoint parsing', () {

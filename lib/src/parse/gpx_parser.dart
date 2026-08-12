@@ -207,39 +207,27 @@ class GpxParser implements ActivityFormatParser {
             }
           }
 
-          if (timeText == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'gpx.trackpoint.missing_timestamp',
-                message:
-                    'Skipping GPX trackpoint without timestamp at $lat,$lon.',
-                node: ParseNodeReference(
-                  path: 'gpx.trk.trkseg.trkpt',
-                  index: index - 1,
-                  description: 'lat=$lat,lon=$lon',
-                ),
-              ),
-            );
-            continue;
-          }
           DateTime? time;
-          try {
-            time = parseTimestampAssumeUtc(timeText);
-          } catch (_) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'gpx.trackpoint.invalid_timestamp',
-                message: 'Invalid timestamp "$timeText"; trackpoint ignored.',
-                node: ParseNodeReference(
-                  path: 'gpx.trk.trkseg.trkpt',
-                  index: index - 1,
+          if (timeText != null) {
+            try {
+              time = parseTimestampAssumeUtc(timeText);
+            } catch (_) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'gpx.trackpoint.invalid_timestamp',
+                  message:
+                      'Invalid timestamp "$timeText" at $lat,$lon; '
+                      'point kept with epoch fallback time.',
+                  node: ParseNodeReference(
+                    path: 'gpx.trk.trkseg.trkpt',
+                    index: index - 1,
+                  ),
                 ),
-              ),
-            );
-            continue;
+              );
+            }
           }
+          time ??= DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
           final elevation = eleText != null ? double.tryParse(eleText) : null;
           if (eleText != null && elevation == null) {
