@@ -2634,6 +2634,144 @@ void main() {
     });
 
     test(
+      'TCX export with normalize=false keeps every point even when a '
+      "zero-width lap's end time would otherwise orphan the nudged points",
+      () {
+        final base = DateTime.utc(2024, 12, 10, 12);
+        final activity = RawActivity(
+          points: [
+            for (var i = 0; i < 5; i++)
+              GeoPoint(
+                latitude: 40.0 + i * 0.001,
+                longitude: -105.0,
+                time: base,
+              ),
+          ],
+          laps: [Lap(startTime: base, endTime: base)],
+        );
+
+        final result = ActivityFiles.export(
+          activity: activity,
+          to: ActivityFileFormat.tcx,
+          normalize: false,
+        );
+
+        expect(result.activity.points, hasLength(5));
+        expect(
+          RegExp('<Trackpoint>').allMatches(result.asString()).length,
+          equals(5),
+        );
+      },
+    );
+
+    test('export to FIT reports lossy.pre_fit_epoch_timestamps_clamped for '
+        'pre-1990 timestamps', () {
+      final start = DateTime.utc(1970);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: start),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: start.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.fit,
+      );
+
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'lossy.pre_fit_epoch_timestamps_clamped',
+          ),
+        ),
+      );
+    });
+
+    test('export flattens additionalTracks before ordering, so a second '
+        'track sharing timestamps with the primary keeps every point', () {
+      final base = DateTime.utc(2024, 12, 10, 12);
+      RawActivity track(double latOffset) => RawActivity(
+        points: [
+          for (var i = 0; i < 5; i++)
+            GeoPoint(
+              latitude: 40.0 + latOffset + i * 0.001,
+              longitude: -105.0,
+              time: base,
+            ),
+        ],
+      );
+      final activity = track(0).copyWith(additionalTracks: [track(10)]);
+
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.tcx,
+        normalize: false,
+      );
+
+      expect(result.activity.points, hasLength(10));
+      expect(
+        RegExp('<Trackpoint>').allMatches(result.asString()).length,
+        equals(10),
+      );
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'lossy.multi_track_flattened',
+          ),
+        ),
+      );
+    });
+
+    test(
+      'convert reports lossy.multi_track_flattened via exportInIsolate too',
+      () async {
+        const multiTrackGpx = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0"><time>2024-01-01T10:00:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+  <trk>
+    <trkseg>
+      <trkpt lat="41.0" lon="-106.0"><time>2024-01-01T11:00:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+
+        final conversion = await ActivityFiles.convert(
+          source: multiTrackGpx,
+          from: ActivityFileFormat.gpx,
+          to: ActivityFileFormat.tcx,
+          useIsolate: false,
+          exportInIsolate: true,
+        );
+
+        expect(
+          conversion.diagnostics,
+          contains(
+            isA<ParseDiagnostic>().having(
+              (d) => d.code,
+              'code',
+              'lossy.multi_track_flattened',
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
       'ActivityConversionResult.copyWith preserves binary cache correctly',
       () async {
         final result = await ActivityFiles.convert(

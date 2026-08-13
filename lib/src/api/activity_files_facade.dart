@@ -9,6 +9,7 @@ import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';
 import '../encode/csv_encoder.dart';
 import '../encode/geojson_encoder.dart';
+import '../fit/fit_epoch.dart';
 import '../platform/file_system.dart' as file_system;
 import '../platform/isolate_runner.dart' as isolate_runner;
 import '../models.dart';
@@ -210,6 +211,17 @@ class ActivityFiles {
       maxPayloadBytes: maxPayloadBytes,
     );
     var activity = loadResult.activity;
+    // Flatten before normalizing/ordering, not just before encoding: both of
+    // those steps (and the lossy-diagnostics checks below) otherwise only
+    // ever see the primary track, silently leaving additionalTracks' points,
+    // laps, sets, etc. unprocessed until the encoder's own internal flatten
+    // call right before writing bytes, by which point it's too late to fix
+    // them up. RawActivity.flattened() is a no-op when there's nothing to
+    // flatten, so this is free for single-track sources.
+    final additionalTrackCount = activity.additionalTracks.length;
+    if (to != ActivityFileFormat.gpx) {
+      activity = activity.flattened();
+    }
     NormalizationStats? normalizationStats;
     var repairDiagnostics = const <ValidationDiagnostic>[];
     if (normalize) {
@@ -240,7 +252,14 @@ class ActivityFiles {
       exportActivity = fixed;
     }
     if (!exportInIsolate) {
-      diagnostics = [...diagnostics, ..._lossyDiagnostics(exportActivity, to)];
+      diagnostics = [
+        ...diagnostics,
+        ..._lossyDiagnostics(
+          exportActivity,
+          to,
+          additionalTrackCount: additionalTrackCount,
+        ),
+      ];
       final encoded = ActivityEncoder.encode(
         exportActivity,
         to,
@@ -271,6 +290,25 @@ class ActivityFiles {
           validationDuration: validationDuration,
         ),
       );
+    }
+    // exportAsync's isolate path re-derives the rest of _lossyDiagnostics
+    // from exportActivity itself once it lands in _exportFromActivity, but
+    // exportActivity is already flattened by this point, so additionalTracks
+    // reads 0 there; only this one check needs the count captured above.
+    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
+      diagnostics = [
+        ...diagnostics,
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: '${DiagnosticCategory.lossy}.multi_track_flattened',
+          message:
+              'Source contains $additionalTrackCount additional track(s); '
+              'the ${to.name} format cannot represent multiple tracks, so '
+              'all tracks are merged into one during encoding.',
+          suggestedFix: 'Export to GPX to preserve the multi-track structure.',
+          priority: 4,
+        ),
+      ];
     }
     final exportResult = await exportAsync(
       activity: exportActivity,
@@ -303,8 +341,9 @@ class ActivityFiles {
   /// form (e.g. GPX channel extensions, GeoJSON lap aggregates) are not flagged.
   static List<ParseDiagnostic> _lossyDiagnostics(
     RawActivity activity,
-    ActivityFileFormat to,
-  ) {
+    ActivityFileFormat to, {
+    required int additionalTrackCount,
+  }) {
     final diagnostics = <ParseDiagnostic>[];
     final format = to.name;
     void add(String code, String message, {String? fix}) {
@@ -320,10 +359,10 @@ class ActivityFiles {
     }
 
     const toFit = 'Export to FIT to preserve it.';
-    if (to != ActivityFileFormat.gpx && activity.additionalTracks.isNotEmpty) {
+    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
       add(
         'multi_track_flattened',
-        'Source contains ${activity.additionalTracks.length} additional '
+        'Source contains $additionalTrackCount additional '
             'track(s); the $format format cannot represent multiple tracks, so '
             'all tracks are merged into one during encoding.',
         fix: 'Export to GPX to preserve the multi-track structure.',
@@ -410,8 +449,34 @@ class ActivityFiles {
         );
       }
     }
+    // FIT timestamps are seconds (unsigned) since the FIT epoch
+    // (1989-12-31); anything earlier has no valid representation and is
+    // clamped to the epoch by the encoder.
+    if (to == ActivityFileFormat.fit && _hasPreFitEpochTimestamp(activity)) {
+      add(
+        'pre_fit_epoch_timestamps_clamped',
+        'Some timestamp(s) predate the FIT epoch (1989-12-31) and were '
+            'clamped to it; FIT cannot represent earlier dates.',
+      );
+    }
     return diagnostics;
   }
+
+  static bool _hasPreFitEpochTimestamp(RawActivity activity) =>
+      activity.points.any((p) => p.time.isBefore(fitEpoch)) ||
+      activity.channels.values.any(
+        (samples) => samples.any((s) => s.time.isBefore(fitEpoch)),
+      ) ||
+      activity.laps.any(
+        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
+      ) ||
+      activity.events.any((e) => e.time.isBefore(fitEpoch)) ||
+      activity.lengths.any(
+        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
+      ) ||
+      activity.sets.any(
+        (s) => s.startTime.isBefore(fitEpoch) || s.endTime.isBefore(fitEpoch),
+      );
 
   /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
   /// last-in-first-out so callers can override earlier defaults.
@@ -1172,6 +1237,13 @@ class ActivityFiles {
     ValidationResult? validation,
   }) {
     var working = activity;
+    // See convert()'s matching comment: flatten before normalizing/ordering
+    // so additionalTracks' points/laps/sets go through the same repairs as
+    // the primary track, not just the encoder's own last-minute flatten.
+    final additionalTrackCount = working.additionalTracks.length;
+    if (to != ActivityFileFormat.gpx) {
+      working = working.flattened();
+    }
     NormalizationStats? normalizationStats;
     var repairDiagnostics = const <ValidationDiagnostic>[];
     if (!normalize) {
@@ -1212,7 +1284,11 @@ class ActivityFiles {
     final mergedDiagnostics = <ParseDiagnostic>[
       ...diagnostics,
       ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
-      ..._lossyDiagnostics(working, to),
+      ..._lossyDiagnostics(
+        working,
+        to,
+        additionalTrackCount: additionalTrackCount,
+      ),
       if (validationResult != null)
         ..._diagnosticsFromValidation(validationResult),
     ];

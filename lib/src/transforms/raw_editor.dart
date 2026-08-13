@@ -69,10 +69,11 @@ class RawEditor {
   /// microsecond instead of dropping entries. Reports adjustments via
   /// [repairDiagnostics].
   RawEditor ensureStrictTimeOrder() {
+    final sortedPoints = _isSortedByTime(_activity.points)
+        ? _activity.points
+        : _stableSortByTime(_activity.points, (p) => p.time);
     final pointResult = _pushTimestampsForward(
-      _isSortedByTime(_activity.points)
-          ? _activity.points
-          : _stableSortByTime(_activity.points, (p) => p.time),
+      sortedPoints,
       timeOf: (p) => p.time,
       withTime: (p, t) => p.copyWith(time: t),
     );
@@ -88,17 +89,24 @@ class RawEditor {
       adjustedSamples += result.adjustedCount;
       return MapEntry(channel, result.items);
     });
+    final sortedLaps = _isSortedByStart(_activity.laps)
+        ? _activity.laps
+        : _stableSortByTime(_activity.laps, (lap) => lap.startTime);
     final lapResult = _pushTimestampsForward(
-      _isSortedByStart(_activity.laps)
-          ? _activity.laps
-          : _stableSortByTime(_activity.laps, (lap) => lap.startTime),
+      sortedLaps,
       timeOf: (lap) => lap.startTime,
       withTime: (lap, t) => lap.copyWith(startTime: t),
+    );
+    final expandedLaps = _expandLapEndsForNudgedPoints(
+      lapResult.items,
+      sortedLaps,
+      sortedPoints,
+      pointResult.items,
     );
     _activity = _activity.copyWith(
       points: pointResult.items,
       channels: sortedChannels,
-      laps: lapResult.items,
+      laps: expandedLaps,
     );
     final adjustedTotal =
         pointResult.adjustedCount + adjustedSamples + lapResult.adjustedCount;
@@ -917,6 +925,42 @@ class _PushForwardResult<T> {
   const _PushForwardResult(this.items, this.adjustedCount);
   final List<T> items;
   final int adjustedCount;
+}
+
+/// Extends each lap's endTime to cover any point that fell inside its
+/// original `[startTime, endTime]` window but was nudged past it, so
+/// consumers that select points by lap time range (e.g. the TCX encoder)
+/// don't lose points that only ever moved because of the nudge.
+List<Lap> _expandLapEndsForNudgedPoints(
+  List<Lap> laps,
+  List<Lap> originalLaps,
+  List<GeoPoint> originalPoints,
+  List<GeoPoint> nudgedPoints,
+) => [
+  for (var i = 0; i < laps.length; i++)
+    _expandLapEnd(laps[i], originalLaps[i], originalPoints, nudgedPoints),
+];
+
+Lap _expandLapEnd(
+  Lap lap,
+  Lap originalLap,
+  List<GeoPoint> originalPoints,
+  List<GeoPoint> nudgedPoints,
+) {
+  DateTime? maxNudgedTime;
+  for (var j = 0; j < originalPoints.length; j++) {
+    final originalTime = originalPoints[j].time;
+    if (!originalTime.isBefore(originalLap.startTime) &&
+        !originalTime.isAfter(originalLap.endTime)) {
+      final nudgedTime = nudgedPoints[j].time;
+      if (maxNudgedTime == null || nudgedTime.isAfter(maxNudgedTime)) {
+        maxNudgedTime = nudgedTime;
+      }
+    }
+  }
+  return maxNudgedTime != null && maxNudgedTime.isAfter(lap.endTime)
+      ? lap.copyWith(endTime: maxNudgedTime)
+      : lap;
 }
 
 /// Nudges timestamps in pre-sorted [items] so each is strictly after the

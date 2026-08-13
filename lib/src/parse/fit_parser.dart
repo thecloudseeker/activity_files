@@ -2,7 +2,11 @@
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
+import 'package:collection/collection.dart';
+
 import '../fit/fit_crc.dart';
+import '../fit/fit_epoch.dart';
 import '../fit/fit_sport.dart';
 import '../geo_math.dart';
 import '../models.dart';
@@ -151,6 +155,7 @@ class FitParser implements ActivityFormatParser {
     final distanceSamples = <Sample>[];
     final extraSamples = <Channel, List<Sample>>{};
     final laps = <Lap>[];
+    var inferredLapStarts = 0;
     final sets = <WorkoutSet>[];
     final additionalSessions = <ActivitySummary>[];
     final events = <ActivityEvent>[];
@@ -621,16 +626,33 @@ class FitParser implements ActivityFormatParser {
         case 19: // lap
           // Field numbers follow the official FIT profile for the lap
           // message (global 19): 2 start_time, 7 total_elapsed_time
-          // (s, scale 1000), 9 total_distance (m, scale 100),
-          // 11 total_calories, 13/14 avg/max_speed (m/s, scale 1000),
-          // 15/16 avg/max_heart_rate, 17/18 avg/max_cadence,
-          // 19/20 avg/max_power, 0 event, 1 event_type, 38 swim_stroke,
-          // 40 num_active_lengths.
-          final start = _decodeTimestamp(values[2]);
+          // (s, scale 1000), 253 timestamp (end, used when start/elapsed
+          // are absent, e.g. encoders that only stamp the lap's close),
+          // 9 total_distance (m, scale 100), 11 total_calories,
+          // 13/14 avg/max_speed (m/s, scale 1000), 15/16 avg/max_heart_rate,
+          // 17/18 avg/max_cadence, 19/20 avg/max_power, 0 event,
+          // 1 event_type, 38 swim_stroke, 40 num_active_lengths.
+          final declaredStart = _decodeTimestamp(values[2]);
           final totalTime = _decodeFitDuration(values[7]);
           final distanceMeters = _decodeFitDistance(values[9]);
-          if (start != null && totalTime != null) {
-            final end = start.add(totalTime);
+          final end =
+              (declaredStart != null && totalTime != null
+                  ? declaredStart.add(totalTime)
+                  : null) ??
+              _decodeTimestamp(values[253]);
+          // Some encoders omit start_time/total_elapsed_time and only stamp
+          // the lap's close; infer a start from the previous lap's end, or
+          // (for the first lap) the activity's first point, rather than
+          // dropping the lap entirely.
+          final start =
+              declaredStart ??
+              (laps.isNotEmpty
+                  ? laps.last.endTime
+                  : (points.isNotEmpty ? points.first.time : null));
+          if (declaredStart == null && start != null) {
+            inferredLapStarts++;
+          }
+          if (start != null && end != null) {
             laps.add(
               Lap(
                 startTime: start,
@@ -842,6 +864,20 @@ class FitParser implements ActivityFormatParser {
     // Filter points to find the largest temporally contiguous group.
     // This removes corrupted data at the start/end of files with invalid timestamps.
     final filteredPoints = _filterContiguousPoints(points, diagnostics);
+
+    if (inferredLapStarts > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.lap.start_time_inferred',
+          message:
+              '$inferredLapStarts lap(s) had no start_time or '
+              'total_elapsed_time field; start was inferred from the '
+              'previous lap or the activity\'s first point.',
+          node: const ParseNodeReference(path: 'fit.lap'),
+        ),
+      );
+    }
 
     final channels = <Channel, Iterable<Sample>>{};
     if (hrSamples.isNotEmpty) channels[Channel.heartRate] = hrSamples;
@@ -1195,7 +1231,7 @@ DateTime? _decodeTimestamp(Object? raw) {
   if (seconds < 1 || seconds > 1924992000) {
     return null;
   }
-  return DateTime.utc(1989, 12, 31).add(Duration(seconds: seconds));
+  return fitEpoch.add(Duration(seconds: seconds));
 }
 
 double? _decodeSemicircles(Object? raw) {
@@ -1227,8 +1263,11 @@ List<GeoPoint> _filterContiguousPoints(
     return points;
   }
 
-  // Sort points by time
-  final sorted = [...points]..sort((a, b) => a.time.compareTo(b.time));
+  // Stable sort: points sharing a timestamp (common when many records
+  // clamp to the same value, e.g. a pre-FIT-epoch source) must keep their
+  // original relative order, not get shuffled by an unstable sort.
+  final sorted = [...points];
+  mergeSort(sorted, compare: (a, b) => a.time.compareTo(b.time));
 
   // Find groups where consecutive points are within a reasonable time window (24 hours)
   final groups = <List<GeoPoint>>[];
@@ -1246,12 +1285,18 @@ List<GeoPoint> _filterContiguousPoints(
   }
   groups.add(currentGroup);
 
-  // Find the largest group
-  if (groups.length == 1) {
-    currentGroup = sorted;
-  } else {
-    currentGroup = groups.reduce((a, b) => a.length > b.length ? a : b);
-  }
+  // Keep every group with more than 10 points (this function's own
+  // threshold, above, for "worth analyzing" at all); only drop small
+  // clusters of stray corrupted records, not a legitimate separate
+  // recording session that ended up in the same file (e.g. several
+  // tracks flattened together for a single-track target format).
+  final keptGroups = groups.length == 1
+      ? groups
+      : groups.where((g) => g.length > 10).toList();
+  final survivors = keptGroups.isEmpty
+      ? [groups.reduce((a, b) => a.length > b.length ? a : b)]
+      : keptGroups;
+  currentGroup = [for (final group in survivors) ...group];
 
   // Additional filtering: remove points with coordinates far from their neighbors
   // This catches corrupted records with plausible timestamps but invalid coordinates

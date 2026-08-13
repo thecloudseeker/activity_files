@@ -293,8 +293,12 @@ class GpxParser implements ActivityFormatParser {
             gpxAttributes: pointAttributes,
           );
           trkPoints.add(point);
-          segmentStart ??= time;
-          segmentEnd = time;
+          if (segmentStart == null || time.isBefore(segmentStart)) {
+            segmentStart = time;
+          }
+          if (segmentEnd == null || time.isAfter(segmentEnd)) {
+            segmentEnd = time;
+          }
           final prev = previous;
           if (prev != null) {
             segmentDistance += haversineMeters(prev, point);

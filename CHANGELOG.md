@@ -19,7 +19,10 @@
 - TCX export now reports `lossy.channels_dropped` instead of dropping a channel with no warning.
 - GeoJSON: multi-track FeatureCollections only kept the first track. now keeps all of them, extras in `additionalTracks`.
 - GeoJSON: also reads `coordTimes` now (togeojson/Mapbox), not just our own `coordinateProperties.times`.
-- `convert()`/`export()` with `normalize: false` was silently dropping points/samples/laps with duplicate timestamps to keep encoder output ordered. now it nudges them apart by a microsecond instead and reports `repaired.duplicate_timestamps_adjusted`; nothing is dropped.
+- Duplicate, out-of-order, or pre-1990 timestamps could silently drop points, misplace lap boundaries, wrap FIT timestamps to a garbage future date, or reorder records. all fixed; adjustments are now reported via diagnostics instead of happening silently.
+- FIT: the outlier filter could drop an entire legitimate track, not just a stray bad point, whenever multiple tracks got merged into one FIT file. now only drops small (≤10-point) clusters.
+- FIT: laps with no `start_time`/`total_elapsed_time` (some encoders only stamp the close) were dropped entirely. now infers a start instead of losing the lap.
+- `convert()`/`export()` to TCX/FIT/CSV/GeoJSON only normalized and ordered the primary track. a multi-track source could lose most of its points on export. tracks are flattened first now, so every track gets the same treatment.
 
 ## 0.7.4
 ### Fixed

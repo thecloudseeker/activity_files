@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import '../channel_mapper.dart';
 import '../fit/fit_crc.dart';
+import '../fit/fit_epoch.dart';
 import '../fit/fit_sport.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
@@ -532,7 +533,6 @@ class FitEncoder implements ActivityFormatEncoder {
           _FitDeveloperFieldSpec(fieldNumber: i, size: 8, developerIndex: 0),
       ],
     );
-    final baseTime = DateTime.utc(1989, 12, 31);
     var searchDelta = options.defaultMaxDelta;
     for (final field in optionalFields) {
       final delta = options.maxDeltaFor(field.channel);
@@ -547,10 +547,7 @@ class FitEncoder implements ActivityFormatEncoder {
       maxDelta: searchDelta,
     );
     for (final sample in recordSamples) {
-      final timestampSeconds = sample.time
-          .toUtc()
-          .difference(baseTime)
-          .inSeconds;
+      final timestampSeconds = fitSecondsSinceEpoch(sample.time);
       final lat = sample.latitude != null
           ? (sample.latitude! * 2147483648.0 / 180.0).round()
           : _invalidSemicircle;
@@ -839,11 +836,6 @@ class _FitMessageEncoder {
     _writeUint16(destination, softwareVersion);
   }
 
-  static final DateTime _fitEpoch = DateTime.utc(1989, 12, 31);
-
-  static int _fitSeconds(DateTime time) =>
-      time.toUtc().difference(_fitEpoch).inSeconds;
-
   /// Scales a value for FIT encoding; null stays null (invalid sentinel).
   static int? _scaled(double? value, int scale) =>
       value == null ? null : (value * scale).round();
@@ -934,7 +926,7 @@ class _FitMessageEncoder {
     List<_ExtraArrayField> extraArrays = const [],
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(timestamp));
+    _writeUint32(destination, fitSecondsSinceEpoch(timestamp));
     destination.addByte(fitIdFromSport(sport));
     _writeByte(destination, summary?.subSport);
     _writeUint32(destination, summary?.elapsedTime?.inMilliseconds);
@@ -975,8 +967,8 @@ class _FitMessageEncoder {
     List<_ExtraArrayField> extraArrays = const [],
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(lap.endTime));
-    _writeUint32(destination, _fitSeconds(lap.startTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(lap.endTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(lap.startTime));
     _writeUint32(destination, lap.elapsed.inMilliseconds);
     _writeUint32(destination, _scaled(lap.distanceMeters, 100));
     _writeByte(destination, lap.event);
@@ -1003,7 +995,7 @@ class _FitMessageEncoder {
     required ActivityEvent event,
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(event.time));
+    _writeUint32(destination, fitSecondsSinceEpoch(event.time));
     _writeByte(destination, event.event);
     _writeByte(destination, event.eventType);
     _writeUint32(destination, event.data);
@@ -1016,8 +1008,8 @@ class _FitMessageEncoder {
     required SwimLength length,
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(length.endTime));
-    _writeUint32(destination, _fitSeconds(length.startTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(length.endTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(length.startTime));
     _writeUint32(destination, length.elapsed.inMilliseconds);
     _writeUint16(destination, length.totalStrokes);
     _writeUint16(destination, _scaled(length.avgSpeed, 1000));
@@ -1032,8 +1024,8 @@ class _FitMessageEncoder {
     required WorkoutSet set,
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(set.endTime));
-    _writeUint32(destination, _fitSeconds(set.startTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(set.endTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(set.startTime));
     _writeUint32(destination, set.elapsed.inMilliseconds);
     _writeByte(destination, set.isRest ? 0 : 1);
     _writeUint16(destination, set.repetitions);

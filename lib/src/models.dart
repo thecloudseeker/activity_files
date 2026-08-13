@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
+import 'package:collection/collection.dart';
+
 import 'geo_math.dart';
 
 /// Supported file formats for activities.
@@ -1422,14 +1424,26 @@ class RawActivity {
       mergedEvents.addAll(flat.events);
       mergedLengths.addAll(flat.lengths);
     }
-    mergedPoints.sort((a, b) => a.time.compareTo(b.time));
+    // Stable sorts: tracks commonly share timestamps (e.g. all-epoch
+    // fallback when none of the source points had a <time>), and an
+    // unstable sort would shuffle which track's points end up where.
+    mergeSort(mergedPoints, compare: (a, b) => a.time.compareTo(b.time));
     for (final samples in mergedChannels.values) {
-      samples.sort((a, b) => a.time.compareTo(b.time));
+      mergeSort(samples, compare: (a, b) => a.time.compareTo(b.time));
     }
-    mergedLaps.sort((a, b) => a.startTime.compareTo(b.startTime));
-    mergedSets.sort((a, b) => a.startTime.compareTo(b.startTime));
-    mergedEvents.sort((a, b) => a.time.compareTo(b.time));
-    mergedLengths.sort((a, b) => a.startTime.compareTo(b.startTime));
+    mergeSort(
+      mergedLaps,
+      compare: (a, b) => a.startTime.compareTo(b.startTime),
+    );
+    mergeSort(
+      mergedSets,
+      compare: (a, b) => a.startTime.compareTo(b.startTime),
+    );
+    mergeSort(mergedEvents, compare: (a, b) => a.time.compareTo(b.time));
+    mergeSort(
+      mergedLengths,
+      compare: (a, b) => a.startTime.compareTo(b.startTime),
+    );
     return copyWith(
       points: mergedPoints,
       channels: mergedChannels,
