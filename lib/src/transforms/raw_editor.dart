@@ -65,6 +65,60 @@ class RawEditor {
     return this;
   }
 
+  /// Like [sortAndDedup], but nudges duplicate timestamps forward by 1
+  /// microsecond instead of dropping entries. Reports adjustments via
+  /// [repairDiagnostics].
+  RawEditor ensureStrictTimeOrder() {
+    final pointResult = _pushTimestampsForward(
+      _isSortedByTime(_activity.points)
+          ? _activity.points
+          : _stableSortByTime(_activity.points, (p) => p.time),
+      timeOf: (p) => p.time,
+      withTime: (p, t) => p.copyWith(time: t),
+    );
+    var adjustedSamples = 0;
+    final sortedChannels = _activity.channels.map((channel, samples) {
+      final result = _pushTimestampsForward(
+        _isSortedSamples(samples)
+            ? samples
+            : _stableSortByTime(samples, (s) => s.time),
+        timeOf: (s) => s.time,
+        withTime: (s, t) => s.copyWith(time: t),
+      );
+      adjustedSamples += result.adjustedCount;
+      return MapEntry(channel, result.items);
+    });
+    final lapResult = _pushTimestampsForward(
+      _isSortedByStart(_activity.laps)
+          ? _activity.laps
+          : _stableSortByTime(_activity.laps, (lap) => lap.startTime),
+      timeOf: (lap) => lap.startTime,
+      withTime: (lap, t) => lap.copyWith(startTime: t),
+    );
+    _activity = _activity.copyWith(
+      points: pointResult.items,
+      channels: sortedChannels,
+      laps: lapResult.items,
+    );
+    final adjustedTotal =
+        pointResult.adjustedCount + adjustedSamples + lapResult.adjustedCount;
+    if (adjustedTotal > 0) {
+      _repairDiagnostics.add(
+        ValidationDiagnostic(
+          severity: ValidationSeverity.warning,
+          code: '${DiagnosticCategory.repaired}.duplicate_timestamps_adjusted',
+          message:
+              'Adjusted $adjustedTotal timestamp(s) by up to a few '
+              'microseconds so the encoded output has strictly increasing '
+              'times; no points, samples, or laps were dropped.',
+          suggestedFix: 'No action needed; every original entry was kept.',
+          priority: 5,
+        ),
+      );
+    }
+    return this;
+  }
+
   /// Drops invalid coordinates and trims channels outside the point range.
   ///
   /// In addition to geometrically out-of-range coordinates, this also handles
@@ -857,6 +911,36 @@ List<T> _stableSortByTime<T>(List<T> items, DateTime Function(T item) timeOf) {
   final sorted = List<T>.of(items);
   mergeSort(sorted, compare: (a, b) => timeOf(a).compareTo(timeOf(b)));
   return sorted;
+}
+
+class _PushForwardResult<T> {
+  const _PushForwardResult(this.items, this.adjustedCount);
+  final List<T> items;
+  final int adjustedCount;
+}
+
+/// Nudges timestamps in pre-sorted [items] so each is strictly after the
+/// previous one, cascading through any run of equal timestamps.
+_PushForwardResult<T> _pushTimestampsForward<T>(
+  List<T> items, {
+  required DateTime Function(T item) timeOf,
+  required T Function(T item, DateTime time) withTime,
+}) {
+  final result = <T>[];
+  DateTime? previous;
+  var adjustedCount = 0;
+  for (final item in items) {
+    var time = timeOf(item).toUtc();
+    if (previous != null && !time.isAfter(previous)) {
+      time = previous.add(const Duration(microseconds: 1));
+      adjustedCount++;
+      result.add(withTime(item, time));
+    } else {
+      result.add(item);
+    }
+    previous = time;
+  }
+  return _PushForwardResult(result, adjustedCount);
 }
 
 bool _isStrictlyIncreasing<T>(List<T> items, DateTime Function(T item) timeOf) {

@@ -2592,6 +2592,47 @@ void main() {
       expect(result.activity.points.first.time, equals(base));
     });
 
+    test('export with normalize=false keeps every point when timestamps '
+        'duplicate', () {
+      final base = DateTime.utc(2024, 12, 10, 12);
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 5; i++)
+            GeoPoint(latitude: 40.0 + i * 0.001, longitude: -105.0, time: base),
+        ],
+      );
+
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.gpx,
+        normalize: false,
+      );
+
+      expect(result.activity.points, hasLength(5));
+      expect(
+        result.activity.points.map((p) => p.latitude),
+        equals(activity.points.map((p) => p.latitude)),
+      );
+      for (var i = 1; i < result.activity.points.length; i++) {
+        expect(
+          result.activity.points[i].time.isAfter(
+            result.activity.points[i - 1].time,
+          ),
+          isTrue,
+        );
+      }
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'repaired.duplicate_timestamps_adjusted',
+          ),
+        ),
+      );
+    });
+
     test(
       'ActivityConversionResult.copyWith preserves binary cache correctly',
       () async {

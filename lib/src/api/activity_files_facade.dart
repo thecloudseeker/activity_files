@@ -172,7 +172,9 @@ class ActivityFiles {
   /// The returned [ActivityConversionResult] exposes the normalized activity,
   /// encoder output, and parser diagnostics gathered while loading the source.
   /// When [normalize] is `true` (default) the converter applies
-  /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to encoding.
+  /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to
+  /// encoding. When `false`, timestamps are still nudged into strict order
+  /// if needed (nothing is dropped); see `repaired.duplicate_timestamps_adjusted`.
   /// Set [exportInIsolate] to `true` to offload encoding onto a background
   /// isolate while keeping parsing control via [useIsolate]. Enable
   /// [runValidation] to append structural validation diagnostics/results;
@@ -223,9 +225,12 @@ class ActivityFiles {
     }
     var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
     diagnostics.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
-    var exportActivity = normalize
-        ? activity
-        : _ensureOrderedForExport(activity);
+    var exportActivity = activity;
+    if (!normalize) {
+      final ordered = _ensureOrderedForExport(activity);
+      exportActivity = ordered.activity;
+      diagnostics.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
+    }
     if (autoFix.isEnabled) {
       final fixed = _autoFixCommonIssues(exportActivity, autoFix);
       diagnostics = [
@@ -719,10 +724,14 @@ class ActivityFiles {
       ) &&
       _isStrictlyOrdered(activity.laps, (l) => l.startTime);
 
-  static RawActivity _ensureOrderedForExport(RawActivity activity) =>
-      _isStrictlyOrderedActivity(activity)
-      ? activity
-      : RawEditor(activity).sortAndDedup().activity;
+  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
+  _ensureOrderedForExport(RawActivity activity) {
+    if (_isStrictlyOrderedActivity(activity)) {
+      return (activity: activity, diagnostics: const []);
+    }
+    final editor = RawEditor(activity).ensureStrictTimeOrder();
+    return (activity: editor.activity, diagnostics: editor.repairDiagnostics);
+  }
 
   /// Checks if a list is sorted by time with no duplicate timestamps
   /// (each entry strictly after its predecessor).
@@ -1166,7 +1175,9 @@ class ActivityFiles {
     NormalizationStats? normalizationStats;
     var repairDiagnostics = const <ValidationDiagnostic>[];
     if (!normalize) {
-      working = _ensureOrderedForExport(working);
+      final ordered = _ensureOrderedForExport(working);
+      working = ordered.activity;
+      repairDiagnostics = ordered.diagnostics;
     }
     if (normalize) {
       final normalized = _normalize(

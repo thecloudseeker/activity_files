@@ -6,6 +6,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
@@ -231,7 +232,8 @@ void main() {
         expect(result.activity.points.length, equals(1));
       });
 
-      test('handles FeatureCollection with mixed geometry types', () {
+      test('keeps the LineString and reports the dropped Point in a mixed '
+          'FeatureCollection', () {
         final geojson = {
           'type': 'FeatureCollection',
           'features': [
@@ -262,8 +264,55 @@ void main() {
           ActivityFileFormat.geojson,
         );
 
-        // Should fall back to parsing first feature
-        expect(result.activity.points, isNotEmpty);
+        expect(result.activity.points, hasLength(2));
+        expect(result.activity.additionalTracks, isEmpty);
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'geojson.point_features_dropped',
+          ),
+          isTrue,
+        );
+      });
+
+      test('keeps every non-Point feature as additionalTracks instead of '
+          'dropping all but the first', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  [-105.0, 40.0],
+                  [-105.001, 40.001],
+                ],
+              },
+              'properties': {},
+            },
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  [-106.0, 41.0],
+                  [-106.001, 41.001],
+                  [-106.002, 41.002],
+                ],
+              },
+              'properties': {},
+            },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(2));
+        expect(result.activity.additionalTracks, hasLength(1));
+        expect(result.activity.additionalTracks.first.points, hasLength(3));
       });
 
       test(
@@ -541,6 +590,79 @@ void main() {
         },
       );
 
+      test(
+        'reads per-point times from properties.coordTimes on a LineString',
+        () {
+          final geojson = {
+            'type': 'Feature',
+            'geometry': {
+              'type': 'LineString',
+              'coordinates': [
+                [-105.0, 40.0],
+                [-105.001, 40.001],
+              ],
+            },
+            'properties': {
+              'coordTimes': ['2024-01-01T10:00:00Z', '2024-01-01T10:00:10Z'],
+            },
+          };
+
+          final result = ActivityParser.parse(
+            jsonEncode(geojson),
+            ActivityFileFormat.geojson,
+          );
+
+          expect(
+            result.activity.points[0].time,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+          );
+          expect(
+            result.activity.points[1].time,
+            equals(DateTime.utc(2024, 1, 1, 10, 0, 10)),
+          );
+        },
+      );
+
+      test('reads per-line coordTimes on a MultiLineString', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'MultiLineString',
+            'coordinates': [
+              [
+                [-105.0, 40.0],
+                [-105.001, 40.001],
+              ],
+              [
+                [-106.0, 41.0],
+                [-106.001, 41.001],
+              ],
+            ],
+          },
+          'properties': {
+            'coordTimes': [
+              ['2024-01-01T10:00:00Z', '2024-01-01T10:00:10Z'],
+              ['2024-01-01T11:00:00Z', '2024-01-01T11:00:10Z'],
+            ],
+          },
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.activity.points.map((p) => p.time),
+          equals([
+            DateTime.utc(2024, 1, 1, 10, 0, 0),
+            DateTime.utc(2024, 1, 1, 10, 0, 10),
+            DateTime.utc(2024, 1, 1, 11, 0, 0),
+            DateTime.utc(2024, 1, 1, 11, 0, 10),
+          ]),
+        );
+      });
+
       test('uses fallback timestamp if not provided', () {
         final geojson = {
           'type': 'Feature',
@@ -701,6 +823,42 @@ void main() {
             isEmpty,
           );
           expect(result.activity.metadata['elevation_gain'], 150);
+        },
+      );
+    });
+
+    group('Real fixture regression', () {
+      test(
+        'togeojson_multitrackgpx.geojson keeps all 3 tracks and real times',
+        () {
+          // Ground truth cross-checked against geojson_vi and turf/geotypes
+          // (two independent GeoJSON readers) and against the .gpx sibling
+          // of this same fixture, read by four independent GPX tools.
+          final bytes = File(
+            'test/fixtures/real_world/togeojson_multitrackgpx.geojson',
+          ).readAsBytesSync();
+          final result = ActivityParser.parseBytes(
+            bytes,
+            ActivityFileFormat.geojson,
+          );
+
+          final totalPoints =
+              result.activity.points.length +
+              result.activity.additionalTracks.fold<int>(
+                0,
+                (sum, t) => sum + t.points.length,
+              );
+
+          expect(result.activity.additionalTracks, hasLength(2));
+          expect(totalPoints, equals(5235));
+          expect(
+            result.activity.points.first.time,
+            equals(DateTime.utc(2008, 7, 12, 9, 58, 23)),
+          );
+          expect(
+            result.activity.additionalTracks.last.points.last.time,
+            equals(DateTime.utc(2008, 7, 14, 12, 46, 2)),
+          );
         },
       );
     });

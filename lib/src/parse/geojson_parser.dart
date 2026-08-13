@@ -158,8 +158,53 @@ class GeojsonParser implements ActivityFormatParser {
       return ActivityParseResult(activity: activity, diagnostics: diagnostics);
     }
 
-    // Fallback: parse first feature as main activity
-    return _parseFeature(features[0], diagnostics);
+    final trackFeatures = features.where((feature) {
+      if (feature is! Map) return false;
+      final geometry = feature['geometry'] as Map?;
+      return geometry != null && geometry['type'] != 'Point';
+    }).toList();
+
+    final droppedPointFeatures = features.length - trackFeatures.length;
+    if (droppedPointFeatures > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'geojson.point_features_dropped',
+          message:
+              '$droppedPointFeatures standalone Point feature(s) alongside '
+              'track geometry are not representable here and were dropped.',
+        ),
+      );
+    }
+
+    if (trackFeatures.isEmpty) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'geojson.no_points',
+          message: 'No track geometry found in FeatureCollection',
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    }
+
+    final primaryResult = _parseFeature(trackFeatures[0], diagnostics);
+    final additionalTracks = <RawActivity>[];
+    for (var i = 1; i < trackFeatures.length; i++) {
+      final result = _parseFeature(trackFeatures[i], diagnostics);
+      if (result.activity.points.isNotEmpty) {
+        additionalTracks.add(result.activity);
+      }
+    }
+
+    final activity = additionalTracks.isEmpty
+        ? primaryResult.activity
+        : primaryResult.activity.copyWith(additionalTracks: additionalTracks);
+
+    return ActivityParseResult(activity: activity, diagnostics: diagnostics);
   }
 
   ActivityParseResult _parseFeature(
@@ -261,24 +306,32 @@ class GeojsonParser implements ActivityFormatParser {
     } else if (geomType == 'MultiLineString') {
       // MultiLineString: array of LineStrings, all sharing one feature-level
       // `properties` map — resolve `timestamp` once, see LineString above.
-      final sharedTimestamp = _resolvePropertyTimestamp(
-        properties,
-        diagnostics,
-      );
       // No coordinateProperties.channels precedent exists for MultiLineString
       // (only LineString/Polygon carry per-point parallel arrays), so unlike
       // those two, no per-point channel data is collected here: a scalar
       // property on this geometry type is feature-level metadata, not a
       // per-point broadcast.
-      for (final lineCoords in coordinates) {
+      final sharedTimestamp = _resolvePropertyTimestamp(
+        properties,
+        diagnostics,
+      );
+      final lineTimes = _multiLineCoordinateTimes(properties);
+      for (var lineIndex = 0; lineIndex < coordinates.length; lineIndex++) {
+        final lineCoords = coordinates[lineIndex];
         if (lineCoords is! List) continue;
-        for (final coord in lineCoords) {
+        final times = lineTimes != null && lineIndex < lineTimes.length
+            ? lineTimes[lineIndex]
+            : null;
+        for (var i = 0; i < lineCoords.length; i++) {
+          final coord = lineCoords[i];
           if (coord is! List || coord.length < 2) continue;
           final point = _coordinateToGeoPoint(
             coord,
             properties,
             diagnostics,
-            timeOverride: sharedTimestamp,
+            timeOverride:
+                (times != null && i < times.length ? times[i] : null) ??
+                sharedTimestamp,
             resolvePropertyTimestamp: false,
           );
           if (point != null) {
@@ -386,9 +439,17 @@ class GeojsonParser implements ActivityFormatParser {
     return metadata;
   }
 
-  /// Parses `properties.coordinateProperties.times` (per-point timestamps
-  /// parallel to the coordinates array), if present.
+  /// Parses per-point timestamps parallel to a LineString/Polygon's
+  /// coordinates array: `coordTimes` (togeojson/Mapbox) or
+  /// `coordinateProperties.times` (this library's own encoder), if present.
   static List<DateTime?>? _coordinateTimes(Map properties) {
+    final coordTimes = properties['coordTimes'];
+    if (coordTimes is List) {
+      return [
+        for (final t in coordTimes)
+          t == null ? null : _tryParseTimestampAssumeUtc(t.toString()),
+      ];
+    }
     final coordinateProperties = properties['coordinateProperties'];
     if (coordinateProperties is! Map) return null;
     final times = coordinateProperties['times'];
@@ -396,6 +457,21 @@ class GeojsonParser implements ActivityFormatParser {
     return [
       for (final t in times)
         t == null ? null : _tryParseTimestampAssumeUtc(t.toString()),
+    ];
+  }
+
+  /// `properties.coordTimes` for a MultiLineString: one array per line.
+  static List<List<DateTime?>?>? _multiLineCoordinateTimes(Map properties) {
+    final coordTimes = properties['coordTimes'];
+    if (coordTimes is! List) return null;
+    return [
+      for (final line in coordTimes)
+        line is List
+            ? [
+                for (final t in line)
+                  t == null ? null : _tryParseTimestampAssumeUtc(t.toString()),
+              ]
+            : null,
     ];
   }
 

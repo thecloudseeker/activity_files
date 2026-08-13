@@ -17,6 +17,9 @@
 - GeoJSON was smearing one feature property across every point. now it's just metadata.
 - GPX export dropped anything outside the usual 9 channels. now written as extra `gpxtpx:` tags.
 - TCX export now reports `lossy.channels_dropped` instead of dropping a channel with no warning.
+- GeoJSON: multi-track FeatureCollections only kept the first track. now keeps all of them, extras in `additionalTracks`.
+- GeoJSON: also reads `coordTimes` now (togeojson/Mapbox), not just our own `coordinateProperties.times`.
+- `convert()`/`export()` with `normalize: false` was silently dropping points/samples/laps with duplicate timestamps to keep encoder output ordered. now it nudges them apart by a microsecond instead and reports `repaired.duplicate_timestamps_adjusted`; nothing is dropped.
 
 ## 0.7.4
 ### Fixed
