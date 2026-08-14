@@ -7,8 +7,10 @@ import 'package:collection/collection.dart';
 
 import '../fit/fit_crc.dart';
 import '../fit/fit_epoch.dart';
+import '../fit/fit_record_fields.dart';
 import '../fit/fit_sport.dart';
 import '../geo_math.dart';
+import '../identifier_sanitizer.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'integrity_mode.dart';
@@ -154,8 +156,10 @@ class FitParser implements ActivityFormatParser {
     final speedSamples = <Sample>[];
     final distanceSamples = <Sample>[];
     final extraSamples = <Channel, List<Sample>>{};
+    final skippedGlobalIds = <int>{};
     final laps = <Lap>[];
     var inferredLapStarts = 0;
+    var clampedLapDurations = 0;
     final sets = <WorkoutSet>[];
     final additionalSessions = <ActivitySummary>[];
     final events = <ActivityEvent>[];
@@ -359,11 +363,7 @@ class FitParser implements ActivityFormatParser {
           final recoveredSeconds =
               lastTimestamps[localType] ?? lastKnownTimestamp;
           if (recoveredSeconds != null) {
-            timestamp = DateTime.utc(
-              1989,
-              12,
-              31,
-            ).add(Duration(seconds: recoveredSeconds));
+            timestamp = fitEpoch.add(Duration(seconds: recoveredSeconds));
             recoveredTimestampCount++;
             if (recoveredTimestampCount <= 5) {
               diagnostics.add(
@@ -425,26 +425,32 @@ class FitParser implements ActivityFormatParser {
             ),
           );
         }
-        final hr = _asNumber(values[3]);
+        final hr = _asNumber(values[fitFieldHeartRate]);
         if (hr != null) {
           hrSamples.add(Sample(time: recordTime, value: hr.toDouble()));
         }
-        final cadence = _asNumber(values[4]);
+        final cadence = _asNumber(values[fitFieldCadence]);
         if (cadence != null) {
           cadenceSamples.add(
             Sample(time: recordTime, value: cadence.toDouble()),
           );
         }
-        final distance = _asNumber(values[5]);
+        final distance = _asNumber(values[fitFieldDistance]);
         if (distance != null) {
           distanceSamples.add(
-            Sample(time: recordTime, value: distance.toDouble() / 100.0),
+            Sample(
+              time: recordTime,
+              value: distance.toDouble() / fitFieldDistanceScale,
+            ),
           );
         }
-        final speed = _asNumber(values[6]);
+        final speed = _asNumber(values[fitFieldSpeed]);
         if (speed != null) {
           speedSamples.add(
-            Sample(time: recordTime, value: speed.toDouble() / 1000.0),
+            Sample(
+              time: recordTime,
+              value: speed.toDouble() / fitFieldSpeedScale,
+            ),
           );
         }
         // Legacy record field 8 (compressed_speed_distance): 3 bytes packing a
@@ -472,19 +478,25 @@ class FitParser implements ActivityFormatParser {
             );
           }
         }
-        final power = _asNumber(values[7]);
+        final power = _asNumber(values[fitFieldPower]);
         if (power != null) {
           powerSamples.add(Sample(time: recordTime, value: power.toDouble()));
         }
-        final temp = _asNumber(values[13]);
+        final temp = _asNumber(values[fitFieldTemperature]);
         if (temp != null) {
           tempSamples.add(Sample(time: recordTime, value: temp.toDouble()));
         }
-        addSample(Channel.custom('grade'), _decodeFitScaled(values[9], 100));
-        addSample(Channel.custom('left_right_balance'), _asNumber(values[30]));
+        addSample(
+          Channel.custom('grade'),
+          _decodeFitScaled(values[fitFieldGrade], fitFieldGradeScale),
+        );
+        addSample(
+          Channel.custom('left_right_balance'),
+          _asNumber(values[fitFieldLeftRightBalance]),
+        );
         addSample(
           Channel.custom('ebike_assist_level_percent'),
-          _asNumber(values[120]),
+          _asNumber(values[fitFieldEbikeAssistLevelPercent]),
         );
         for (final entry in values.entries) {
           final numeric = _asNumber(entry.value);
@@ -644,13 +656,21 @@ class FitParser implements ActivityFormatParser {
           // the lap's close; infer a start from the previous lap's end, or
           // (for the first lap) the activity's first point, rather than
           // dropping the lap entirely.
-          final start =
+          var start =
               declaredStart ??
               (laps.isNotEmpty
                   ? laps.last.endTime
                   : (points.isNotEmpty ? points.first.time : null));
           if (declaredStart == null && start != null) {
             inferredLapStarts++;
+          }
+          if (start != null && end != null && start.isAfter(end)) {
+            // A corrupted/reordered lap message (e.g. a stale timestamp
+            // field) can make the inferred/declared start land after the
+            // end; clamp to a zero-length lap instead of writing a
+            // negative duration into the encoded output.
+            start = end;
+            clampedLapDurations++;
           }
           if (start != null && end != null) {
             laps.add(
@@ -842,7 +862,7 @@ class FitParser implements ActivityFormatParser {
           }
           final devName = values[3];
           if (devName is String) {
-            final channelId = _sanitizeDeveloperFieldName(devName);
+            final channelId = sanitizeIdentifier(devName);
             if (channelId != null) {
               developerFieldNames[devKey] = channelId;
             }
@@ -857,7 +877,11 @@ class FitParser implements ActivityFormatParser {
           }
           break;
         default:
-          // Skip unhandled message types.
+          // Vendor-specific or otherwise undocumented message: no generic
+          // representation exists, so it's skipped, but the global ID is
+          // recorded to distinguish this from "no such data" (see the
+          // fit.message.vendor_skipped summary below).
+          skippedGlobalIds.add(definition.globalId);
           break;
       }
     }
@@ -875,6 +899,32 @@ class FitParser implements ActivityFormatParser {
               'total_elapsed_time field; start was inferred from the '
               'previous lap or the activity\'s first point.',
           node: const ParseNodeReference(path: 'fit.lap'),
+        ),
+      );
+    }
+    if (clampedLapDurations > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.lap.negative_duration_clamped',
+          message:
+              '$clampedLapDurations lap(s) had a start time after their '
+              'end time (corrupted or reordered lap message); clamped to '
+              'a zero-length lap.',
+          node: const ParseNodeReference(path: 'fit.lap'),
+        ),
+      );
+    }
+    if (skippedGlobalIds.isNotEmpty) {
+      final ids = skippedGlobalIds.toList()..sort();
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.message.vendor_skipped',
+          message:
+              'Message global ID(s) $ids have no generic representation '
+              'in this library and were not decoded.',
+          node: const ParseNodeReference(path: 'fit.message'),
         ),
       );
     }
@@ -1163,20 +1213,6 @@ const Map<(int, int), String> _knownDeveloperChannels = {
   // Common developer-field convention in running power ecosystems.
   (0, 0): 'running_power',
 };
-
-/// Converts a field_description `field_name` into a safe channel id:
-/// lowercase with non-alphanumeric runs collapsed to `_` (channel ids double
-/// as XML element names in GPX extensions, which forbid spaces and may not
-/// start with a digit). Returns null when nothing usable remains, in which
-/// case the generic `fit_dev_<i>_<n>` name is used instead.
-String? _sanitizeDeveloperFieldName(String name) {
-  var id = name.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-  id = id.replaceAll(RegExp(r'^_+|_+$'), '');
-  if (id.isEmpty || RegExp(r'^[0-9]').hasMatch(id)) {
-    return null;
-  }
-  return id;
-}
 
 String _developerChannelName({
   required int developerIndex,

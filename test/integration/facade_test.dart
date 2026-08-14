@@ -2733,6 +2733,57 @@ void main() {
       );
     });
 
+    test('export to GPX normalizes additionalTracks too, not just the '
+        'primary track (GPX keeps multi-track sources unflattened)', () {
+      final base = DateTime.utc(2024, 12, 10, 12);
+      final primary = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: base.add(const Duration(seconds: 1)),
+          ),
+        ],
+      );
+      final secondaryWithInvalidPoint = RawActivity(
+        points: [
+          GeoPoint(latitude: 41.0, longitude: -106.0, time: base),
+          GeoPoint(
+            latitude: 0.0,
+            longitude: 0.0,
+            time: base.add(const Duration(seconds: 1)),
+          ),
+          GeoPoint(
+            latitude: 41.002,
+            longitude: -106.002,
+            time: base.add(const Duration(seconds: 2)),
+          ),
+        ],
+      );
+      final activity = primary.copyWith(
+        additionalTracks: [secondaryWithInvalidPoint],
+      );
+
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.gpx,
+      );
+
+      expect(result.activity.additionalTracks.single.points, hasLength(2));
+      expect(RegExp('<trkpt').allMatches(result.asString()).length, equals(4));
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'repaired.sentinel_coords_removed',
+          ),
+        ),
+      );
+    });
+
     test(
       'convert reports lossy.multi_track_flattened via exportInIsolate too',
       () async {

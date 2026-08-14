@@ -97,12 +97,16 @@ class RawEditor {
       timeOf: (lap) => lap.startTime,
       withTime: (lap, t) => lap.copyWith(startTime: t),
     );
-    final expandedLaps = _expandLapEndsForNudgedPoints(
-      lapResult.items,
-      sortedLaps,
-      sortedPoints,
-      pointResult.items,
-    );
+    // Only rescan points-per-lap when a point actually moved: with nothing
+    // nudged, no point could have crossed a lap's original end boundary.
+    final expandedLaps = pointResult.adjustedCount == 0
+        ? lapResult.items
+        : _expandLapEndsForNudgedPoints(
+            lapResult.items,
+            sortedLaps,
+            sortedPoints,
+            pointResult.items,
+          );
     _activity = _activity.copyWith(
       points: pointResult.items,
       channels: sortedChannels,

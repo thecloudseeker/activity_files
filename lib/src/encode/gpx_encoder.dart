@@ -2,6 +2,7 @@
 import 'package:xml/xml.dart';
 
 import '../channel_mapper.dart';
+import '../identifier_sanitizer.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
@@ -453,8 +454,8 @@ Map<Channel, String> _extraTpxTagNames(List<Channel> extraChannels) {
   final tagNames = <Channel, String>{};
   for (var i = 0; i < extraChannels.length; i++) {
     final channel = extraChannels[i];
-    final sanitized = _sanitizeTpxTagName(channel.id);
-    var tag = sanitized.isEmpty ? null : 'gpxtpx:$sanitized';
+    final sanitized = sanitizeIdentifier(channel.id);
+    var tag = sanitized == null ? null : 'gpxtpx:$sanitized';
     if (tag == null || !used.add(tag)) {
       tag = 'gpxtpx:custom_$i';
       used.add(tag);
@@ -462,16 +463,6 @@ Map<Channel, String> _extraTpxTagNames(List<Channel> extraChannels) {
     tagNames[channel] = tag;
   }
   return tagNames;
-}
-
-String _sanitizeTpxTagName(String channelId) {
-  final sanitized = channelId
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-      .replaceAll(RegExp(r'^_+|_+$'), '');
-  return sanitized.isEmpty || RegExp(r'^[0-9]').hasMatch(sanitized)
-      ? ''
-      : sanitized;
 }
 
 String _formatGenericChannelValue(double value, EncoderOptions _) =>

@@ -274,6 +274,40 @@ void main() {
         );
       });
 
+      test('keeps valid track features when another feature in the same '
+          'collection has a non-object geometry', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  [-105.0, 40.0],
+                  [-105.001, 40.001],
+                ],
+              },
+              'properties': {},
+            },
+            {'type': 'Feature', 'geometry': 'not-an-object', 'properties': {}},
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(2));
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'geojson.malformed_feature_dropped',
+          ),
+          isTrue,
+        );
+      });
+
       test('keeps every non-Point feature as additionalTracks instead of '
           'dropping all but the first', () {
         final geojson = {
@@ -825,6 +859,101 @@ void main() {
           expect(result.activity.metadata['elevation_gain'], 150);
         },
       );
+
+      test('total_calories and device_manufacturer are captured into '
+          'summary/device, not dropped', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              [-105.0, 40.0],
+              [-105.001, 40.001],
+            ],
+          },
+          'properties': {
+            'total_calories': 450,
+            'device_manufacturer': 'Garmin',
+          },
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.summary?.calories, equals(450.0));
+        expect(result.activity.device?.manufacturer, equals('Garmin'));
+        expect(result.activity.metadata.containsKey('total_calories'), isFalse);
+        expect(
+          result.activity.metadata.containsKey('device_manufacturer'),
+          isFalse,
+        );
+      });
+
+      test('total_steps has no structured field to regenerate it from, so '
+          'it round-trips via metadata instead of being dropped', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              [-105.0, 40.0],
+              [-105.001, 40.001],
+            ],
+          },
+          'properties': {'total_steps': 3200},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.metadata['total_steps'], equals(3200));
+        expect(result.activity.channel(Channel.custom('total_steps')), isEmpty);
+      });
+
+      test('reads per-line coordinateProperties.channels on a '
+          'MultiLineString', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'MultiLineString',
+            'coordinates': [
+              [
+                [-105.0, 40.0],
+                [-105.001, 40.001],
+              ],
+              [
+                [-106.0, 41.0],
+                [-106.001, 41.001],
+              ],
+            ],
+          },
+          'properties': {
+            'coordinateProperties': {
+              'channels': {
+                'heart_rate': [
+                  [140, 142],
+                  [150, 151],
+                ],
+              },
+            },
+          },
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(4));
+        expect(
+          result.activity.channel(Channel.heartRate).map((s) => s.value),
+          equals([140, 142, 150, 151]),
+        );
+      });
     });
 
     group('Real fixture regression', () {

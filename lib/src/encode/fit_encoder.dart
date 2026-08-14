@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import '../channel_mapper.dart';
 import '../fit/fit_crc.dart';
 import '../fit/fit_epoch.dart';
+import '../fit/fit_record_fields.dart';
 import '../fit/fit_sport.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
@@ -1165,74 +1166,34 @@ class _OptionalRecordField {
   final double scale;
 }
 
-/// Well-known channels with dedicated FIT record field numbers. `grade`,
-/// `left_right_balance`, and `ebike_assist_level_percent` mirror the names
-/// the parser assigns to record fields 9, 30, and 120 so those round-trip
-/// natively instead of via `fit_field_<n>`.
+/// Wire-format byte size/type per field number, keyed to [knownFitRecordFields]
+/// (the channel/number/scale, shared with the parser). Purely an encoding
+/// concern (the parser decodes types from each file's own message
+/// definitions instead), so it stays encoder-local.
+const Map<int, (int size, _FitBaseType type)> _recordFieldWireFormat = {
+  3: (1, _FitBaseType.uint8), // heart_rate
+  4: (1, _FitBaseType.uint8), // cadence
+  5: (4, _FitBaseType.uint32), // distance
+  6: (2, _FitBaseType.uint16), // speed
+  7: (2, _FitBaseType.uint16), // power
+  13: (1, _FitBaseType.sint8), // temperature
+  9: (2, _FitBaseType.sint16), // grade
+  30: (1, _FitBaseType.uint8), // left_right_balance
+  120: (1, _FitBaseType.uint8), // ebike_assist_level_percent
+};
+
+/// Well-known channels with dedicated FIT record field numbers, built from
+/// [knownFitRecordFields] (the parser/encoder-shared table) so the two
+/// cannot diverge on field number or scale.
 final List<_OptionalRecordField> _knownRecordChannels = [
-  const _OptionalRecordField(
-    channel: Channel.heartRate,
-    number: 3,
-    size: 1,
-    type: _FitBaseType.uint8,
-    scale: 1,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.cadence,
-    number: 4,
-    size: 1,
-    type: _FitBaseType.uint8,
-    scale: 1,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.distance,
-    number: 5,
-    size: 4,
-    type: _FitBaseType.uint32,
-    scale: 100,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.speed,
-    number: 6,
-    size: 2,
-    type: _FitBaseType.uint16,
-    scale: 1000,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.power,
-    number: 7,
-    size: 2,
-    type: _FitBaseType.uint16,
-    scale: 1,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.temperature,
-    number: 13,
-    size: 1,
-    type: _FitBaseType.sint8,
-    scale: 1,
-  ),
-  _OptionalRecordField(
-    channel: Channel.custom('grade'),
-    number: 9,
-    size: 2,
-    type: _FitBaseType.sint16,
-    scale: 100,
-  ),
-  _OptionalRecordField(
-    channel: Channel.custom('left_right_balance'),
-    number: 30,
-    size: 1,
-    type: _FitBaseType.uint8,
-    scale: 1,
-  ),
-  _OptionalRecordField(
-    channel: Channel.custom('ebike_assist_level_percent'),
-    number: 120,
-    size: 1,
-    type: _FitBaseType.uint8,
-    scale: 1,
-  ),
+  for (final field in knownFitRecordFields)
+    _OptionalRecordField(
+      channel: field.channel,
+      number: field.number,
+      scale: field.scale,
+      size: _recordFieldWireFormat[field.number]!.$1,
+      type: _recordFieldWireFormat[field.number]!.$2,
+    ),
 ];
 
 /// Builds the ordered list of optional record fields for [activity]: the

@@ -208,6 +208,66 @@ Uint8List buildFitFileWithLapMissingStartTime({
   return Uint8List.fromList([...header, ...payload]);
 }
 
+/// Builds a FIT file with one record and two lap messages, both stamping
+/// only field 253 (timestamp), where the second lap's timestamp is earlier
+/// than the first lap's: with no start_time/total_elapsed_time to declare
+/// otherwise, the second lap's inferred start (the first lap's end) would
+/// land after its own end.
+Uint8List buildFitFileWithOutOfOrderLapTimestamps({
+  int recordTimestamp = 1000,
+  int firstLapTimestamp = 1010,
+  int secondLapTimestamp = 1005,
+}) {
+  final recordDefinition = BytesBuilder()
+    ..add([0x40, 0x00, 0x00])
+    ..add(uint16LeBytes(20)) // global message 20 (record)
+    ..addByte(3)
+    ..add([0xFD, 0x04, 0x86]) // timestamp (uint32)
+    ..add([0x00, 0x04, 0x85]) // latitude (sint32)
+    ..add([0x01, 0x04, 0x85]); // longitude (sint32)
+  final recordData = BytesBuilder()
+    ..addByte(0x00)
+    ..add(uint32LeBytes(recordTimestamp))
+    ..add(int32LeBytes(encodeSemicircles(40.0)))
+    ..add(int32LeBytes(encodeSemicircles(-105.0)));
+
+  final lapDefinition = BytesBuilder()
+    ..add([0x41, 0x00, 0x00])
+    ..add(uint16LeBytes(19)) // global message 19 (lap)
+    ..addByte(3)
+    ..add([0x00, 0x01, 0x00]) // event (enum)
+    ..add([0x01, 0x01, 0x00]) // event_type (enum)
+    ..add([0xFD, 0x04, 0x86]); // timestamp (uint32)
+  final firstLapData = BytesBuilder()
+    ..addByte(0x01)
+    ..addByte(9) // event = lap
+    ..addByte(1) // event_type = stop
+    ..add(uint32LeBytes(firstLapTimestamp));
+  final secondLapData = BytesBuilder()
+    ..addByte(0x01)
+    ..addByte(9) // event = lap
+    ..addByte(1) // event_type = stop
+    ..add(uint32LeBytes(secondLapTimestamp));
+
+  final fullData =
+      (BytesBuilder()
+            ..add(recordDefinition.toBytes())
+            ..add(recordData.toBytes())
+            ..add(lapDefinition.toBytes())
+            ..add(firstLapData.toBytes())
+            ..add(secondLapData.toBytes()))
+          .toBytes();
+  final crc = fitCrc(fullData);
+  final payload =
+      (BytesBuilder()
+            ..add(fullData)
+            ..addByte(crc & 0xFF)
+            ..addByte((crc >> 8) & 0xFF))
+          .toBytes();
+  final header = buildFitHeader(fullData.length);
+  return Uint8List.fromList([...header, ...payload]);
+}
+
 /// Encodes a uint16 value in little-endian format.
 List<int> uint16LeBytes(int value) => [value & 0xFF, (value >> 8) & 0xFF];
 

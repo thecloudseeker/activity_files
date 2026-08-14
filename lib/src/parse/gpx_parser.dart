@@ -226,6 +226,20 @@ class GpxParser implements ActivityFormatParser {
                 ),
               );
             }
+          } else {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'gpx.trackpoint.missing_timestamp',
+                message:
+                    'Trackpoint at $lat,$lon has no <time>; point kept '
+                    'with epoch fallback time.',
+                node: ParseNodeReference(
+                  path: 'gpx.trk.trkseg.trkpt',
+                  index: index - 1,
+                ),
+              ),
+            );
           }
           time ??= DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 

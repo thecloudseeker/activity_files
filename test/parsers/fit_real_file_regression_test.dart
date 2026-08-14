@@ -72,10 +72,9 @@ void main() {
       // garmin-fit-sdk), all of which agree exactly with each other. Source:
       // https://github.com/dtcooper/python-fitparse (tests/files/), MIT.
       //
-      // Regression pin for the fallback-record heuristic bug: earlier
-      // versions misclassified vendor-specific FIT messages (global IDs 79
-      // and 141 in this file) as GPS records, reading their unrelated field
-      // values as garbage lat/lon/altitude/heart-rate.
+      // This file's vendor-specific messages (global IDs 79 and 141) are not
+      // GPS records; their fields must not be read as lat/lon/altitude/
+      // heart-rate.
       final bytes = File(
         'test/fixtures/real_world/garmin-fenix-5-bike.fit',
       ).readAsBytesSync();
@@ -100,6 +99,15 @@ void main() {
       );
 
       expect(activity.laps, hasLength(1));
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>()
+              .having((d) => d.code, 'code', 'fit.message.vendor_skipped')
+              .having((d) => d.message, 'message', contains('79'))
+              .having((d) => d.message, 'message', contains('141')),
+        ),
+      );
     },
   );
 }

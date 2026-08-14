@@ -10,6 +10,14 @@ final DateTime _geojsonFallbackTimestamp = DateTime.fromMillisecondsSinceEpoch(
   isUtc: true,
 );
 
+/// Type-checking casts instead of `as`: a malformed feature (e.g. a
+/// `"geometry"` field that's a string, not an object) must degrade to a
+/// per-feature diagnostic, not an uncaught TypeError that wipes every other
+/// valid feature in the same FeatureCollection.
+Map? _asMapOrNull(Object? value) => value is Map ? value : null;
+List? _asListOrNull(Object? value) => value is List ? value : null;
+String? _asStringOrNull(Object? value) => value is String ? value : null;
+
 /// Parser for GeoJSON format activity files
 /// Supports single Feature and FeatureCollection geometries
 class GeojsonParser implements ActivityFormatParser {
@@ -55,7 +63,7 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
-    final type = json['type'] as String?;
+    final type = _asStringOrNull(json['type']);
 
     if (type == 'FeatureCollection') {
       return _parseFeatureCollection(json, diagnostics);
@@ -80,7 +88,7 @@ class GeojsonParser implements ActivityFormatParser {
     dynamic json,
     List<ParseDiagnostic> diagnostics,
   ) {
-    final features = json['features'] as List?;
+    final features = _asListOrNull(json['features']);
     if (features == null || features.isEmpty) {
       diagnostics.add(
         ParseDiagnostic(
@@ -100,7 +108,7 @@ class GeojsonParser implements ActivityFormatParser {
     }
 
     final pointFeatures = features.whereType<Map>().where((feature) {
-      final geometry = feature['geometry'] as Map?;
+      final geometry = _asMapOrNull(feature['geometry']);
       return geometry != null && geometry['type'] == 'Point';
     }).toList();
 
@@ -110,9 +118,9 @@ class GeojsonParser implements ActivityFormatParser {
       Sport? sport;
 
       for (final feature in pointFeatures) {
-        final geometry = feature['geometry'] as Map;
-        final properties = feature['properties'] as Map? ?? {};
-        final coordinates = geometry['coordinates'] as List?;
+        final geometry = _asMapOrNull(feature['geometry'])!;
+        final properties = _asMapOrNull(feature['properties']) ?? {};
+        final coordinates = _asListOrNull(geometry['coordinates']);
         if (coordinates == null) {
           diagnostics.add(
             const ParseDiagnostic(
@@ -158,13 +166,26 @@ class GeojsonParser implements ActivityFormatParser {
       return ActivityParseResult(activity: activity, diagnostics: diagnostics);
     }
 
-    final trackFeatures = features.where((feature) {
-      if (feature is! Map) return false;
-      final geometry = feature['geometry'] as Map?;
-      return geometry != null && geometry['type'] != 'Point';
-    }).toList();
+    final trackFeatures = <Map>[];
+    var droppedPointFeatures = 0;
+    var droppedMalformedFeatures = 0;
+    for (final feature in features) {
+      if (feature is! Map) {
+        droppedMalformedFeatures++;
+        continue;
+      }
+      final geometry = _asMapOrNull(feature['geometry']);
+      if (geometry == null) {
+        droppedMalformedFeatures++;
+        continue;
+      }
+      if (geometry['type'] == 'Point') {
+        droppedPointFeatures++;
+        continue;
+      }
+      trackFeatures.add(feature);
+    }
 
-    final droppedPointFeatures = features.length - trackFeatures.length;
     if (droppedPointFeatures > 0) {
       diagnostics.add(
         ParseDiagnostic(
@@ -173,6 +194,17 @@ class GeojsonParser implements ActivityFormatParser {
           message:
               '$droppedPointFeatures standalone Point feature(s) alongside '
               'track geometry are not representable here and were dropped.',
+        ),
+      );
+    }
+    if (droppedMalformedFeatures > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'geojson.malformed_feature_dropped',
+          message:
+              '$droppedMalformedFeatures feature(s) were not a JSON object '
+              'or had no valid geometry, and were dropped.',
         ),
       );
     }
@@ -225,7 +257,7 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
-    final geometry = feature['geometry'] as Map?;
+    final geometry = _asMapOrNull(feature['geometry']);
     if (geometry == null) {
       diagnostics.add(
         ParseDiagnostic(
@@ -240,8 +272,8 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
-    final properties = feature['properties'] as Map? ?? {};
-    final coordinates = geometry['coordinates'] as List?;
+    final properties = _asMapOrNull(feature['properties']) ?? {};
+    final coordinates = _asListOrNull(geometry['coordinates']);
 
     if (coordinates == null || coordinates.isEmpty) {
       diagnostics.add(
@@ -257,7 +289,7 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
-    final geomType = geometry['type'] as String?;
+    final geomType = _asStringOrNull(geometry['type']);
     final points = <GeoPoint>[];
     final channelMap = <Channel, List<Sample>>{};
 
@@ -306,16 +338,17 @@ class GeojsonParser implements ActivityFormatParser {
     } else if (geomType == 'MultiLineString') {
       // MultiLineString: array of LineStrings, all sharing one feature-level
       // `properties` map — resolve `timestamp` once, see LineString above.
-      // No coordinateProperties.channels precedent exists for MultiLineString
-      // (only LineString/Polygon carry per-point parallel arrays), so unlike
-      // those two, no per-point channel data is collected here: a scalar
-      // property on this geometry type is feature-level metadata, not a
-      // per-point broadcast.
+      // Per-point channel data uses the same `coordinateProperties.channels`
+      // convention as LineString/Polygon, but with each channel's array
+      // nested one level (one array per line, mirroring `coordTimes`'s
+      // per-line shape below) since a MultiLineString has multiple point
+      // sequences under one shared `properties` map.
       final sharedTimestamp = _resolvePropertyTimestamp(
         properties,
         diagnostics,
       );
       final lineTimes = _multiLineCoordinateTimes(properties);
+      final coordinateChannels = _coordinateChannels(properties);
       for (var lineIndex = 0; lineIndex < coordinates.length; lineIndex++) {
         final lineCoords = coordinates[lineIndex];
         if (lineCoords is! List) continue;
@@ -336,6 +369,13 @@ class GeojsonParser implements ActivityFormatParser {
           );
           if (point != null) {
             points.add(point);
+            _collectMultiLineCoordinateChannelSamples(
+              point.time,
+              lineIndex,
+              i,
+              coordinateChannels,
+              channelMap,
+            );
           }
         }
       }
@@ -415,9 +455,31 @@ class GeojsonParser implements ActivityFormatParser {
       channels: channelMap.isEmpty ? null : channelMap,
       sport: sport,
       metadata: _collectMetadata(properties),
+      summary: _parseSummary(properties),
+      device: _parseDevice(properties),
     );
 
     return ActivityParseResult(activity: activity, diagnostics: diagnostics);
+  }
+
+  /// Reads `properties.total_calories` into [ActivitySummary.calories], the
+  /// structured field the encoder actually regenerates `total_calories`
+  /// from; without this, the property (excluded from [_collectMetadata] on
+  /// the assumption it's regenerated) had nowhere to go and was dropped.
+  static ActivitySummary? _parseSummary(Map properties) {
+    final calories = properties['total_calories'];
+    return calories is num
+        ? ActivitySummary(calories: calories.toDouble())
+        : null;
+  }
+
+  /// Reads `properties.device_manufacturer` into
+  /// [ActivityDeviceMetadata.manufacturer]; see [_parseSummary].
+  static ActivityDeviceMetadata? _parseDevice(Map properties) {
+    final manufacturer = properties['device_manufacturer'];
+    return manufacturer is String
+        ? ActivityDeviceMetadata(manufacturer: manufacturer)
+        : null;
   }
 
   /// Captures scalar feature properties (String/num/bool) as activity
@@ -432,7 +494,7 @@ class GeojsonParser implements ActivityFormatParser {
     for (final entry in properties.entries) {
       final key = entry.key;
       final value = entry.value;
-      if (key is! String || _metaPropertyKeys.contains(key)) continue;
+      if (key is! String || _metadataExcludedKeys.contains(key)) continue;
       if (value == null || value is Map || value is List) continue;
       metadata[key] = value;
     }
@@ -480,6 +542,31 @@ class GeojsonParser implements ActivityFormatParser {
       return parseTimestampAssumeUtc(text);
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Reads channel values for line [lineIndex], point [pointIndex] from
+  /// [coordinateChannels], where each channel's array is itself one array
+  /// per line (mirrors [_multiLineCoordinateTimes]'s per-line `coordTimes`
+  /// shape), so a MultiLineString round-trips per-point channel data the
+  /// same way LineString/Polygon do.
+  static void _collectMultiLineCoordinateChannelSamples(
+    DateTime timestamp,
+    int lineIndex,
+    int pointIndex,
+    Map<String, List>? coordinateChannels,
+    Map<Channel, List<Sample>> channelMap,
+  ) {
+    if (coordinateChannels == null) return;
+    for (final entry in coordinateChannels.entries) {
+      if (lineIndex >= entry.value.length) continue;
+      final line = entry.value[lineIndex];
+      if (line is! List || pointIndex >= line.length) continue;
+      final value = line[pointIndex];
+      if (value is! num) continue;
+      channelMap
+          .putIfAbsent(Channel.custom(entry.key), () => [])
+          .add(Sample(time: timestamp, value: value.toDouble()));
     }
   }
 
@@ -619,7 +706,12 @@ class GeojsonParser implements ActivityFormatParser {
     }
   }
 
-  /// Property keys that are activity metadata rather than channel values.
+  /// Property keys that are never per-point channel values: either scalar
+  /// activity metadata, or (for `total_calories`/`device_manufacturer`)
+  /// captured into a structured field instead (see [_parseSummary],
+  /// [_parseDevice]). Broadcasting any of these as an identical sample on
+  /// every point would misrepresent a single feature-level summary as a
+  /// per-point time series.
   static const Set<String> _metaPropertyKeys = {
     'timestamp',
     'altitude',
@@ -634,6 +726,16 @@ class GeojsonParser implements ActivityFormatParser {
     'device_manufacturer',
     'coordinateProperties',
   };
+
+  /// [_metaPropertyKeys] minus `total_steps`: every other key there is
+  /// either regenerated from a structured field on re-encode (so keeping a
+  /// stale copy in `metadata` would contradict the freshly re-encoded
+  /// output) or purely structural. `total_steps` has no structured field to
+  /// regenerate it from (this library's model has no step-count field), so
+  /// unlike the others it must round-trip via `metadata` or be lost.
+  static final Set<String> _metadataExcludedKeys = _metaPropertyKeys.difference(
+    {'total_steps'},
+  );
 
   /// Collect channel samples from properties.
   ///

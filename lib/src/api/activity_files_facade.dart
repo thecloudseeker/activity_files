@@ -243,6 +243,16 @@ class ActivityFiles {
       exportActivity = ordered.activity;
       diagnostics.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
     }
+    if (to == ActivityFileFormat.gpx) {
+      final trackResult = _normalizeAdditionalTracksForExport(
+        exportActivity,
+        normalize: normalize,
+      );
+      exportActivity = trackResult.activity;
+      diagnostics.addAll(
+        trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
+      );
+    }
     if (autoFix.isEnabled) {
       final fixed = _autoFixCommonIssues(exportActivity, autoFix);
       diagnostics = [
@@ -798,6 +808,45 @@ class ActivityFiles {
     return (activity: editor.activity, diagnostics: editor.repairDiagnostics);
   }
 
+  /// Runs the same normalize-or-order-for-export step applied to the
+  /// primary track on each of [activity]'s `additionalTracks`.
+  ///
+  /// GPX is the only target that keeps `additionalTracks` instead of
+  /// flattening them into the primary track before export (see convert()'s
+  /// flatten comment), so it's the only path where secondary tracks would
+  /// otherwise skip sortAndDedup/trimInvalid/time-ordering entirely.
+  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
+  _normalizeAdditionalTracksForExport(
+    RawActivity activity, {
+    required bool normalize,
+  }) {
+    if (activity.additionalTracks.isEmpty) {
+      return (activity: activity, diagnostics: const []);
+    }
+    final diagnostics = <ValidationDiagnostic>[];
+    final tracks = <RawActivity>[];
+    for (final track in activity.additionalTracks) {
+      if (normalize) {
+        final result = _normalize(
+          track,
+          sortAndDedup: true,
+          trimInvalid: true,
+          captureStats: false,
+        );
+        tracks.add(result.activity);
+        diagnostics.addAll(result.repairDiagnostics);
+      } else {
+        final result = _ensureOrderedForExport(track);
+        tracks.add(result.activity);
+        diagnostics.addAll(result.diagnostics);
+      }
+    }
+    return (
+      activity: activity.copyWith(additionalTracks: tracks),
+      diagnostics: diagnostics,
+    );
+  }
+
   /// Checks if a list is sorted by time with no duplicate timestamps
   /// (each entry strictly after its predecessor).
   static bool _isStrictlyOrdered<T>(
@@ -1261,6 +1310,14 @@ class ActivityFiles {
       working = normalized.activity;
       normalizationStats = normalized.stats;
       repairDiagnostics = normalized.repairDiagnostics;
+    }
+    if (to == ActivityFileFormat.gpx) {
+      final trackResult = _normalizeAdditionalTracksForExport(
+        working,
+        normalize: normalize,
+      );
+      working = trackResult.activity;
+      repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
     }
     final encoded = ActivityEncoder.encode(working, to, options: options);
     final binary = to == ActivityFileFormat.fit

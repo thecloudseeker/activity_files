@@ -239,5 +239,34 @@ void main() {
         ),
       );
     });
+
+    test('clamps a lap whose inferred start lands after its own end '
+        'instead of writing a negative duration', () {
+      final bytes = buildFitFileWithOutOfOrderLapTimestamps(
+        recordTimestamp: 1000,
+        firstLapTimestamp: 1010,
+        secondLapTimestamp: 1005,
+      );
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      final fitEpoch = DateTime.utc(1989, 12, 31);
+      expect(result.activity.laps, hasLength(2));
+      final secondLap = result.activity.laps[1];
+      expect(secondLap.startTime, equals(secondLap.endTime));
+      expect(
+        secondLap.endTime,
+        equals(fitEpoch.add(const Duration(seconds: 1005))),
+      );
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.lap.negative_duration_clamped',
+          ),
+        ),
+      );
+    });
   });
 }
