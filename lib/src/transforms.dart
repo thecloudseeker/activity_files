@@ -2,6 +2,8 @@
 
 import 'dart:math' as math;
 
+import 'package:collection/collection.dart';
+
 import 'geo_math.dart';
 import 'models.dart';
 import 'parse/parse_result.dart' show DiagnosticCategory;

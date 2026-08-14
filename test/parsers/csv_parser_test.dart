@@ -266,6 +266,18 @@ void main() {
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
+
+      test('treats a timestamp without a UTC offset as UTC', () {
+        const csv = '''timestamp,latitude,longitude
+2024-01-01T10:00:00,40.0,-105.0''';
+
+        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+        expect(
+          result.activity.points[0].time,
+          equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+        );
+      });
     });
 
     group('Sport parsing', () {

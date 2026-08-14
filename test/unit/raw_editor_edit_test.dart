@@ -22,6 +22,12 @@ Lap _lap(DateTime start, DateTime end) => Lap(startTime: start, endTime: end);
 WorkoutSet _set(DateTime start, DateTime end, {bool isRest = false}) =>
     WorkoutSet(startTime: start, endTime: end, isRest: isRest);
 
+ActivityEvent _event(DateTime time) =>
+    ActivityEvent(time: time, event: 0, eventType: 0);
+
+SwimLength _length(DateTime start, DateTime end) =>
+    SwimLength(startTime: start, endTime: end, isActive: true);
+
 // ---------------------------------------------------------------------------
 // shiftTime fix: sets are now shifted
 // ---------------------------------------------------------------------------
@@ -649,6 +655,42 @@ void main() {
 
       expect(result.sets, hasLength(2));
     });
+
+    test(
+      'drops an event inside the range and clips a length straddling it',
+      () {
+        final base = DateTime.utc(2024, 5, 1, 6);
+        final from = base.add(const Duration(seconds: 10));
+        final to = base.add(const Duration(seconds: 20));
+        final activity = RawActivity(
+          points: [_pt(40.0, -105.0, base)],
+          events: [
+            _event(base.add(const Duration(seconds: 15))), // inside: dropped
+            _event(base.add(const Duration(seconds: 25))), // after: kept
+          ],
+          lengths: [
+            // straddles the end of the deleted range: clip start to `to`
+            _length(
+              base.add(const Duration(seconds: 15)),
+              base.add(const Duration(seconds: 30)),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).deleteRange(from, to).activity;
+
+        expect(result.events, hasLength(1));
+        expect(
+          result.events.single.time,
+          isAtSameMomentAs(base.add(const Duration(seconds: 25))),
+        );
+        expect(result.lengths.single.startTime, isAtSameMomentAs(to));
+        expect(
+          result.lengths.single.endTime,
+          isAtSameMomentAs(base.add(const Duration(seconds: 30))),
+        );
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -851,6 +893,41 @@ void main() {
         isAtSameMomentAs(base.add(const Duration(seconds: 15)).add(pause)),
       );
     });
+
+    test('shifts an event strictly after at, and a length after at', () {
+      final base = DateTime.utc(2024, 6, 1, 6);
+      final at = base.add(const Duration(seconds: 10));
+      const pause = Duration(minutes: 1);
+      final activity = RawActivity(
+        points: [_pt(40.0, -105.0, base)],
+        events: [
+          _event(at), // exactly at `at`: not shifted (matches point semantics)
+          _event(base.add(const Duration(seconds: 15))), // after: shifted
+        ],
+        lengths: [
+          _length(
+            base.add(const Duration(seconds: 20)),
+            base.add(const Duration(seconds: 30)),
+          ),
+        ],
+      );
+
+      final result = RawEditor(activity).insertPause(at, pause).activity;
+
+      expect(result.events[0].time, isAtSameMomentAs(at));
+      expect(
+        result.events[1].time,
+        isAtSameMomentAs(base.add(const Duration(seconds: 15)).add(pause)),
+      );
+      expect(
+        result.lengths.single.startTime,
+        isAtSameMomentAs(base.add(const Duration(seconds: 20)).add(pause)),
+      );
+      expect(
+        result.lengths.single.endTime,
+        isAtSameMomentAs(base.add(const Duration(seconds: 30)).add(pause)),
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -983,6 +1060,33 @@ void main() {
       expect(result.sets, isEmpty);
     });
 
+    test('drops an event inside the gap and shifts a length starting at '
+        'the gap end back by the gap duration', () {
+      final base = DateTime.utc(2024, 7, 1, 6);
+      final from = base.add(const Duration(seconds: 10));
+      final to = base.add(const Duration(seconds: 30));
+      final gap = to.difference(from);
+      final activity = RawActivity(
+        points: [_pt(40.0, -105.0, base)],
+        events: [
+          _event(base.add(const Duration(seconds: 20))), // inside: dropped
+        ],
+        lengths: [
+          // starts exactly at the gap end: shift back by the gap duration
+          _length(to, base.add(const Duration(seconds: 40))),
+        ],
+      );
+
+      final result = RawEditor(activity).removePause(from, to).activity;
+
+      expect(result.events, isEmpty);
+      expect(result.lengths.single.startTime, isAtSameMomentAs(from));
+      expect(
+        result.lengths.single.endTime,
+        isAtSameMomentAs(base.add(const Duration(seconds: 40)).subtract(gap)),
+      );
+    });
+
     test('zero gap (from == to) is a no-op', () {
       final base = DateTime.utc(2024, 7, 1, 6);
       final t = base.add(const Duration(seconds: 10));
@@ -1055,6 +1159,70 @@ void main() {
         result.sets.single.endTime,
         isAtSameMomentAs(base.add(const Duration(seconds: 45)).subtract(gap)),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // crop
+  // ---------------------------------------------------------------------------
+
+  group('RawEditor.crop', () {
+    test(
+      'clips sets and lengths straddling a boundary, keeps events inside',
+      () {
+        final base = DateTime.utc(2024, 8, 1, 6);
+        final start = base.add(const Duration(seconds: 20));
+        final end = base.add(const Duration(seconds: 40));
+        final activity = RawActivity(
+          points: [_pt(40.0, -105.0, base)],
+          laps: [_lap(base, base.add(const Duration(seconds: 100)))],
+          sets: [
+            _set(
+              base.add(const Duration(seconds: 20)),
+              base.add(const Duration(seconds: 30)),
+            ),
+          ],
+          events: [_event(base.add(const Duration(seconds: 25)))],
+          lengths: [
+            // straddles the crop end: clip endTime to `end`
+            _length(
+              base.add(const Duration(seconds: 30)),
+              base.add(const Duration(seconds: 50)),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).crop(start, end).activity;
+
+        expect(result.sets, hasLength(1));
+        expect(result.events, hasLength(1));
+        expect(
+          result.lengths.single.startTime,
+          isAtSameMomentAs(base.add(const Duration(seconds: 30))),
+        );
+        expect(result.lengths.single.endTime, isAtSameMomentAs(end));
+      },
+    );
+
+    test('drops events and lengths entirely outside the cropped window', () {
+      final base = DateTime.utc(2024, 8, 1, 6);
+      final start = base.add(const Duration(seconds: 20));
+      final end = base.add(const Duration(seconds: 40));
+      final activity = RawActivity(
+        points: [_pt(40.0, -105.0, base)],
+        events: [_event(base.add(const Duration(seconds: 50)))],
+        lengths: [
+          _length(
+            base.add(const Duration(seconds: 60)),
+            base.add(const Duration(seconds: 70)),
+          ),
+        ],
+      );
+
+      final result = RawEditor(activity).crop(start, end).activity;
+
+      expect(result.events, isEmpty);
+      expect(result.lengths, isEmpty);
     });
   });
 }

@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 import '../channel_mapper.dart';
 import '../fit/fit_crc.dart';
+import '../fit/fit_epoch.dart';
+import '../fit/fit_record_fields.dart';
 import '../fit/fit_sport.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
@@ -532,7 +534,6 @@ class FitEncoder implements ActivityFormatEncoder {
           _FitDeveloperFieldSpec(fieldNumber: i, size: 8, developerIndex: 0),
       ],
     );
-    final baseTime = DateTime.utc(1989, 12, 31);
     var searchDelta = options.defaultMaxDelta;
     for (final field in optionalFields) {
       final delta = options.maxDeltaFor(field.channel);
@@ -547,10 +548,7 @@ class FitEncoder implements ActivityFormatEncoder {
       maxDelta: searchDelta,
     );
     for (final sample in recordSamples) {
-      final timestampSeconds = sample.time
-          .toUtc()
-          .difference(baseTime)
-          .inSeconds;
+      final timestampSeconds = fitSecondsSinceEpoch(sample.time);
       final lat = sample.latitude != null
           ? (sample.latitude! * 2147483648.0 / 180.0).round()
           : _invalidSemicircle;
@@ -839,11 +837,6 @@ class _FitMessageEncoder {
     _writeUint16(destination, softwareVersion);
   }
 
-  static final DateTime _fitEpoch = DateTime.utc(1989, 12, 31);
-
-  static int _fitSeconds(DateTime time) =>
-      time.toUtc().difference(_fitEpoch).inSeconds;
-
   /// Scales a value for FIT encoding; null stays null (invalid sentinel).
   static int? _scaled(double? value, int scale) =>
       value == null ? null : (value * scale).round();
@@ -934,7 +927,7 @@ class _FitMessageEncoder {
     List<_ExtraArrayField> extraArrays = const [],
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(timestamp));
+    _writeUint32(destination, fitSecondsSinceEpoch(timestamp));
     destination.addByte(fitIdFromSport(sport));
     _writeByte(destination, summary?.subSport);
     _writeUint32(destination, summary?.elapsedTime?.inMilliseconds);
@@ -975,8 +968,8 @@ class _FitMessageEncoder {
     List<_ExtraArrayField> extraArrays = const [],
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(lap.endTime));
-    _writeUint32(destination, _fitSeconds(lap.startTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(lap.endTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(lap.startTime));
     _writeUint32(destination, lap.elapsed.inMilliseconds);
     _writeUint32(destination, _scaled(lap.distanceMeters, 100));
     _writeByte(destination, lap.event);
@@ -1003,7 +996,7 @@ class _FitMessageEncoder {
     required ActivityEvent event,
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(event.time));
+    _writeUint32(destination, fitSecondsSinceEpoch(event.time));
     _writeByte(destination, event.event);
     _writeByte(destination, event.eventType);
     _writeUint32(destination, event.data);
@@ -1016,8 +1009,8 @@ class _FitMessageEncoder {
     required SwimLength length,
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(length.endTime));
-    _writeUint32(destination, _fitSeconds(length.startTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(length.endTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(length.startTime));
     _writeUint32(destination, length.elapsed.inMilliseconds);
     _writeUint16(destination, length.totalStrokes);
     _writeUint16(destination, _scaled(length.avgSpeed, 1000));
@@ -1032,8 +1025,8 @@ class _FitMessageEncoder {
     required WorkoutSet set,
   }) {
     destination.addByte(localId);
-    _writeUint32(destination, _fitSeconds(set.endTime));
-    _writeUint32(destination, _fitSeconds(set.startTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(set.endTime));
+    _writeUint32(destination, fitSecondsSinceEpoch(set.startTime));
     _writeUint32(destination, set.elapsed.inMilliseconds);
     _writeByte(destination, set.isRest ? 0 : 1);
     _writeUint16(destination, set.repetitions);
@@ -1173,66 +1166,34 @@ class _OptionalRecordField {
   final double scale;
 }
 
-/// Well-known channels with dedicated FIT record field numbers. `grade` and
-/// `left_right_balance` mirror the names the parser assigns to record fields
-/// 78 and 120 so those round-trip natively instead of via `fit_field_<n>`.
+/// Wire-format byte size/type per field number, keyed to [knownFitRecordFields]
+/// (the channel/number/scale, shared with the parser). Purely an encoding
+/// concern (the parser decodes types from each file's own message
+/// definitions instead), so it stays encoder-local.
+const Map<int, (int size, _FitBaseType type)> _recordFieldWireFormat = {
+  3: (1, _FitBaseType.uint8), // heart_rate
+  4: (1, _FitBaseType.uint8), // cadence
+  5: (4, _FitBaseType.uint32), // distance
+  6: (2, _FitBaseType.uint16), // speed
+  7: (2, _FitBaseType.uint16), // power
+  13: (1, _FitBaseType.sint8), // temperature
+  9: (2, _FitBaseType.sint16), // grade
+  30: (1, _FitBaseType.uint8), // left_right_balance
+  120: (1, _FitBaseType.uint8), // ebike_assist_level_percent
+};
+
+/// Well-known channels with dedicated FIT record field numbers, built from
+/// [knownFitRecordFields] (the parser/encoder-shared table) so the two
+/// cannot diverge on field number or scale.
 final List<_OptionalRecordField> _knownRecordChannels = [
-  const _OptionalRecordField(
-    channel: Channel.heartRate,
-    number: 3,
-    size: 1,
-    type: _FitBaseType.uint8,
-    scale: 1,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.cadence,
-    number: 4,
-    size: 1,
-    type: _FitBaseType.uint8,
-    scale: 1,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.distance,
-    number: 5,
-    size: 4,
-    type: _FitBaseType.uint32,
-    scale: 100,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.speed,
-    number: 6,
-    size: 2,
-    type: _FitBaseType.uint16,
-    scale: 1000,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.power,
-    number: 7,
-    size: 2,
-    type: _FitBaseType.uint16,
-    scale: 1,
-  ),
-  const _OptionalRecordField(
-    channel: Channel.temperature,
-    number: 13,
-    size: 1,
-    type: _FitBaseType.sint8,
-    scale: 1,
-  ),
-  _OptionalRecordField(
-    channel: Channel.custom('grade'),
-    number: 78,
-    size: 2,
-    type: _FitBaseType.sint16,
-    scale: 100,
-  ),
-  _OptionalRecordField(
-    channel: Channel.custom('left_right_balance'),
-    number: 120,
-    size: 2,
-    type: _FitBaseType.uint16,
-    scale: 1,
-  ),
+  for (final field in knownFitRecordFields)
+    _OptionalRecordField(
+      channel: field.channel,
+      number: field.number,
+      scale: field.scale,
+      size: _recordFieldWireFormat[field.number]!.$1,
+      type: _recordFieldWireFormat[field.number]!.$2,
+    ),
 ];
 
 /// Builds the ordered list of optional record fields for [activity]: the

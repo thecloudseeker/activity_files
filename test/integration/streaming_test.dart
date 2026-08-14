@@ -65,5 +65,23 @@ void main() {
       expect(result.activity.points.length, activity.points.length);
       expect(result.diagnostics, isEmpty);
     });
+
+    test(
+      'ActivityFiles.load(stream) works with the default useIsolate:true',
+      () async {
+        Stream<List<int>> csvStream() async* {
+          yield utf8.encode('timestamp,latitude,longitude\n');
+          yield utf8.encode('2024-01-01T00:00:00Z,40.0,-105.0\n');
+          yield utf8.encode('2024-01-01T00:00:10Z,40.001,-105.001\n');
+        }
+
+        final result = await ActivityFiles.load(
+          csvStream(),
+          format: ActivityFileFormat.csv,
+        );
+
+        expect(result.activity.points.length, equals(2));
+      },
+    );
   });
 }

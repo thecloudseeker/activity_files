@@ -104,7 +104,7 @@ class ActivityParser {
       }
       final bytes = builder.takeBytes();
       if (format == ActivityFileFormat.fit) {
-        return parseBytesAsync(
+        return await parseBytesAsync(
           bytes,
           format,
           useIsolate: useIsolate,
@@ -112,7 +112,7 @@ class ActivityParser {
         );
       }
       final text = encoding.decode(bytes);
-      return parseAsync(text, format, useIsolate: useIsolate);
+      return await parseAsync(text, format, useIsolate: useIsolate);
     } on FormatException catch (error) {
       return _formatExceptionResult(format, error);
     }

@@ -86,7 +86,28 @@ class GeojsonEncoder {
       if (points.isNotEmpty)
         'coordinateProperties': {
           'times': [for (final p in points) p.time.toUtc().toIso8601String()],
+          // One parallel array per channel, index-aligned with `coordinates`
+          // (same convention as `times`), so channel data survives the
+          // default LineString export instead of only the point-features one.
+          if (activity.channels.isNotEmpty)
+            'channels': _coordinateChannelArrays(activity, points),
         },
+    };
+  }
+
+  /// One entry per channel, each a parallel array (index-aligned with
+  /// [points]) of that channel's value at the point's exact timestamp, or
+  /// `null` where no sample exists at that instant.
+  static Map<String, List<double?>> _coordinateChannelArrays(
+    RawActivity activity,
+    List<GeoPoint> points,
+  ) {
+    final channelsByTime = channelValuesByTime(activity.channels);
+    final sortedChannels = activity.channels.keys.toList()
+      ..sort((a, b) => a.id.compareTo(b.id));
+    return {
+      for (final channel in sortedChannels)
+        channel.id: [for (final p in points) channelsByTime[p.time]?[channel]],
     };
   }
 

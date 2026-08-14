@@ -87,7 +87,6 @@ class TcxEncoder implements ActivityFormatEncoder {
           activity.channels,
           maxDelta: searchDelta,
         );
-        final writtenPointTimes = <DateTime>{};
         // Re-split laps into one <Activity> per consecutive sport, so a merged
         // multi-sport (triathlon) activity round-trips back to multiple
         // <Activity> elements. A single-sport activity yields exactly one.
@@ -96,6 +95,11 @@ class TcxEncoder implements ActivityFormatEncoder {
           'Activities',
           nest: () {
             for (final (groupIndex, group) in lapGroups.indexed) {
+              // Scoped per <Activity>: a point sitting exactly on a
+              // sport-to-sport boundary must still be written to the next
+              // sport's <Track>, not just deduplicated away because the
+              // previous sport's adjacent lap already claimed it.
+              final writtenPointTimes = <DateTime>{};
               builder.element(
                 'Activity',
                 attributes: {'Sport': _sportLabel(group.sport)},

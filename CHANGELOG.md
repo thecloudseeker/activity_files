@@ -1,4 +1,32 @@
 # Changelog
+## 0.7.5
+### Fixed
+- FIT parsing no longer mistakes vendor-specific messages for GPS records, producing garbage coordinates/altitude/heart rate on real files; messages it still can't decode are now reported via diagnostic instead of silently skipped.
+- GPX trackpoints missing `<time>` are no longer dropped; they keep an epoch timestamp instead, now reported via a diagnostic like an invalid timestamp already was.
+- TCX laps with more than one `<Track>` (pause/resume) no longer read only the first one.
+- GeoJSON/CSV timestamps without a UTC offset are now treated as UTC instead of local time, matching GPX/TCX.
+- FIT fields 78/120 (altitude, grade, balance, ebike assist) no longer map to the wrong field numbers.
+- `load()`/`convert()`/`convertAndExport()` no longer crash on a `Stream<List<int>>` source with isolates on (the default).
+- `ActivityConverter.convert()` no longer drops repair diagnostics.
+- `trimInvalid()` no longer drops laps on activities with no surviving GPS points (indoor/trainer).
+- `crop()`/`deleteRange()`/`insertPause()`/`removePause()` now carry `events`/`lengths`/`sets` forward, like `shiftTime()` already did.
+- `sortAndDedup()`/`updatePoint()` no longer pick a random winner among duplicate timestamps; sorting is stable now.
+- `splitBySport()` no longer bleeds points between sports on brick workouts (run/bike/run); splitting is per-lap now.
+- `flattened()` no longer gives every lap the primary track's sport; each lap keeps its own now.
+- GeoJSON no longer drops channel data (HR, power, etc.): export writes it as `coordinateProperties.channels`, and MultiLineString parsing now collects it per line too.
+- GeoJSON no longer smears one feature property across every point; it's kept as metadata now.
+- GPX export no longer drops anything outside the usual 9 channels; they're written as extra `gpxtpx:` tags now.
+- TCX export now reports `lossy.channels_dropped` instead of dropping a channel with no warning.
+- GeoJSON multi-track FeatureCollections no longer keep only the first track; the rest are kept in `additionalTracks` now.
+- GeoJSON parsing now also reads `coordTimes` (togeojson/Mapbox), not just our own `coordinateProperties.times`.
+- Duplicate, out-of-order, or pre-1990 timestamps no longer silently drop points, misplace lap boundaries, wrap FIT timestamps to a garbage future date, or reorder records; adjustments are reported via diagnostics now.
+- FIT's outlier filter no longer drops an entire legitimate track, only a stray bad point, when multiple tracks get merged into one FIT file; it only drops small (≤10-point) clusters now.
+- FIT laps with missing `start_time`/`total_elapsed_time` or a corrupted/reordered timestamp no longer get dropped or produce a negative duration; a start is inferred, or the duration is clamped to zero, with a diagnostic either way.
+- `convert()`/`export()` no longer only normalizes/orders the primary track: multi-track sources are flattened first for single-track formats now, and GPX normalizes `additionalTracks` directly instead of leaving them untouched.
+- One bad feature in a GeoJSON FeatureCollection no longer wipes the whole thing; only that feature is skipped now.
+- TCX multi-sport export no longer drops the point sitting on a sport boundary.
+- GeoJSON `total_calories`/`total_steps`/`device_manufacturer` are no longer dropped on parse.
+
 ## 0.7.4
 ### Fixed
 - `exportAsync(useIsolate: true)` no longer drops most of `RawActivity` crossing the isolate boundary.

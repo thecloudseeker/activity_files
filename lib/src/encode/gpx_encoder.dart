@@ -2,6 +2,7 @@
 import 'package:xml/xml.dart';
 
 import '../channel_mapper.dart';
+import '../identifier_sanitizer.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
@@ -47,9 +48,13 @@ class GpxEncoder implements ActivityFormatEncoder {
     namespaceRegistry.forEach(
       (prefix, uri) => rootAttributes.putIfAbsent('xmlns:$prefix', () => uri),
     );
+    final extraChannels = _extraTpxChannels(tracks);
+    final extraTagNames = _extraTpxTagNames(extraChannels);
     final deltas = <Channel, Duration>{
       for (final field in _tpxFields)
         field.channel: options.maxDeltaFor(field.channel),
+      for (final channel in extraChannels)
+        channel: options.maxDeltaFor(channel),
     };
     final searchDelta = deltas.values.fold<Duration>(
       options.defaultMaxDelta,
@@ -152,6 +157,7 @@ class GpxEncoder implements ActivityFormatEncoder {
             trackExtensions: track.gpxTrackExtensions,
             options: options,
             deltas: deltas,
+            extraTagNames: extraTagNames,
           );
         }
       },
@@ -170,6 +176,7 @@ class GpxEncoder implements ActivityFormatEncoder {
     required List<int> segmentStarts,
     required EncoderOptions options,
     required Map<Channel, Duration> deltas,
+    required Map<Channel, String> extraTagNames,
   }) {
     builder.element(
       'trk',
@@ -212,6 +219,20 @@ class GpxEncoder implements ActivityFormatEncoder {
                         )
                         case final double value)
                       (tag: field.tag, text: field.format(value, options)),
+                  // Channels beyond the fixed whitelist above, written as
+                  // extra gpxtpx: tags so custom sensor data round-trips
+                  // instead of only the 9 known TPX fields.
+                  for (final entry in extraTagNames.entries)
+                    if (_valueWithin(
+                          snapshot.valueFor(entry.key),
+                          snapshot.deltaFor(entry.key),
+                          deltas[entry.key]!,
+                        )
+                        case final double value)
+                      (
+                        tag: entry.value,
+                        text: _formatGenericChannelValue(value, options),
+                      ),
                 ];
                 builder.element(
                   'trkpt',
@@ -413,6 +434,39 @@ class _TpxField {
   final String tag;
   final String Function(double value, EncoderOptions options) format;
 }
+
+/// Channels beyond [_tpxFields], written as extra `gpxtpx:` tags so no
+/// channel data is lost (mirrors `csv_encoder.dart`'s `_extraChannels`).
+/// Sorted by id for deterministic output.
+List<Channel> _extraTpxChannels(List<RawActivity> tracks) => {
+  for (final track in tracks)
+    for (final channel in track.channels.keys)
+      if (!_tpxFields.any((field) => field.channel == channel)) channel,
+}.toList()..sort((a, b) => a.id.compareTo(b.id));
+
+/// Assigns each extra channel a valid, collision-free `gpxtpx:` tag name.
+/// Channel ids aren't guaranteed to be valid XML element names (e.g. a CSV
+/// header like `"left leg power"`), so the id is sanitized to an NCName;
+/// a sanitization collision (or an empty/all-digit-leading result) falls
+/// back to a guaranteed-unique `custom_<n>` tag.
+Map<Channel, String> _extraTpxTagNames(List<Channel> extraChannels) {
+  final used = {..._tpxFields.map((field) => field.tag)};
+  final tagNames = <Channel, String>{};
+  for (var i = 0; i < extraChannels.length; i++) {
+    final channel = extraChannels[i];
+    final sanitized = sanitizeIdentifier(channel.id);
+    var tag = sanitized == null ? null : 'gpxtpx:$sanitized';
+    if (tag == null || !used.add(tag)) {
+      tag = 'gpxtpx:custom_$i';
+      used.add(tag);
+    }
+    tagNames[channel] = tag;
+  }
+  return tagNames;
+}
+
+String _formatGenericChannelValue(double value, EncoderOptions _) =>
+    value.toString();
 
 String _formatWhole(double value, EncoderOptions _) => value.round().toString();
 String _formatTemperature(double value, EncoderOptions _) => _round(value, 1);

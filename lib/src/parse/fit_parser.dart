@@ -2,9 +2,15 @@
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
+import 'package:collection/collection.dart';
+
 import '../fit/fit_crc.dart';
+import '../fit/fit_epoch.dart';
+import '../fit/fit_record_fields.dart';
 import '../fit/fit_sport.dart';
 import '../geo_math.dart';
+import '../identifier_sanitizer.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'integrity_mode.dart';
@@ -150,7 +156,10 @@ class FitParser implements ActivityFormatParser {
     final speedSamples = <Sample>[];
     final distanceSamples = <Sample>[];
     final extraSamples = <Channel, List<Sample>>{};
+    final skippedGlobalIds = <int>{};
     final laps = <Lap>[];
+    var inferredLapStarts = 0;
+    var clampedLapDurations = 0;
     final sets = <WorkoutSet>[];
     final additionalSessions = <ActivitySummary>[];
     final events = <ActivityEvent>[];
@@ -348,20 +357,13 @@ class FitParser implements ActivityFormatParser {
           lastKnownTimestamp = rawTimestamp.toInt();
         }
       }
-      final isCanonicalRecord = definition.globalId == 20;
-      final isFallbackRecord =
-          !isCanonicalRecord && _looksLikeRecordDefinition(definition);
-      if (isCanonicalRecord || isFallbackRecord) {
+      if (definition.globalId == 20) {
         DateTime? timestamp = _decodeTimestamp(values[253]);
         if (timestamp == null) {
           final recoveredSeconds =
               lastTimestamps[localType] ?? lastKnownTimestamp;
           if (recoveredSeconds != null) {
-            timestamp = DateTime.utc(
-              1989,
-              12,
-              31,
-            ).add(Duration(seconds: recoveredSeconds));
+            timestamp = fitEpoch.add(Duration(seconds: recoveredSeconds));
             recoveredTimestampCount++;
             if (recoveredTimestampCount <= 5) {
               diagnostics.add(
@@ -409,10 +411,10 @@ class FitParser implements ActivityFormatParser {
 
         final lat = _decodeSemicircles(values[0]);
         final lon = _decodeSemicircles(values[1]);
-        if (isFallbackRecord && (lat == null || lon == null)) {
-          continue;
-        }
-        final altitude = _decodeAltitude(values[2]);
+        // enhanced_altitude (78) shares altitude (2)'s scale/offset formula
+        // but is uint32-wide; prefer it when present.
+        final altitude =
+            _decodeAltitude(values[78]) ?? _decodeAltitude(values[2]);
         if (lat != null && lon != null) {
           points.add(
             GeoPoint(
@@ -423,26 +425,32 @@ class FitParser implements ActivityFormatParser {
             ),
           );
         }
-        final hr = _asNumber(values[3]);
+        final hr = _asNumber(values[fitFieldHeartRate]);
         if (hr != null) {
           hrSamples.add(Sample(time: recordTime, value: hr.toDouble()));
         }
-        final cadence = _asNumber(values[4]);
+        final cadence = _asNumber(values[fitFieldCadence]);
         if (cadence != null) {
           cadenceSamples.add(
             Sample(time: recordTime, value: cadence.toDouble()),
           );
         }
-        final distance = _asNumber(values[5]);
+        final distance = _asNumber(values[fitFieldDistance]);
         if (distance != null) {
           distanceSamples.add(
-            Sample(time: recordTime, value: distance.toDouble() / 100.0),
+            Sample(
+              time: recordTime,
+              value: distance.toDouble() / fitFieldDistanceScale,
+            ),
           );
         }
-        final speed = _asNumber(values[6]);
+        final speed = _asNumber(values[fitFieldSpeed]);
         if (speed != null) {
           speedSamples.add(
-            Sample(time: recordTime, value: speed.toDouble() / 1000.0),
+            Sample(
+              time: recordTime,
+              value: speed.toDouble() / fitFieldSpeedScale,
+            ),
           );
         }
         // Legacy record field 8 (compressed_speed_distance): 3 bytes packing a
@@ -470,16 +478,26 @@ class FitParser implements ActivityFormatParser {
             );
           }
         }
-        final power = _asNumber(values[7]);
+        final power = _asNumber(values[fitFieldPower]);
         if (power != null) {
           powerSamples.add(Sample(time: recordTime, value: power.toDouble()));
         }
-        final temp = _asNumber(values[13]);
+        final temp = _asNumber(values[fitFieldTemperature]);
         if (temp != null) {
           tempSamples.add(Sample(time: recordTime, value: temp.toDouble()));
         }
-        addSample(Channel.custom('grade'), _decodeFitScaled(values[78], 100));
-        addSample(Channel.custom('left_right_balance'), _asNumber(values[120]));
+        addSample(
+          Channel.custom('grade'),
+          _decodeFitScaled(values[fitFieldGrade], fitFieldGradeScale),
+        );
+        addSample(
+          Channel.custom('left_right_balance'),
+          _asNumber(values[fitFieldLeftRightBalance]),
+        );
+        addSample(
+          Channel.custom('ebike_assist_level_percent'),
+          _asNumber(values[fitFieldEbikeAssistLevelPercent]),
+        );
         for (final entry in values.entries) {
           final numeric = _asNumber(entry.value);
           if (numeric == null) {
@@ -620,16 +638,41 @@ class FitParser implements ActivityFormatParser {
         case 19: // lap
           // Field numbers follow the official FIT profile for the lap
           // message (global 19): 2 start_time, 7 total_elapsed_time
-          // (s, scale 1000), 9 total_distance (m, scale 100),
-          // 11 total_calories, 13/14 avg/max_speed (m/s, scale 1000),
-          // 15/16 avg/max_heart_rate, 17/18 avg/max_cadence,
-          // 19/20 avg/max_power, 0 event, 1 event_type, 38 swim_stroke,
-          // 40 num_active_lengths.
-          final start = _decodeTimestamp(values[2]);
+          // (s, scale 1000), 253 timestamp (end, used when start/elapsed
+          // are absent, e.g. encoders that only stamp the lap's close),
+          // 9 total_distance (m, scale 100), 11 total_calories,
+          // 13/14 avg/max_speed (m/s, scale 1000), 15/16 avg/max_heart_rate,
+          // 17/18 avg/max_cadence, 19/20 avg/max_power, 0 event,
+          // 1 event_type, 38 swim_stroke, 40 num_active_lengths.
+          final declaredStart = _decodeTimestamp(values[2]);
           final totalTime = _decodeFitDuration(values[7]);
           final distanceMeters = _decodeFitDistance(values[9]);
-          if (start != null && totalTime != null) {
-            final end = start.add(totalTime);
+          final end =
+              (declaredStart != null && totalTime != null
+                  ? declaredStart.add(totalTime)
+                  : null) ??
+              _decodeTimestamp(values[253]);
+          // Some encoders omit start_time/total_elapsed_time and only stamp
+          // the lap's close; infer a start from the previous lap's end, or
+          // (for the first lap) the activity's first point, rather than
+          // dropping the lap entirely.
+          var start =
+              declaredStart ??
+              (laps.isNotEmpty
+                  ? laps.last.endTime
+                  : (points.isNotEmpty ? points.first.time : null));
+          if (declaredStart == null && start != null) {
+            inferredLapStarts++;
+          }
+          if (start != null && end != null && start.isAfter(end)) {
+            // A corrupted/reordered lap message (e.g. a stale timestamp
+            // field) can make the inferred/declared start land after the
+            // end; clamp to a zero-length lap instead of writing a
+            // negative duration into the encoded output.
+            start = end;
+            clampedLapDurations++;
+          }
+          if (start != null && end != null) {
             laps.add(
               Lap(
                 startTime: start,
@@ -819,7 +862,7 @@ class FitParser implements ActivityFormatParser {
           }
           final devName = values[3];
           if (devName is String) {
-            final channelId = _sanitizeDeveloperFieldName(devName);
+            final channelId = sanitizeIdentifier(devName);
             if (channelId != null) {
               developerFieldNames[devKey] = channelId;
             }
@@ -834,13 +877,57 @@ class FitParser implements ActivityFormatParser {
           }
           break;
         default:
-          // Skip unhandled message types.
+          // Vendor-specific or otherwise undocumented message: no generic
+          // representation exists, so it's skipped, but the global ID is
+          // recorded to distinguish this from "no such data" (see the
+          // fit.message.vendor_skipped summary below).
+          skippedGlobalIds.add(definition.globalId);
           break;
       }
     }
     // Filter points to find the largest temporally contiguous group.
     // This removes corrupted data at the start/end of files with invalid timestamps.
     final filteredPoints = _filterContiguousPoints(points, diagnostics);
+
+    if (inferredLapStarts > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.lap.start_time_inferred',
+          message:
+              '$inferredLapStarts lap(s) had no start_time or '
+              'total_elapsed_time field; start was inferred from the '
+              'previous lap or the activity\'s first point.',
+          node: const ParseNodeReference(path: 'fit.lap'),
+        ),
+      );
+    }
+    if (clampedLapDurations > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.lap.negative_duration_clamped',
+          message:
+              '$clampedLapDurations lap(s) had a start time after their '
+              'end time (corrupted or reordered lap message); clamped to '
+              'a zero-length lap.',
+          node: const ParseNodeReference(path: 'fit.lap'),
+        ),
+      );
+    }
+    if (skippedGlobalIds.isNotEmpty) {
+      final ids = skippedGlobalIds.toList()..sort();
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.message.vendor_skipped',
+          message:
+              'Message global ID(s) $ids have no generic representation '
+              'in this library and were not decoded.',
+          node: const ParseNodeReference(path: 'fit.message'),
+        ),
+      );
+    }
 
     final channels = <Channel, Iterable<Sample>>{};
     if (hrSamples.isNotEmpty) channels[Channel.heartRate] = hrSamples;
@@ -1024,10 +1111,10 @@ bool _resyncToDefinition(
 /// loop; every other numeric native field becomes a `fit_field_<n>` channel.
 const Set<int> _dedicatedRecordFields = {
   253, // timestamp
-  0, 1, 2, // position_lat, position_long, altitude
+  0, 1, 2, 78, // position_lat, position_long, altitude, enhanced_altitude
   3, 4, 5, 6, 7, 13, // heart_rate, cadence, distance, speed, power, temp
   8, // compressed_speed_distance (decoded into speed + distance channels)
-  78, 120, // grade, left_right_balance (named channels)
+  9, 30, 120, // grade, left_right_balance, ebike_assist_level_percent
 };
 
 /// Session (global 18) field numbers mapped to dedicated [ActivitySummary]
@@ -1088,38 +1175,6 @@ Map<int, List<double>> _extraFitArrays(
   return arrays;
 }
 
-/// Global message numbers with dedicated handling in the parse loop.
-///
-/// These must never be rerouted through the fallback record heuristic below:
-/// e.g. a lap (global 19) with event (0), event_type (1), and timestamp (253)
-/// would otherwise be misread as a GPS record and silently dropped.
-const Set<int> _explicitlyHandledGlobalIds = {
-  0,
-  18,
-  19,
-  20,
-  21,
-  23,
-  34,
-  49,
-  101,
-  225,
-};
-
-/// Heuristic for vendor-specific messages that carry GPS record data under a
-/// non-standard global ID: timestamp (253) plus lat (0) and long (1).
-bool _looksLikeRecordDefinition(_FitMessageDefinition definition) {
-  if (_explicitlyHandledGlobalIds.contains(definition.globalId)) {
-    return false;
-  }
-  final fieldNumbers = definition.fields
-      .map((field) => field.fieldNumber)
-      .toSet();
-  return fieldNumbers.contains(253) &&
-      fieldNumbers.contains(0) &&
-      fieldNumbers.contains(1);
-}
-
 Uint8List _decodePayload(String input, List<ParseDiagnostic> diagnostics) {
   try {
     return Uint8List.fromList(base64Decode(input));
@@ -1158,20 +1213,6 @@ const Map<(int, int), String> _knownDeveloperChannels = {
   // Common developer-field convention in running power ecosystems.
   (0, 0): 'running_power',
 };
-
-/// Converts a field_description `field_name` into a safe channel id:
-/// lowercase with non-alphanumeric runs collapsed to `_` (channel ids double
-/// as XML element names in GPX extensions, which forbid spaces and may not
-/// start with a digit). Returns null when nothing usable remains, in which
-/// case the generic `fit_dev_<i>_<n>` name is used instead.
-String? _sanitizeDeveloperFieldName(String name) {
-  var id = name.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-  id = id.replaceAll(RegExp(r'^_+|_+$'), '');
-  if (id.isEmpty || RegExp(r'^[0-9]').hasMatch(id)) {
-    return null;
-  }
-  return id;
-}
 
 String _developerChannelName({
   required int developerIndex,
@@ -1226,7 +1267,7 @@ DateTime? _decodeTimestamp(Object? raw) {
   if (seconds < 1 || seconds > 1924992000) {
     return null;
   }
-  return DateTime.utc(1989, 12, 31).add(Duration(seconds: seconds));
+  return fitEpoch.add(Duration(seconds: seconds));
 }
 
 double? _decodeSemicircles(Object? raw) {
@@ -1258,8 +1299,11 @@ List<GeoPoint> _filterContiguousPoints(
     return points;
   }
 
-  // Sort points by time
-  final sorted = [...points]..sort((a, b) => a.time.compareTo(b.time));
+  // Stable sort: points sharing a timestamp (common when many records
+  // clamp to the same value, e.g. a pre-FIT-epoch source) must keep their
+  // original relative order, not get shuffled by an unstable sort.
+  final sorted = [...points];
+  mergeSort(sorted, compare: (a, b) => a.time.compareTo(b.time));
 
   // Find groups where consecutive points are within a reasonable time window (24 hours)
   final groups = <List<GeoPoint>>[];
@@ -1277,12 +1321,18 @@ List<GeoPoint> _filterContiguousPoints(
   }
   groups.add(currentGroup);
 
-  // Find the largest group
-  if (groups.length == 1) {
-    currentGroup = sorted;
-  } else {
-    currentGroup = groups.reduce((a, b) => a.length > b.length ? a : b);
-  }
+  // Keep every group with more than 10 points (this function's own
+  // threshold, above, for "worth analyzing" at all); only drop small
+  // clusters of stray corrupted records, not a legitimate separate
+  // recording session that ended up in the same file (e.g. several
+  // tracks flattened together for a single-track target format).
+  final keptGroups = groups.length == 1
+      ? groups
+      : groups.where((g) => g.length > 10).toList();
+  final survivors = keptGroups.isEmpty
+      ? [groups.reduce((a, b) => a.length > b.length ? a : b)]
+      : keptGroups;
+  currentGroup = [for (final group in survivors) ...group];
 
   // Additional filtering: remove points with coordinates far from their neighbors
   // This catches corrupted records with plausible timestamps but invalid coordinates
@@ -1336,7 +1386,10 @@ double? _decodeAltitude(Object? raw) {
     return null;
   }
   final value = raw.toInt();
-  if (value == 0xFFFF) {
+  // 0xFFFF is the uint16 sentinel (field 2); 0xFFFFFFFF is the uint32
+  // sentinel (field 78). A uint16 value can never equal the larger one, so
+  // checking both is safe for either field.
+  if (value == 0xFFFF || value == 0xFFFFFFFF) {
     return null;
   }
   return (value / 5.0) - 500.0;

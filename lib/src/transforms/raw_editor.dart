@@ -22,7 +22,7 @@ class RawEditor {
     final alreadySortedPoints = _isSortedByTime(_activity.points);
     final sortedPoints = alreadySortedPoints
         ? _activity.points
-        : ([..._activity.points]..sort((a, b) => a.time.compareTo(b.time)));
+        : _stableSortByTime(_activity.points, (p) => p.time);
     final dedupedPoints = <GeoPoint>[];
     GeoPoint? previous;
     for (final point in sortedPoints) {
@@ -40,7 +40,7 @@ class RawEditor {
     final sortedChannels = _activity.channels.map((channel, samples) {
       final sorted = _isSortedSamples(samples)
           ? samples
-          : ([...samples]..sort((a, b) => a.time.compareTo(b.time)));
+          : _stableSortByTime(samples, (s) => s.time);
       final deduped = <Sample>[];
       Sample? last;
       for (final sample in sorted) {
@@ -56,13 +56,78 @@ class RawEditor {
     });
     final sortedLaps = _isSortedByStart(_activity.laps)
         ? _activity.laps
-        : ([..._activity.laps]
-            ..sort((a, b) => a.startTime.compareTo(b.startTime)));
+        : _stableSortByTime(_activity.laps, (lap) => lap.startTime);
     _activity = _activity.copyWith(
       points: dedupedPoints,
       channels: sortedChannels, // Already a Map, no need to copy again
       laps: sortedLaps,
     );
+    return this;
+  }
+
+  /// Like [sortAndDedup], but nudges duplicate timestamps forward by 1
+  /// microsecond instead of dropping entries. Reports adjustments via
+  /// [repairDiagnostics].
+  RawEditor ensureStrictTimeOrder() {
+    final sortedPoints = _isSortedByTime(_activity.points)
+        ? _activity.points
+        : _stableSortByTime(_activity.points, (p) => p.time);
+    final pointResult = _pushTimestampsForward(
+      sortedPoints,
+      timeOf: (p) => p.time,
+      withTime: (p, t) => p.copyWith(time: t),
+    );
+    var adjustedSamples = 0;
+    final sortedChannels = _activity.channels.map((channel, samples) {
+      final result = _pushTimestampsForward(
+        _isSortedSamples(samples)
+            ? samples
+            : _stableSortByTime(samples, (s) => s.time),
+        timeOf: (s) => s.time,
+        withTime: (s, t) => s.copyWith(time: t),
+      );
+      adjustedSamples += result.adjustedCount;
+      return MapEntry(channel, result.items);
+    });
+    final sortedLaps = _isSortedByStart(_activity.laps)
+        ? _activity.laps
+        : _stableSortByTime(_activity.laps, (lap) => lap.startTime);
+    final lapResult = _pushTimestampsForward(
+      sortedLaps,
+      timeOf: (lap) => lap.startTime,
+      withTime: (lap, t) => lap.copyWith(startTime: t),
+    );
+    // Only rescan points-per-lap when a point actually moved: with nothing
+    // nudged, no point could have crossed a lap's original end boundary.
+    final expandedLaps = pointResult.adjustedCount == 0
+        ? lapResult.items
+        : _expandLapEndsForNudgedPoints(
+            lapResult.items,
+            sortedLaps,
+            sortedPoints,
+            pointResult.items,
+          );
+    _activity = _activity.copyWith(
+      points: pointResult.items,
+      channels: sortedChannels,
+      laps: expandedLaps,
+    );
+    final adjustedTotal =
+        pointResult.adjustedCount + adjustedSamples + lapResult.adjustedCount;
+    if (adjustedTotal > 0) {
+      _repairDiagnostics.add(
+        ValidationDiagnostic(
+          severity: ValidationSeverity.warning,
+          code: '${DiagnosticCategory.repaired}.duplicate_timestamps_adjusted',
+          message:
+              'Adjusted $adjustedTotal timestamp(s) by up to a few '
+              'microseconds so the encoded output has strictly increasing '
+              'times; no points, samples, or laps were dropped.',
+          suggestedFix: 'No action needed; every original entry was kept.',
+          priority: 5,
+        ),
+      );
+    }
     return this;
   }
 
@@ -160,25 +225,28 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-    final trimmedLaps = <Lap>[];
-    if (start != null && end != null) {
+    final List<Lap> trimmedLaps;
+    if (start == null || end == null) {
+      // Preserve sensor-only activities (indoor/trainer sessions) by
+      // keeping laps unchanged, same as the channels branch above.
+      trimmedLaps = List<Lap>.from(_activity.laps);
+    } else {
       final startUtc = start;
       final endUtc = end;
-      trimmedLaps.addAll(
-        _activity.laps
-            .where(
-              (lap) =>
-                  !lap.endTime.isBefore(startUtc) &&
-                  !lap.startTime.isAfter(endUtc),
-            )
-            .map((lap) {
-              final lapStart = lap.startTime.isBefore(startUtc)
-                  ? startUtc
-                  : lap.startTime;
-              final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
-              return lap.copyWith(startTime: lapStart, endTime: lapEnd);
-            }),
-      );
+      trimmedLaps = _activity.laps
+          .where(
+            (lap) =>
+                !lap.endTime.isBefore(startUtc) &&
+                !lap.startTime.isAfter(endUtc),
+          )
+          .map((lap) {
+            final lapStart = lap.startTime.isBefore(startUtc)
+                ? startUtc
+                : lap.startTime;
+            final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
+            return lap.copyWith(startTime: lapStart, endTime: lapEnd);
+          })
+          .toList();
     }
     _activity = _activity.copyWith(
       points: retainedPoints,
@@ -213,23 +281,40 @@ class RawEditor {
           .toList();
       return MapEntry(channel, filtered);
     });
-    final croppedLaps = _activity.laps
-        .where((lap) {
-          return !lap.endTime.isBefore(startUtc) &&
-              !lap.startTime.isAfter(endUtc);
-        })
-        .map((lap) {
-          final lapStart = lap.startTime.isBefore(startUtc)
-              ? startUtc
-              : lap.startTime;
-          final lapEnd = lap.endTime.isAfter(endUtc) ? endUtc : lap.endTime;
-          return lap.copyWith(startTime: lapStart, endTime: lapEnd);
-        })
+    final croppedLaps = _clipRangesForCrop(
+      _activity.laps,
+      startUtc,
+      endUtc,
+      startOf: (lap) => lap.startTime,
+      endOf: (lap) => lap.endTime,
+      rebuild: _rebuildLap,
+    );
+    final croppedSets = _clipRangesForCrop(
+      _activity.sets,
+      startUtc,
+      endUtc,
+      startOf: (s) => s.startTime,
+      endOf: (s) => s.endTime,
+      rebuild: _rebuildSet,
+    );
+    final croppedLengths = _clipRangesForCrop(
+      _activity.lengths,
+      startUtc,
+      endUtc,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final croppedEvents = _activity.events
+        .where((e) => !e.time.isBefore(startUtc) && !e.time.isAfter(endUtc))
         .toList();
     _activity = _activity.copyWith(
       points: croppedPoints,
       channels: croppedChannels,
       laps: croppedLaps,
+      sets: croppedSets,
+      events: croppedEvents,
+      lengths: croppedLengths,
     );
     return this;
   }
@@ -328,7 +413,7 @@ class RawEditor {
       time: time,
     );
     if (time != null) {
-      points.sort((a, b) => a.time.compareTo(b.time));
+      mergeSort(points, compare: (a, b) => a.time.compareTo(b.time));
     }
     _activity = _activity.copyWith(points: points);
     return this;
@@ -355,7 +440,8 @@ class RawEditor {
   );
 
   /// Removes GPS points and channel samples where [from] <= t <= [to]
-  /// (inclusive) and adjusts lap and set boundaries accordingly.
+  /// (inclusive), adjusts lap/set/length boundaries accordingly, and drops
+  /// any event falling in that window.
   ///
   /// Throws [ArgumentError] if [to] is before [from].
   RawEditor deleteRange(DateTime from, DateTime to) {
@@ -388,12 +474,28 @@ class RawEditor {
       endOf: (s) => s.endTime,
       rebuild: _rebuildSet,
     );
+    final adjustedLengths = _clipRangesForDelete(
+      _activity.lengths,
+      fromUtc,
+      toUtc,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    // Events are instants, not ranges, so unlike laps/sets/lengths there's
+    // nothing to clip: one inside the deleted window is simply dropped.
+    final adjustedEvents = [
+      for (final e in _activity.events)
+        if (e.time.isBefore(fromUtc) || e.time.isAfter(toUtc)) e,
+    ];
 
     _activity = _activity.copyWith(
       points: filteredPoints,
       channels: filteredChannels,
       laps: adjustedLaps,
       sets: adjustedSets,
+      events: adjustedEvents,
+      lengths: adjustedLengths,
     );
     return this;
   }
@@ -432,12 +534,26 @@ class RawEditor {
       endOf: (s) => s.endTime,
       rebuild: _rebuildSet,
     );
+    final adjustedLengths = _shiftRangesAfter(
+      _activity.lengths,
+      atUtc,
+      duration,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final adjustedEvents = [
+      for (final e in _activity.events)
+        e.time.isAfter(atUtc) ? e.copyWith(time: e.time.add(duration)) : e,
+    ];
 
     _activity = _activity.copyWith(
       points: shiftedPoints,
       channels: shiftedChannels,
       laps: adjustedLaps,
       sets: adjustedSets,
+      events: adjustedEvents,
+      lengths: adjustedLengths,
     );
     return this;
   }
@@ -486,12 +602,28 @@ class RawEditor {
       endOf: (s) => s.endTime,
       rebuild: _rebuildSet,
     );
+    final adjustedLengths = _closeGapInRanges(
+      _activity.lengths,
+      fromUtc,
+      toUtc,
+      gap,
+      startOf: (l) => l.startTime,
+      endOf: (l) => l.endTime,
+      rebuild: _rebuildLength,
+    );
+    final adjustedEvents = [
+      for (final e in _activity.events)
+        if (!(e.time.isAfter(fromUtc) && e.time.isBefore(toUtc)))
+          e.time.isBefore(toUtc) ? e : e.copyWith(time: e.time.subtract(gap)),
+    ];
 
     _activity = _activity.copyWith(
       points: adjustedPoints,
       channels: adjustedChannels,
       laps: adjustedLaps,
       sets: adjustedSets,
+      events: adjustedEvents,
+      lengths: adjustedLengths,
     );
     return this;
   }
@@ -787,6 +919,81 @@ bool _isSortedSamples(List<Sample> samples) =>
 bool _isSortedByStart(List<Lap> laps) =>
     _isSortedBy(laps, (lap) => lap.startTime);
 
+/// Sorts a copy of [items] by [timeOf] with a stable sort, so equal
+/// timestamps keep their original relative order instead of `List.sort`'s
+/// unspecified (and in practice non-stable, above ~32 elements) tie-break.
+List<T> _stableSortByTime<T>(List<T> items, DateTime Function(T item) timeOf) {
+  final sorted = List<T>.of(items);
+  mergeSort(sorted, compare: (a, b) => timeOf(a).compareTo(timeOf(b)));
+  return sorted;
+}
+
+class _PushForwardResult<T> {
+  const _PushForwardResult(this.items, this.adjustedCount);
+  final List<T> items;
+  final int adjustedCount;
+}
+
+/// Extends each lap's endTime to cover any point that fell inside its
+/// original `[startTime, endTime]` window but was nudged past it, so
+/// consumers that select points by lap time range (e.g. the TCX encoder)
+/// don't lose points that only ever moved because of the nudge.
+List<Lap> _expandLapEndsForNudgedPoints(
+  List<Lap> laps,
+  List<Lap> originalLaps,
+  List<GeoPoint> originalPoints,
+  List<GeoPoint> nudgedPoints,
+) => [
+  for (var i = 0; i < laps.length; i++)
+    _expandLapEnd(laps[i], originalLaps[i], originalPoints, nudgedPoints),
+];
+
+Lap _expandLapEnd(
+  Lap lap,
+  Lap originalLap,
+  List<GeoPoint> originalPoints,
+  List<GeoPoint> nudgedPoints,
+) {
+  DateTime? maxNudgedTime;
+  for (var j = 0; j < originalPoints.length; j++) {
+    final originalTime = originalPoints[j].time;
+    if (!originalTime.isBefore(originalLap.startTime) &&
+        !originalTime.isAfter(originalLap.endTime)) {
+      final nudgedTime = nudgedPoints[j].time;
+      if (maxNudgedTime == null || nudgedTime.isAfter(maxNudgedTime)) {
+        maxNudgedTime = nudgedTime;
+      }
+    }
+  }
+  return maxNudgedTime != null && maxNudgedTime.isAfter(lap.endTime)
+      ? lap.copyWith(endTime: maxNudgedTime)
+      : lap;
+}
+
+/// Nudges timestamps in pre-sorted [items] so each is strictly after the
+/// previous one, cascading through any run of equal timestamps.
+_PushForwardResult<T> _pushTimestampsForward<T>(
+  List<T> items, {
+  required DateTime Function(T item) timeOf,
+  required T Function(T item, DateTime time) withTime,
+}) {
+  final result = <T>[];
+  DateTime? previous;
+  var adjustedCount = 0;
+  for (final item in items) {
+    var time = timeOf(item).toUtc();
+    if (previous != null && !time.isAfter(previous)) {
+      time = previous.add(const Duration(microseconds: 1));
+      adjustedCount++;
+      result.add(withTime(item, time));
+    } else {
+      result.add(item);
+    }
+    previous = time;
+  }
+  return _PushForwardResult(result, adjustedCount);
+}
+
 bool _isStrictlyIncreasing<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {
     final previous = timeOf(items[i - 1]).toUtc();
@@ -806,6 +1013,30 @@ Lap _rebuildLap(Lap lap, {DateTime? start, DateTime? end}) =>
 
 WorkoutSet _rebuildSet(WorkoutSet s, {DateTime? start, DateTime? end}) =>
     s.copyWith(startTime: start, endTime: end);
+
+SwimLength _rebuildLength(SwimLength l, {DateTime? start, DateTime? end}) =>
+    l.copyWith(startTime: start, endTime: end);
+
+/// Applies the [RawEditor.crop] clipping rules to laps, sets, or lengths:
+/// ranges entirely outside `[startUtc, endUtc]` are dropped, ranges
+/// straddling a boundary are clipped to it, matching the point/channel
+/// filter in the same method.
+List<T> _clipRangesForCrop<T>(
+  List<T> items,
+  DateTime startUtc,
+  DateTime endUtc, {
+  required DateTime Function(T) startOf,
+  required DateTime Function(T) endOf,
+  required _RangeRebuild<T> rebuild,
+}) => [
+  for (final item in items)
+    if (!endOf(item).isBefore(startUtc) && !startOf(item).isAfter(endUtc))
+      rebuild(
+        item,
+        start: startOf(item).isBefore(startUtc) ? startUtc : startOf(item),
+        end: endOf(item).isAfter(endUtc) ? endUtc : endOf(item),
+      ),
+];
 
 /// Applies the [RawEditor.deleteRange] clipping rules to laps or sets:
 /// ranges fully inside `[fromUtc, toUtc]` are dropped, ranges straddling one

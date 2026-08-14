@@ -564,6 +564,72 @@ void main() {
     });
   });
 
+  group('RawActivity.flattened()', () {
+    test('backfills each sub-track lap with that track\'s own sport', () {
+      final now = DateTime.utc(2024, 1, 1, 10);
+      final later = now.add(const Duration(minutes: 20));
+      final primary = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: now)],
+        laps: [Lap(startTime: now, endTime: later)],
+        sport: Sport.running,
+        additionalTracks: [
+          RawActivity(
+            points: [GeoPoint(latitude: 41.0, longitude: -106.0, time: later)],
+            laps: [
+              Lap(
+                startTime: later,
+                endTime: later.add(const Duration(minutes: 20)),
+              ),
+            ],
+            sport: Sport.cycling,
+          ),
+        ],
+      );
+
+      final flat = primary.flattened();
+
+      expect(flat.laps, hasLength(2));
+      expect(flat.laps[0].sport, isNull); // primary track: unchanged
+      expect(flat.laps[1].sport, Sport.cycling); // backfilled, not running
+    });
+
+    test('does not override a lap that already has an explicit sport', () {
+      final now = DateTime.utc(2024, 1, 1, 10);
+      final later = now.add(const Duration(minutes: 20));
+      final primary = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: now)],
+        sport: Sport.running,
+        additionalTracks: [
+          RawActivity(
+            points: [GeoPoint(latitude: 41.0, longitude: -106.0, time: later)],
+            laps: [
+              Lap(startTime: later, endTime: later, sport: Sport.swimming),
+            ],
+            sport: Sport.cycling,
+          ),
+        ],
+      );
+
+      final flat = primary.flattened();
+
+      expect(flat.laps.single.sport, Sport.swimming);
+    });
+
+    test('returns this unchanged when there are no additional tracks', () {
+      final activity = RawActivity(
+        points: [
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: DateTime.utc(2024, 1, 1),
+          ),
+        ],
+      );
+
+      expect(activity.flattened(), same(activity));
+    });
+  });
+
   group('Sport enum', () {
     test('sport enum has 7 values', () {
       expect(Sport.values.length, 7);

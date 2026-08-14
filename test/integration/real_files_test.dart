@@ -134,7 +134,7 @@ void main() {
       }
     });
 
-    test('sundaygreenloop FIT supports best-effort extraction', () async {
+    test('sundaygreenloop FIT extracts a full, clean point set', () async {
       // Optional local fixture (see README "Call for real-world files");
       // keep CI green when private data is absent.
       final file = File('dev/fixtures/user_data/sundaygreenloop.fit');
@@ -152,12 +152,6 @@ void main() {
       expect(
         result.diagnostics.where((d) => d.severity == ParseSeverity.error),
         isEmpty,
-      );
-      expect(
-        result.diagnostics.any(
-          (d) => d.code == 'fit.record.recovered_timestamp',
-        ),
-        isTrue,
       );
     });
   });

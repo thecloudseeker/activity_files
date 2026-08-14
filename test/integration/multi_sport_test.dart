@@ -588,6 +588,75 @@ void main() {
         expect(swim.points.any((p) => p.time == boundary), isFalse);
       });
 
+      test('splitBySport does not bleed a bracketed sport\'s points into the '
+          'sport whose laps surround it (brick workout: run/bike/run)', () {
+        final base = DateTime.utc(2024, 7, 21, 6, 0);
+        DateTime at(int minutes) => base.add(Duration(minutes: minutes));
+
+        final points = [
+          for (var m = 0; m <= 30; m++)
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(m)),
+        ];
+        final brick = RawActivity(
+          points: points,
+          laps: [
+            Lap(startTime: at(0), endTime: at(10), sport: Sport.running),
+            Lap(startTime: at(10), endTime: at(20), sport: Sport.cycling),
+            Lap(startTime: at(20), endTime: at(30), sport: Sport.running),
+          ],
+          sport: Sport.running,
+        );
+
+        final splits = ActivityFiles.splitBySport(brick, normalize: false);
+
+        final running = splits[Sport.running]!;
+        final cycling = splits[Sport.cycling]!;
+
+        // 0..10 exclusive-end (11 points minus the shared boundary at 10) +
+        // 20..30 inclusive (11 points) = 21; bike gets the remaining 10.
+        expect(running.points.length, 21);
+        expect(cycling.points.length, 10);
+        expect(
+          running.points.any(
+            (p) => p.time.isAfter(at(10)) && p.time.isBefore(at(20)),
+          ),
+          isFalse,
+          reason: 'no point from the bike window should appear in running',
+        );
+      });
+
+      test('splitBySport excludes a point in the gap between two of the same '
+          "sport's own laps", () {
+        final base = DateTime.utc(2024, 7, 21, 6, 0);
+        DateTime at(int minutes) => base.add(Duration(minutes: minutes));
+
+        // Two running laps with a real gap (e.g. an undeclared pause)
+        // between them, plus a second sport so the split path is taken.
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(5)),
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(15)),
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(45)),
+          ],
+          laps: [
+            Lap(startTime: at(0), endTime: at(10), sport: Sport.running),
+            Lap(startTime: at(20), endTime: at(30), sport: Sport.running),
+            Lap(startTime: at(40), endTime: at(50), sport: Sport.cycling),
+          ],
+          sport: Sport.running,
+        );
+
+        final splits = ActivityFiles.splitBySport(activity, normalize: false);
+
+        expect(
+          splits[Sport.running]!.points.map((p) => p.time),
+          [at(5)],
+          reason:
+              'at(15) sits in the gap between the two running laps and '
+              'belongs to neither; at(5) is inside the first lap',
+        );
+      });
+
       test('splitBySport returns single activity unchanged', () {
         final activity = RawActivity(
           points: [

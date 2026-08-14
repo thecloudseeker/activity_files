@@ -208,6 +208,44 @@ void main() {
         expect(gpxString, contains('gpxtpx'));
         expect(gpxString, contains('<gpxtpx:cad>'));
       });
+
+      test('writes a channel outside the fixed whitelist as an extra tag', () {
+        final time = DateTime.utc(2024, 1, 1, 10, 0, 0);
+        final activity = RawActivity(
+          points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: time)],
+          channels: {
+            Channel.custom('grade'): [Sample(time: time, value: 3.2)],
+            Channel.distance: [Sample(time: time, value: 100.0)],
+          },
+        );
+
+        final gpxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.gpx,
+        );
+
+        expect(gpxString, contains('<gpxtpx:grade>3.2</gpxtpx:grade>'));
+        expect(gpxString, contains('<gpxtpx:distance>100.0</gpxtpx:distance>'));
+      });
+
+      test('sanitizes a channel id that is not a valid XML element name', () {
+        final time = DateTime.utc(2024, 1, 1, 10, 0, 0);
+        final activity = RawActivity(
+          points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: time)],
+          channels: {
+            Channel.custom('left leg power'): [Sample(time: time, value: 210)],
+          },
+        );
+
+        final gpxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.gpx,
+        );
+
+        expect(gpxString, contains('<gpxtpx:left_leg_power>210.0'));
+        // Must still be well-formed XML.
+        expect(() => XmlDocument.parse(gpxString), returnsNormally);
+      });
     });
 
     group('Metadata', () {

@@ -87,10 +87,105 @@ void main() {
       expect(codes, isNot(contains('lossy.laps_dropped')));
     });
 
+    test('TCX reports and names channels outside its five handled ones', () {
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 3; i++)
+            GeoPoint(
+              latitude: 47.0 + i * 0.001,
+              longitude: 11.0,
+              time: t0.add(Duration(seconds: i * 5)),
+            ),
+        ],
+        channels: {
+          Channel.temperature: [Sample(time: t0, value: 18.5)],
+          Channel.custom('grade'): [Sample(time: t0, value: 3.2)],
+          Channel.heartRate: [Sample(time: t0, value: 140)],
+        },
+        sport: Sport.running,
+      );
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.tcx,
+        normalize: false,
+        runValidation: false,
+      );
+
+      final dropped = result.diagnostics.where(
+        (d) => d.code == 'lossy.channels_dropped',
+      );
+      expect(dropped, hasLength(1));
+      expect(dropped.single.message, contains('grade'));
+      expect(dropped.single.message, contains('temperature'));
+      // heart_rate is one of TCX's five handled channels, not dropped.
+      expect(dropped.single.message, isNot(contains('heart_rate')));
+    });
+
+    test('TCX reports no channel diagnostic when only its five handled '
+        'channels are present', () {
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 3; i++)
+            GeoPoint(
+              latitude: 47.0 + i * 0.001,
+              longitude: 11.0,
+              time: t0.add(Duration(seconds: i * 5)),
+            ),
+        ],
+        channels: {
+          Channel.heartRate: [Sample(time: t0, value: 140)],
+          Channel.cadence: [Sample(time: t0, value: 80)],
+        },
+        sport: Sport.running,
+      );
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.tcx,
+        normalize: false,
+        runValidation: false,
+      );
+
+      expect(
+        result.diagnostics.where((d) => d.code == 'lossy.channels_dropped'),
+        isEmpty,
+      );
+    });
+
     test('GeoJSON keeps lap aggregates but drops the FIT-only features', () {
       final codes = lossyCodes(exportTo(ActivityFileFormat.geojson));
       expect(codes, contains('lossy.events_dropped'));
       expect(codes, isNot(contains('lossy.laps_dropped')));
+    });
+
+    test('GeoJSON reports no diagnostic for channel data (holds it all)', () {
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 3; i++)
+            GeoPoint(
+              latitude: 47.0 + i * 0.001,
+              longitude: 11.0,
+              time: t0.add(Duration(seconds: i * 5)),
+            ),
+        ],
+        channels: {
+          Channel.heartRate: [
+            for (var i = 0; i < 3; i++)
+              Sample(time: t0.add(Duration(seconds: i * 5)), value: 140.0),
+          ],
+          Channel.custom('running_smoothness'): [Sample(time: t0, value: 5.2)],
+        },
+        sport: Sport.running,
+      );
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+        normalize: false,
+        runValidation: false,
+      );
+      expect(
+        result.diagnostics.where((d) => d.code.contains('channel')),
+        isEmpty,
+      );
     });
 
     test('an activity with no extra features yields no lossy diagnostics', () {

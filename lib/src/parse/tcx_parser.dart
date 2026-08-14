@@ -176,8 +176,10 @@ class TcxParser implements ActivityFormatParser {
             );
           }
         }
-        final track = _childElements(lapElement, 'Track').firstOrNull;
-        if (track == null) {
+        // TCX allows multiple Track elements per Lap (auto-pause/resume mid
+        // lap), so every Track must be walked, not just the first.
+        final tracks = _childElements(lapElement, 'Track').toList();
+        if (tracks.isEmpty) {
           diagnostics.add(
             ParseDiagnostic(
               severity: ParseSeverity.warning,
@@ -190,181 +192,184 @@ class TcxParser implements ActivityFormatParser {
         }
         DateTime? firstTime;
         DateTime? lastTime;
-        for (final child in track.childElements) {
-          if (child.name.local == 'Extensions') {
-            trackExtensions.addAll(_parseExtensionChildren(child));
+        for (final track in tracks) {
+          for (final child in track.childElements) {
+            if (child.name.local == 'Extensions') {
+              trackExtensions.addAll(_parseExtensionChildren(child));
+            }
           }
-        }
-        for (final trackpoint in _childElements(track, 'Trackpoint')) {
-          final timeText = _firstText(trackpoint, 'Time');
-          if (timeText == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.missing_time',
-                message: 'Trackpoint without Time skipped.',
-                node: ParseNodeReference(
-                  path: 'tcx.activities.activity.lap.track.trackpoint',
+          for (final trackpoint in _childElements(track, 'Trackpoint')) {
+            final timeText = _firstText(trackpoint, 'Time');
+            if (timeText == null) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.missing_time',
+                  message: 'Trackpoint without Time skipped.',
+                  node: ParseNodeReference(
+                    path: 'tcx.activities.activity.lap.track.trackpoint',
+                  ),
                 ),
-              ),
-            );
-            continue;
-          }
-          DateTime time;
-          try {
-            time = parseTimestampAssumeUtc(timeText);
-          } catch (_) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.invalid_time',
-                message: 'Invalid Time "$timeText"; trackpoint skipped.',
-                node: ParseNodeReference(
-                  path: 'tcx.activities.activity.lap.track.trackpoint',
-                  description: timeText,
+              );
+              continue;
+            }
+            DateTime time;
+            try {
+              time = parseTimestampAssumeUtc(timeText);
+            } catch (_) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.invalid_time',
+                  message: 'Invalid Time "$timeText"; trackpoint skipped.',
+                  node: ParseNodeReference(
+                    path: 'tcx.activities.activity.lap.track.trackpoint',
+                    description: timeText,
+                  ),
                 ),
-              ),
-            );
-            continue;
-          }
-          final position = _firstChild(trackpoint, 'Position');
-          final latText = position != null
-              ? _firstText(position, 'LatitudeDegrees')
-              : null;
-          final lonText = position != null
-              ? _firstText(position, 'LongitudeDegrees')
-              : null;
-          final lat = latText != null ? double.tryParse(latText) : null;
-          final lon = lonText != null ? double.tryParse(lonText) : null;
-          if (lat == null || lon == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.missing_coordinates',
-                message:
-                    'Trackpoint at $time missing coordinates; GPS point skipped.',
-                node: ParseNodeReference(
-                  path: 'tcx.activities.activity.lap.track.trackpoint',
-                  description: time.toIso8601String(),
+              );
+              continue;
+            }
+            final position = _firstChild(trackpoint, 'Position');
+            final latText = position != null
+                ? _firstText(position, 'LatitudeDegrees')
+                : null;
+            final lonText = position != null
+                ? _firstText(position, 'LongitudeDegrees')
+                : null;
+            final lat = latText != null ? double.tryParse(latText) : null;
+            final lon = lonText != null ? double.tryParse(lonText) : null;
+            if (lat == null || lon == null) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.missing_coordinates',
+                  message:
+                      'Trackpoint at $time missing coordinates; GPS point skipped.',
+                  node: ParseNodeReference(
+                    path: 'tcx.activities.activity.lap.track.trackpoint',
+                    description: time.toIso8601String(),
+                  ),
                 ),
-              ),
-            );
-          }
-          final altText = _firstText(trackpoint, 'AltitudeMeters');
-          final altitude = altText != null ? double.tryParse(altText) : null;
-          if (altText != null && altitude == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.invalid_altitude',
-                message:
-                    'Invalid AltitudeMeters "$altText" at $time; using null.',
-                node: ParseNodeReference(
-                  path: 'tcx.activities.activity.lap.track.trackpoint',
-                  description: time.toIso8601String(),
+              );
+            }
+            final altText = _firstText(trackpoint, 'AltitudeMeters');
+            final altitude = altText != null ? double.tryParse(altText) : null;
+            if (altText != null && altitude == null) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.invalid_altitude',
+                  message:
+                      'Invalid AltitudeMeters "$altText" at $time; using null.',
+                  node: ParseNodeReference(
+                    path: 'tcx.activities.activity.lap.track.trackpoint',
+                    description: time.toIso8601String(),
+                  ),
                 ),
-              ),
-            );
-          }
-          if (lat != null && lon != null) {
-            allPoints.add(
-              GeoPoint(
-                latitude: lat,
-                longitude: lon,
-                elevation: altitude,
-                time: time,
-              ),
-            );
-          }
-          final hrNode = _firstChild(trackpoint, 'HeartRateBpm');
-          final hrValueText = hrNode != null
-              ? _firstText(hrNode, 'Value')
-              : null;
-          final hrValue = hrValueText != null
-              ? double.tryParse(hrValueText)
-              : null;
-          if (hrValueText != null && hrValue == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.invalid_heartrate',
-                message: 'Invalid HeartRate "$hrValueText" at $time.',
-                node: ParseNodeReference(
-                  path:
-                      'tcx.activities.activity.lap.track.trackpoint.HeartRateBpm',
-                  description: time.toIso8601String(),
+              );
+            }
+            if (lat != null && lon != null) {
+              allPoints.add(
+                GeoPoint(
+                  latitude: lat,
+                  longitude: lon,
+                  elevation: altitude,
+                  time: time,
                 ),
-              ),
-            );
-          } else if (hrValue != null) {
-            allHrSamples.add(Sample(time: time, value: hrValue));
-          }
-          final cadenceText = _firstText(trackpoint, 'Cadence');
-          final cadenceValue = cadenceText != null
-              ? double.tryParse(cadenceText)
-              : null;
-          if (cadenceText != null && cadenceValue == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.invalid_cadence',
-                message: 'Invalid Cadence "$cadenceText" at $time.',
-                node: ParseNodeReference(
-                  path: 'tcx.activities.activity.lap.track.trackpoint.Cadence',
-                  description: time.toIso8601String(),
+              );
+            }
+            final hrNode = _firstChild(trackpoint, 'HeartRateBpm');
+            final hrValueText = hrNode != null
+                ? _firstText(hrNode, 'Value')
+                : null;
+            final hrValue = hrValueText != null
+                ? double.tryParse(hrValueText)
+                : null;
+            if (hrValueText != null && hrValue == null) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.invalid_heartrate',
+                  message: 'Invalid HeartRate "$hrValueText" at $time.',
+                  node: ParseNodeReference(
+                    path:
+                        'tcx.activities.activity.lap.track.trackpoint.HeartRateBpm',
+                    description: time.toIso8601String(),
+                  ),
                 ),
-              ),
-            );
-          } else if (cadenceValue != null) {
-            allCadenceSamples.add(Sample(time: time, value: cadenceValue));
-          }
-          final distanceText = _firstText(trackpoint, 'DistanceMeters');
-          final distanceValue = distanceText != null
-              ? double.tryParse(distanceText)
-              : null;
-          if (distanceText != null && distanceValue == null) {
-            diagnostics.add(
-              ParseDiagnostic(
-                severity: ParseSeverity.warning,
-                code: 'tcx.trackpoint.invalid_distance',
-                message: 'Invalid DistanceMeters "$distanceText" at $time.',
-                node: ParseNodeReference(
-                  path:
-                      'tcx.activities.activity.lap.track.trackpoint.DistanceMeters',
-                  description: time.toIso8601String(),
+              );
+            } else if (hrValue != null) {
+              allHrSamples.add(Sample(time: time, value: hrValue));
+            }
+            final cadenceText = _firstText(trackpoint, 'Cadence');
+            final cadenceValue = cadenceText != null
+                ? double.tryParse(cadenceText)
+                : null;
+            if (cadenceText != null && cadenceValue == null) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.invalid_cadence',
+                  message: 'Invalid Cadence "$cadenceText" at $time.',
+                  node: ParseNodeReference(
+                    path:
+                        'tcx.activities.activity.lap.track.trackpoint.Cadence',
+                    description: time.toIso8601String(),
+                  ),
                 ),
-              ),
-            );
-          } else if (distanceValue != null) {
-            allDistanceSamples.add(Sample(time: time, value: distanceValue));
-          }
-          // TPX trackpoint extensions (ActivityExtension/v2): the standard
-          // way Garmin TCX carries speed, power, and run cadence.
-          for (final extensions in _childElements(trackpoint, 'Extensions')) {
-            for (final tpx in extensions.childElements) {
-              if (tpx.name.local != 'TPX') continue;
-              for (final child in tpx.childElements) {
-                final value = double.tryParse(child.innerText.trim());
-                if (value == null) continue;
-                switch (child.name.local) {
-                  case 'Speed':
-                    allSpeedSamples.add(Sample(time: time, value: value));
-                    break;
-                  case 'Watts':
-                    allPowerSamples.add(Sample(time: time, value: value));
-                    break;
-                  case 'RunCadence':
-                    // Plain <Cadence> wins when both are present.
-                    if (cadenceValue == null) {
-                      allCadenceSamples.add(Sample(time: time, value: value));
-                    }
-                    break;
+              );
+            } else if (cadenceValue != null) {
+              allCadenceSamples.add(Sample(time: time, value: cadenceValue));
+            }
+            final distanceText = _firstText(trackpoint, 'DistanceMeters');
+            final distanceValue = distanceText != null
+                ? double.tryParse(distanceText)
+                : null;
+            if (distanceText != null && distanceValue == null) {
+              diagnostics.add(
+                ParseDiagnostic(
+                  severity: ParseSeverity.warning,
+                  code: 'tcx.trackpoint.invalid_distance',
+                  message: 'Invalid DistanceMeters "$distanceText" at $time.',
+                  node: ParseNodeReference(
+                    path:
+                        'tcx.activities.activity.lap.track.trackpoint.DistanceMeters',
+                    description: time.toIso8601String(),
+                  ),
+                ),
+              );
+            } else if (distanceValue != null) {
+              allDistanceSamples.add(Sample(time: time, value: distanceValue));
+            }
+            // TPX trackpoint extensions (ActivityExtension/v2): the standard
+            // way Garmin TCX carries speed, power, and run cadence.
+            for (final extensions in _childElements(trackpoint, 'Extensions')) {
+              for (final tpx in extensions.childElements) {
+                if (tpx.name.local != 'TPX') continue;
+                for (final child in tpx.childElements) {
+                  final value = double.tryParse(child.innerText.trim());
+                  if (value == null) continue;
+                  switch (child.name.local) {
+                    case 'Speed':
+                      allSpeedSamples.add(Sample(time: time, value: value));
+                      break;
+                    case 'Watts':
+                      allPowerSamples.add(Sample(time: time, value: value));
+                      break;
+                    case 'RunCadence':
+                      // Plain <Cadence> wins when both are present.
+                      if (cadenceValue == null) {
+                        allCadenceSamples.add(Sample(time: time, value: value));
+                      }
+                      break;
+                  }
                 }
               }
             }
+            firstTime ??= time;
+            lastTime = time;
           }
-          firstTime ??= time;
-          lastTime = time;
         }
         final first = firstTime;
         final last = lastTime;

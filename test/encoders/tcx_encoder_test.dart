@@ -450,6 +450,57 @@ void main() {
       });
     });
 
+    group('Multi-sport Activity splitting', () {
+      test('a point sitting exactly on a sport-to-sport boundary is written '
+          'to both <Activity> Tracks, not dropped from the second', () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final points = [
+          for (var i = 0; i <= 4; i++)
+            GeoPoint(
+              latitude: 40.0 + i * 0.001,
+              longitude: -105.0,
+              time: base.add(Duration(seconds: i)),
+            ),
+        ];
+        final laps = [
+          Lap(
+            startTime: base,
+            endTime: base.add(const Duration(seconds: 2)),
+            sport: Sport.swimming,
+            name: 'Lap 1',
+          ),
+          Lap(
+            startTime: base.add(const Duration(seconds: 2)),
+            endTime: base.add(const Duration(seconds: 4)),
+            sport: Sport.cycling,
+            name: 'Lap 2',
+          ),
+        ];
+        final activity = RawActivity(
+          points: points,
+          laps: laps,
+          sport: Sport.swimming,
+        );
+
+        final tcxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+        final activityElements = doc.findAllElements('Activity').toList();
+
+        expect(activityElements, hasLength(2));
+        final cyclingTrackpoints = activityElements
+            .firstWhere((e) => e.getAttribute('Sport') == 'Biking')
+            .findAllElements('Trackpoint');
+        expect(
+          cyclingTrackpoints.first.findElements('Time').first.innerText,
+          equals(base.add(const Duration(seconds: 2)).toIso8601String()),
+        );
+        expect(cyclingTrackpoints, hasLength(3));
+      });
+    });
+
     group('Empty activities', () {
       test('encodes empty activity as valid TCX', () {
         final activity = RawActivity();

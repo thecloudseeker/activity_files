@@ -9,6 +9,7 @@ import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';
 import '../encode/csv_encoder.dart';
 import '../encode/geojson_encoder.dart';
+import '../fit/fit_epoch.dart';
 import '../platform/file_system.dart' as file_system;
 import '../platform/isolate_runner.dart' as isolate_runner;
 import '../models.dart';
@@ -172,7 +173,9 @@ class ActivityFiles {
   /// The returned [ActivityConversionResult] exposes the normalized activity,
   /// encoder output, and parser diagnostics gathered while loading the source.
   /// When [normalize] is `true` (default) the converter applies
-  /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to encoding.
+  /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to
+  /// encoding. When `false`, timestamps are still nudged into strict order
+  /// if needed (nothing is dropped); see `repaired.duplicate_timestamps_adjusted`.
   /// Set [exportInIsolate] to `true` to offload encoding onto a background
   /// isolate while keeping parsing control via [useIsolate]. Enable
   /// [runValidation] to append structural validation diagnostics/results;
@@ -208,6 +211,17 @@ class ActivityFiles {
       maxPayloadBytes: maxPayloadBytes,
     );
     var activity = loadResult.activity;
+    // Flatten before normalizing/ordering, not just before encoding: both of
+    // those steps (and the lossy-diagnostics checks below) otherwise only
+    // ever see the primary track, silently leaving additionalTracks' points,
+    // laps, sets, etc. unprocessed until the encoder's own internal flatten
+    // call right before writing bytes, by which point it's too late to fix
+    // them up. RawActivity.flattened() is a no-op when there's nothing to
+    // flatten, so this is free for single-track sources.
+    final additionalTrackCount = activity.additionalTracks.length;
+    if (to != ActivityFileFormat.gpx) {
+      activity = activity.flattened();
+    }
     NormalizationStats? normalizationStats;
     var repairDiagnostics = const <ValidationDiagnostic>[];
     if (normalize) {
@@ -223,9 +237,22 @@ class ActivityFiles {
     }
     var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
     diagnostics.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
-    var exportActivity = normalize
-        ? activity
-        : _ensureOrderedForExport(activity);
+    var exportActivity = activity;
+    if (!normalize) {
+      final ordered = _ensureOrderedForExport(activity);
+      exportActivity = ordered.activity;
+      diagnostics.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
+    }
+    if (to == ActivityFileFormat.gpx) {
+      final trackResult = _normalizeAdditionalTracksForExport(
+        exportActivity,
+        normalize: normalize,
+      );
+      exportActivity = trackResult.activity;
+      diagnostics.addAll(
+        trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
+      );
+    }
     if (autoFix.isEnabled) {
       final fixed = _autoFixCommonIssues(exportActivity, autoFix);
       diagnostics = [
@@ -235,7 +262,14 @@ class ActivityFiles {
       exportActivity = fixed;
     }
     if (!exportInIsolate) {
-      diagnostics = [...diagnostics, ..._lossyDiagnostics(exportActivity, to)];
+      diagnostics = [
+        ...diagnostics,
+        ..._lossyDiagnostics(
+          exportActivity,
+          to,
+          additionalTrackCount: additionalTrackCount,
+        ),
+      ];
       final encoded = ActivityEncoder.encode(
         exportActivity,
         to,
@@ -266,6 +300,25 @@ class ActivityFiles {
           validationDuration: validationDuration,
         ),
       );
+    }
+    // exportAsync's isolate path re-derives the rest of _lossyDiagnostics
+    // from exportActivity itself once it lands in _exportFromActivity, but
+    // exportActivity is already flattened by this point, so additionalTracks
+    // reads 0 there; only this one check needs the count captured above.
+    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
+      diagnostics = [
+        ...diagnostics,
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: '${DiagnosticCategory.lossy}.multi_track_flattened',
+          message:
+              'Source contains $additionalTrackCount additional track(s); '
+              'the ${to.name} format cannot represent multiple tracks, so '
+              'all tracks are merged into one during encoding.',
+          suggestedFix: 'Export to GPX to preserve the multi-track structure.',
+          priority: 4,
+        ),
+      ];
     }
     final exportResult = await exportAsync(
       activity: exportActivity,
@@ -298,8 +351,9 @@ class ActivityFiles {
   /// form (e.g. GPX channel extensions, GeoJSON lap aggregates) are not flagged.
   static List<ParseDiagnostic> _lossyDiagnostics(
     RawActivity activity,
-    ActivityFileFormat to,
-  ) {
+    ActivityFileFormat to, {
+    required int additionalTrackCount,
+  }) {
     final diagnostics = <ParseDiagnostic>[];
     final format = to.name;
     void add(String code, String message, {String? fix}) {
@@ -315,10 +369,10 @@ class ActivityFiles {
     }
 
     const toFit = 'Export to FIT to preserve it.';
-    if (to != ActivityFileFormat.gpx && activity.additionalTracks.isNotEmpty) {
+    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
       add(
         'multi_track_flattened',
-        'Source contains ${activity.additionalTracks.length} additional '
+        'Source contains $additionalTrackCount additional '
             'track(s); the $format format cannot represent multiple tracks, so '
             'all tracks are merged into one during encoding.',
         fix: 'Export to GPX to preserve the multi-track structure.',
@@ -378,8 +432,61 @@ class ActivityFiles {
         fix: 'Export to TCX or FIT to preserve laps.',
       );
     }
+    // TCX's TPX extension only carries these five channels; there's no
+    // fallback slot for arbitrary custom channels (unlike GPX's
+    // TrackPointExtension, which round-trips unknown tags), so anything
+    // else is dropped rather than invented as a non-standard tag.
+    if (to == ActivityFileFormat.tcx) {
+      final tcxChannels = {
+        Channel.heartRate,
+        Channel.cadence,
+        Channel.speed,
+        Channel.power,
+        Channel.distance,
+      };
+      final droppedChannels =
+          activity.channels.keys
+              .where((channel) => !tcxChannels.contains(channel))
+              .map((channel) => channel.id)
+              .toList()
+            ..sort();
+      if (droppedChannels.isNotEmpty) {
+        add(
+          'channels_dropped',
+          'Channel(s) ${droppedChannels.join(', ')} cannot be represented '
+              'in TCX and are dropped.',
+          fix: 'Export to FIT, GPX, GeoJSON, or CSV to preserve them.',
+        );
+      }
+    }
+    // FIT timestamps are seconds (unsigned) since the FIT epoch
+    // (1989-12-31); anything earlier has no valid representation and is
+    // clamped to the epoch by the encoder.
+    if (to == ActivityFileFormat.fit && _hasPreFitEpochTimestamp(activity)) {
+      add(
+        'pre_fit_epoch_timestamps_clamped',
+        'Some timestamp(s) predate the FIT epoch (1989-12-31) and were '
+            'clamped to it; FIT cannot represent earlier dates.',
+      );
+    }
     return diagnostics;
   }
+
+  static bool _hasPreFitEpochTimestamp(RawActivity activity) =>
+      activity.points.any((p) => p.time.isBefore(fitEpoch)) ||
+      activity.channels.values.any(
+        (samples) => samples.any((s) => s.time.isBefore(fitEpoch)),
+      ) ||
+      activity.laps.any(
+        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
+      ) ||
+      activity.events.any((e) => e.time.isBefore(fitEpoch)) ||
+      activity.lengths.any(
+        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
+      ) ||
+      activity.sets.any(
+        (s) => s.startTime.isBefore(fitEpoch) || s.endTime.isBefore(fitEpoch),
+      );
 
   /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
   /// last-in-first-out so callers can override earlier defaults.
@@ -692,10 +799,53 @@ class ActivityFiles {
       ) &&
       _isStrictlyOrdered(activity.laps, (l) => l.startTime);
 
-  static RawActivity _ensureOrderedForExport(RawActivity activity) =>
-      _isStrictlyOrderedActivity(activity)
-      ? activity
-      : RawEditor(activity).sortAndDedup().activity;
+  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
+  _ensureOrderedForExport(RawActivity activity) {
+    if (_isStrictlyOrderedActivity(activity)) {
+      return (activity: activity, diagnostics: const []);
+    }
+    final editor = RawEditor(activity).ensureStrictTimeOrder();
+    return (activity: editor.activity, diagnostics: editor.repairDiagnostics);
+  }
+
+  /// Runs the same normalize-or-order-for-export step applied to the
+  /// primary track on each of [activity]'s `additionalTracks`.
+  ///
+  /// GPX is the only target that keeps `additionalTracks` instead of
+  /// flattening them into the primary track before export (see convert()'s
+  /// flatten comment), so it's the only path where secondary tracks would
+  /// otherwise skip sortAndDedup/trimInvalid/time-ordering entirely.
+  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
+  _normalizeAdditionalTracksForExport(
+    RawActivity activity, {
+    required bool normalize,
+  }) {
+    if (activity.additionalTracks.isEmpty) {
+      return (activity: activity, diagnostics: const []);
+    }
+    final diagnostics = <ValidationDiagnostic>[];
+    final tracks = <RawActivity>[];
+    for (final track in activity.additionalTracks) {
+      if (normalize) {
+        final result = _normalize(
+          track,
+          sortAndDedup: true,
+          trimInvalid: true,
+          captureStats: false,
+        );
+        tracks.add(result.activity);
+        diagnostics.addAll(result.repairDiagnostics);
+      } else {
+        final result = _ensureOrderedForExport(track);
+        tracks.add(result.activity);
+        diagnostics.addAll(result.diagnostics);
+      }
+    }
+    return (
+      activity: activity.copyWith(additionalTracks: tracks),
+      diagnostics: diagnostics,
+    );
+  }
 
   /// Checks if a list is sorted by time with no duplicate timestamps
   /// (each entry strictly after its predecessor).
@@ -859,42 +1009,38 @@ class ActivityFiles {
     // Create separate activities for each sport
     final result = <Sport, RawActivity>{};
 
-    final rangesBySport = <Sport, ({DateTime start, DateTime end})>{
-      for (final entry in lapsBySport.entries)
-        entry.key: (
-          start: entry.value
-              .map((lap) => lap.startTime)
-              .reduce((a, b) => a.isBefore(b) ? a : b),
-          end: entry.value
-              .map((lap) => lap.endTime)
-              .reduce((a, b) => a.isAfter(b) ? a : b),
-        ),
-    };
+    // A lap's end boundary is exclusive only when another lap (any sport)
+    // starts exactly there, so a point sitting on that instant is claimed by
+    // exactly one lap. Membership is checked per lap (union of that sport's
+    // own lap windows) rather than one aggregate min..max range per sport,
+    // so a sport whose laps bracket another sport's laps (a brick workout:
+    // run/bike/run) doesn't swallow the bracketed sport's window.
+    final lapStartTimes = activity.laps.map((lap) => lap.startTime).toSet();
+    bool withinLap(DateTime time, Lap lap) {
+      final endExclusive = lapStartTimes.contains(lap.endTime);
+      return !time.isBefore(lap.startTime) &&
+          (endExclusive
+              ? time.isBefore(lap.endTime)
+              : !time.isAfter(lap.endTime));
+    }
+
+    bool withinAnyLap(DateTime time, List<Lap> laps) =>
+        laps.any((lap) => withinLap(time, lap));
 
     for (final entry in lapsBySport.entries) {
       final sport = entry.key;
       final laps = entry.value;
 
-      final range = rangesBySport[sport]!;
-      final startTime = range.start;
-      final endTime = range.end;
-      final sharesEndBoundary = rangesBySport.entries.any(
-        (other) => other.key != sport && other.value.start == endTime,
-      );
-      bool withinRange(DateTime time) =>
-          !time.isBefore(startTime) &&
-          (sharesEndBoundary ? time.isBefore(endTime) : !time.isAfter(endTime));
-
-      // Filter points to this time range
+      // Filter points to this sport's lap windows
       final sportPoints = activity.points
-          .where((p) => withinRange(p.time))
+          .where((p) => withinAnyLap(p.time, laps))
           .toList();
 
-      // Filter channels to this time range
+      // Filter channels to this sport's lap windows
       final sportChannels = <Channel, List<Sample>>{};
       for (final channelEntry in activity.channels.entries) {
         final samples = channelEntry.value
-            .where((s) => withinRange(s.time))
+            .where((s) => withinAnyLap(s.time, laps))
             .toList();
         if (samples.isNotEmpty) {
           sportChannels[channelEntry.key] = samples;
@@ -1140,10 +1286,19 @@ class ActivityFiles {
     ValidationResult? validation,
   }) {
     var working = activity;
+    // See convert()'s matching comment: flatten before normalizing/ordering
+    // so additionalTracks' points/laps/sets go through the same repairs as
+    // the primary track, not just the encoder's own last-minute flatten.
+    final additionalTrackCount = working.additionalTracks.length;
+    if (to != ActivityFileFormat.gpx) {
+      working = working.flattened();
+    }
     NormalizationStats? normalizationStats;
     var repairDiagnostics = const <ValidationDiagnostic>[];
     if (!normalize) {
-      working = _ensureOrderedForExport(working);
+      final ordered = _ensureOrderedForExport(working);
+      working = ordered.activity;
+      repairDiagnostics = ordered.diagnostics;
     }
     if (normalize) {
       final normalized = _normalize(
@@ -1155,6 +1310,14 @@ class ActivityFiles {
       working = normalized.activity;
       normalizationStats = normalized.stats;
       repairDiagnostics = normalized.repairDiagnostics;
+    }
+    if (to == ActivityFileFormat.gpx) {
+      final trackResult = _normalizeAdditionalTracksForExport(
+        working,
+        normalize: normalize,
+      );
+      working = trackResult.activity;
+      repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
     }
     final encoded = ActivityEncoder.encode(working, to, options: options);
     final binary = to == ActivityFileFormat.fit
@@ -1178,7 +1341,11 @@ class ActivityFiles {
     final mergedDiagnostics = <ParseDiagnostic>[
       ...diagnostics,
       ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
-      ..._lossyDiagnostics(working, to),
+      ..._lossyDiagnostics(
+        working,
+        to,
+        additionalTrackCount: additionalTrackCount,
+      ),
       if (validationResult != null)
         ..._diagnosticsFromValidation(validationResult),
     ];
@@ -1781,10 +1948,7 @@ class ActivityFiles {
   }) async {
     if (payload is _ReplayableStreamPayload) {
       final bytes = await payload.materialize(maxBytes: maxPayloadBytes);
-      return isolate_runner.runWithIsolation(
-        () => _parseBytesWithBom(bytes, format, encoding),
-        useIsolate: useIsolate,
-      );
+      return _parseBytesIsolated(bytes, format, encoding, useIsolate);
     }
     if (payload is Stream<List<int>>) {
       return ActivityParser.parseStream(
@@ -1800,6 +1964,25 @@ class ActivityFiles {
     }
     return isolate_runner.runWithIsolation(
       () => _parseSync(payload, format, encoding),
+      useIsolate: useIsolate,
+    );
+  }
+
+  /// Runs [_parseBytesWithBom] with optional isolate offloading.
+  ///
+  /// Kept as a standalone function, not inlined at the call site:
+  /// `Isolate.run` rejects a closure whose enclosing scope holds any
+  /// non-sendable value, even one the closure body never references, so
+  /// inlining this would put the non-sendable `_ReplayableStreamPayload`
+  /// local in scope and crash.
+  static Future<ActivityParseResult> _parseBytesIsolated(
+    Uint8List bytes,
+    ActivityFileFormat format,
+    Encoding encoding,
+    bool useIsolate,
+  ) {
+    return isolate_runner.runWithIsolation(
+      () => _parseBytesWithBom(bytes, format, encoding),
       useIsolate: useIsolate,
     );
   }

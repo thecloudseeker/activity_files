@@ -91,5 +91,181 @@ void main() {
       expect(hasCrcError, isTrue);
       expect(result.activity.points, isNotEmpty);
     });
+
+    test('clamps pre-FIT-epoch timestamps instead of wrapping around', () {
+      final start = DateTime.utc(1901, 12, 13);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: start),
+          GeoPoint(
+            latitude: 40.0005,
+            longitude: -105.0005,
+            time: start.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      expect(parsed.activity.points, hasLength(2));
+      for (final point in parsed.activity.points) {
+        expect(point.time, equals(DateTime.utc(1989, 12, 31)));
+      }
+    });
+
+    test('keeps record order when many points share one timestamp', () {
+      final time = DateTime.utc(2024, 1, 1, 6);
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 20; i++)
+            GeoPoint(
+              latitude: 40.0 + i * 0.0001,
+              longitude: -105.0,
+              time: time,
+            ),
+        ],
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      expect(parsed.activity.points, hasLength(activity.points.length));
+      for (var i = 0; i < activity.points.length; i++) {
+        expect(
+          parsed.activity.points[i].latitude,
+          closeTo(activity.points[i].latitude, 1e-5),
+        );
+      }
+    });
+
+    test('keeps every point from multiple recording sessions flattened into '
+        'one file, days apart', () {
+      DateTime dayStart(int day) => DateTime.utc(2024, 1, day, 8);
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 20; i++)
+            GeoPoint(
+              latitude: 40.0 + i * 0.0001,
+              longitude: -105.0,
+              time: dayStart(1).add(Duration(seconds: i)),
+            ),
+          for (var i = 0; i < 20; i++)
+            GeoPoint(
+              latitude: 41.0 + i * 0.0001,
+              longitude: -106.0,
+              time: dayStart(5).add(Duration(seconds: i)),
+            ),
+        ],
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      expect(parsed.activity.points, hasLength(40));
+    });
+
+    test('still filters a lone stray point with a wildly wrong timestamp', () {
+      final start = DateTime.utc(2024, 1, 1, 8);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 10.0, longitude: 10.0, time: DateTime.utc(1995)),
+          for (var i = 0; i < 20; i++)
+            GeoPoint(
+              latitude: 40.0 + i * 0.0001,
+              longitude: -105.0,
+              time: start.add(Duration(seconds: i)),
+            ),
+        ],
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      expect(parsed.activity.points, hasLength(20));
+      expect(
+        parsed.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.points.filtered_outliers',
+          ),
+        ),
+      );
+    });
+
+    test('keeps a lap whose message omits start_time/total_elapsed_time, '
+        'inferring start from the first point', () {
+      final bytes = buildFitFileWithLapMissingStartTime(
+        recordTimestamp: 1000,
+        lapTimestamp: 1010,
+      );
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      final fitEpoch = DateTime.utc(1989, 12, 31);
+      expect(result.activity.laps, hasLength(1));
+      final lap = result.activity.laps.single;
+      expect(
+        lap.startTime,
+        equals(fitEpoch.add(const Duration(seconds: 1000))),
+      );
+      expect(lap.endTime, equals(fitEpoch.add(const Duration(seconds: 1010))));
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.lap.start_time_inferred',
+          ),
+        ),
+      );
+    });
+
+    test('clamps a lap whose inferred start lands after its own end '
+        'instead of writing a negative duration', () {
+      final bytes = buildFitFileWithOutOfOrderLapTimestamps(
+        recordTimestamp: 1000,
+        firstLapTimestamp: 1010,
+        secondLapTimestamp: 1005,
+      );
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      final fitEpoch = DateTime.utc(1989, 12, 31);
+      expect(result.activity.laps, hasLength(2));
+      final secondLap = result.activity.laps[1];
+      expect(secondLap.startTime, equals(secondLap.endTime));
+      expect(
+        secondLap.endTime,
+        equals(fitEpoch.add(const Duration(seconds: 1005))),
+      );
+      expect(
+        result.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.lap.negative_duration_clamped',
+          ),
+        ),
+      );
+    });
   });
 }

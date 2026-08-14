@@ -3,6 +3,7 @@ import 'package:csv/csv.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';
+import 'timestamp_utils.dart';
 
 /// Parser for CSV format activity files
 /// Supports CSV exports from various tracking platforms
@@ -252,7 +253,7 @@ class CsvParser implements ActivityFormatParser {
     final value = _getString(row, headerMap, headerName);
     if (value != null) {
       try {
-        return DateTime.parse(value);
+        return parseTimestampAssumeUtc(value);
       } catch (_) {}
     }
     return null;
