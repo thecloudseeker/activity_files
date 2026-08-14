@@ -440,7 +440,8 @@ class RawEditor {
   );
 
   /// Removes GPS points and channel samples where [from] <= t <= [to]
-  /// (inclusive) and adjusts lap and set boundaries accordingly.
+  /// (inclusive), adjusts lap/set/length boundaries accordingly, and drops
+  /// any event falling in that window.
   ///
   /// Throws [ArgumentError] if [to] is before [from].
   RawEditor deleteRange(DateTime from, DateTime to) {
@@ -481,6 +482,8 @@ class RawEditor {
       endOf: (l) => l.endTime,
       rebuild: _rebuildLength,
     );
+    // Events are instants, not ranges, so unlike laps/sets/lengths there's
+    // nothing to clip: one inside the deleted window is simply dropped.
     final adjustedEvents = [
       for (final e in _activity.events)
         if (e.time.isBefore(fromUtc) || e.time.isAfter(toUtc)) e,
