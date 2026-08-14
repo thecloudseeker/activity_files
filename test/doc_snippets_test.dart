@@ -106,69 +106,65 @@ List<_Snippet> _extract(String path) {
 }
 
 void main() {
-  test(
-    'all dart snippets in user-facing docs pass analysis',
-    () async {
-      final dir = Directory(_generatedDir);
-      if (dir.existsSync()) dir.deleteSync(recursive: true);
-      dir.createSync(recursive: true);
+  test('all dart snippets in user-facing docs pass analysis', () async {
+    final dir = Directory(_generatedDir);
+    if (dir.existsSync()) dir.deleteSync(recursive: true);
+    dir.createSync(recursive: true);
 
-      final origins = <String, String>{};
-      var fileIndex = 0;
-      for (final doc in _docFiles) {
-        for (final snippet in _extract(doc)) {
-          if (_flutterMarkers.any(snippet.code.contains)) continue;
+    final origins = <String, String>{};
+    var fileIndex = 0;
+    for (final doc in _docFiles) {
+      for (final snippet in _extract(doc)) {
+        if (_flutterMarkers.any(snippet.code.contains)) continue;
 
-          final imports = <String>[];
-          final body = <String>[];
-          for (final line in snippet.code.split('\n')) {
-            (line.startsWith('import ') ? imports : body).add(line);
-          }
-          final extraImports = imports
-              .where((i) => !i.contains('package:activity_files'))
-              .join('\n');
-          final code = body.join('\n');
-          final wrapped = body.any(_topLevelDecl.hasMatch)
-              ? code
-              : 'Future<void> docSnippetBody() async {\n$code\n}\n';
-
-          final name = 'snippet_${'$fileIndex'.padLeft(2, '0')}.dart';
-          origins[name] = '${snippet.sourceFile}:${snippet.startLine}';
-          File('${dir.path}/$name').writeAsStringSync(
-            '$_header$extraImports\n'
-            '// Source: ${origins[name]}\n\n'
-            '$_preamble\n'
-            '$wrapped',
-          );
-          fileIndex++;
+        final imports = <String>[];
+        final body = <String>[];
+        for (final line in snippet.code.split('\n')) {
+          (line.startsWith('import ') ? imports : body).add(line);
         }
+        final extraImports = imports
+            .where((i) => !i.contains('package:activity_files'))
+            .join('\n');
+        final code = body.join('\n');
+        final wrapped = body.any(_topLevelDecl.hasMatch)
+            ? code
+            : 'Future<void> docSnippetBody() async {\n$code\n}\n';
+
+        final name = 'snippet_${'$fileIndex'.padLeft(2, '0')}.dart';
+        origins[name] = '${snippet.sourceFile}:${snippet.startLine}';
+        File('${dir.path}/$name').writeAsStringSync(
+          '$_header$extraImports\n'
+          '// Source: ${origins[name]}\n\n'
+          '$_preamble\n'
+          '$wrapped',
+        );
+        fileIndex++;
       }
+    }
 
-      expect(
-        fileIndex,
-        greaterThan(10),
-        reason:
-            'Snippet extraction found suspiciously few ```dart blocks — '
-            'the extraction logic may be broken.',
-      );
+    expect(
+      fileIndex,
+      greaterThan(10),
+      reason:
+          'Snippet extraction found suspiciously few ```dart blocks — '
+          'the extraction logic may be broken.',
+    );
 
-      final result = await Process.run('dart', ['analyze', dir.path]);
-      final output = '${result.stdout}\n${result.stderr}';
-      final failingOrigins = origins.entries
-          .where((e) => output.contains(e.key))
-          .map((e) => '  ${e.key} <- ${e.value}')
-          .join('\n');
-      expect(
-        result.exitCode,
-        0,
-        reason:
-            'Doc snippets failed analysis (generated files kept in '
-            '$_generatedDir for inspection):\n$output\n'
-            'Failing snippet origins:\n$failingOrigins',
-      );
+    final result = await Process.run('dart', ['analyze', dir.path]);
+    final output = '${result.stdout}\n${result.stderr}';
+    final failingOrigins = origins.entries
+        .where((e) => output.contains(e.key))
+        .map((e) => '  ${e.key} <- ${e.value}')
+        .join('\n');
+    expect(
+      result.exitCode,
+      0,
+      reason:
+          'Doc snippets failed analysis (generated files kept in '
+          '$_generatedDir for inspection):\n$output\n'
+          'Failing snippet origins:\n$failingOrigins',
+    );
 
-      dir.deleteSync(recursive: true);
-    },
-    timeout: const Timeout(Duration(minutes: 3)),
-  );
+    dir.deleteSync(recursive: true);
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }

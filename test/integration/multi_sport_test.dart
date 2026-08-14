@@ -625,40 +625,37 @@ void main() {
         );
       });
 
-      test(
-        'splitBySport excludes a point in the gap between two of the same '
-        "sport's own laps (no longer covered by an aggregate min..max range)",
-        () {
-          final base = DateTime.utc(2024, 7, 21, 6, 0);
-          DateTime at(int minutes) => base.add(Duration(minutes: minutes));
+      test('splitBySport excludes a point in the gap between two of the same '
+          "sport's own laps", () {
+        final base = DateTime.utc(2024, 7, 21, 6, 0);
+        DateTime at(int minutes) => base.add(Duration(minutes: minutes));
 
-          // Two running laps with a real gap (e.g. an undeclared pause)
-          // between them, plus a second sport so the split path is taken.
-          final activity = RawActivity(
-            points: [
-              GeoPoint(latitude: 47.0, longitude: -122.0, time: at(5)),
-              GeoPoint(latitude: 47.0, longitude: -122.0, time: at(15)),
-              GeoPoint(latitude: 47.0, longitude: -122.0, time: at(45)),
-            ],
-            laps: [
-              Lap(startTime: at(0), endTime: at(10), sport: Sport.running),
-              Lap(startTime: at(20), endTime: at(30), sport: Sport.running),
-              Lap(startTime: at(40), endTime: at(50), sport: Sport.cycling),
-            ],
-            sport: Sport.running,
-          );
+        // Two running laps with a real gap (e.g. an undeclared pause)
+        // between them, plus a second sport so the split path is taken.
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(5)),
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(15)),
+            GeoPoint(latitude: 47.0, longitude: -122.0, time: at(45)),
+          ],
+          laps: [
+            Lap(startTime: at(0), endTime: at(10), sport: Sport.running),
+            Lap(startTime: at(20), endTime: at(30), sport: Sport.running),
+            Lap(startTime: at(40), endTime: at(50), sport: Sport.cycling),
+          ],
+          sport: Sport.running,
+        );
 
-          final splits = ActivityFiles.splitBySport(activity, normalize: false);
+        final splits = ActivityFiles.splitBySport(activity, normalize: false);
 
-          expect(
-            splits[Sport.running]!.points.map((p) => p.time),
-            [at(5)],
-            reason:
-                'at(15) sits in the gap between the two running laps and '
-                'belongs to neither; at(5) is inside the first lap',
-          );
-        },
-      );
+        expect(
+          splits[Sport.running]!.points.map((p) => p.time),
+          [at(5)],
+          reason:
+              'at(15) sits in the gap between the two running laps and '
+              'belongs to neither; at(5) is inside the first lap',
+        );
+      });
 
       test('splitBySport returns single activity unchanged', () {
         final activity = RawActivity(

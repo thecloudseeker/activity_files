@@ -118,8 +118,7 @@ void main() {
       }
     });
 
-    test('keeps record order when many points share one timestamp '
-        '(regression: unstable sort in outlier filtering)', () {
+    test('keeps record order when many points share one timestamp', () {
       final time = DateTime.utc(2024, 1, 1, 6);
       final activity = RawActivity(
         points: [

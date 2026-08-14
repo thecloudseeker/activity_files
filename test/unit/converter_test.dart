@@ -546,9 +546,7 @@ void main() {
         expect(
           diagnostics.any((d) => d.code == 'repaired.sentinel_coords_removed'),
           isTrue,
-          reason:
-              'the point was silently repaired, so the diagnostics sink '
-              'must say so',
+          reason: 'a repaired sentinel point must be reported as a diagnostic',
         );
       });
 
