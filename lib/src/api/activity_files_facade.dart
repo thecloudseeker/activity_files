@@ -130,13 +130,30 @@ class ActivityFiles {
     )) {
       throw _fitIntegrityFailure(parseResult.diagnostics);
     }
-    final payloadForResult = await _materializePayload(resolved.payload);
+    final materialized = await _materializePayload(
+      resolved.payload,
+      maxBytes: maxPayloadBytes,
+    );
+    var diagnostics = parseResult.diagnostics;
+    if (materialized.unavailable) {
+      diagnostics = [
+        ...diagnostics,
+        const ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'activity.payload.unavailable',
+          message:
+              'The raw payload could not be re-materialized after parsing '
+              '(exceeded maxPayloadBytes); payload/bytesPayload/'
+              'stringPayload are empty. The parsed activity is unaffected.',
+        ),
+      ];
+    }
     return ActivityLoadResult._(
       activity: parseResult.activity,
-      diagnostics: parseResult.diagnostics,
+      diagnostics: diagnostics,
       format: detected,
       sourceDescription: resolved.description,
-      payload: payloadForResult,
+      payload: materialized.payload,
     );
   }
 
@@ -922,7 +939,7 @@ class ActivityFiles {
       );
     }
     if (activities.length == 1) {
-      return activities.first;
+      return normalize ? normalizeActivity(activities.first) : activities.first;
     }
 
     // Flatten multi-track sources so additional-track data is not dropped.
@@ -1030,17 +1047,40 @@ class ActivityFiles {
     for (final entry in lapsBySport.entries) {
       final sport = entry.key;
       final laps = entry.value;
+      final otherLaps = [
+        for (final other in lapsBySport.entries)
+          if (other.key != sport) ...other.value,
+      ];
+      final sortedLaps = [...laps]
+        ..sort((a, b) => a.startTime.compareTo(b.startTime));
+
+      // A gap between two of this sport's own laps (e.g. an undeclared
+      // auto-pause between consecutive laps) belongs to this sport too,
+      // unless another sport's lap actually claims that time range (the
+      // bracketing case #33's per-lap membership above already handles).
+      bool withinOwnGap(DateTime time) {
+        for (var i = 0; i < sortedLaps.length - 1; i++) {
+          if (time.isAfter(sortedLaps[i].endTime) &&
+              time.isBefore(sortedLaps[i + 1].startTime)) {
+            return !withinAnyLap(time, otherLaps);
+          }
+        }
+        return false;
+      }
+
+      bool belongsToSport(DateTime time) =>
+          withinAnyLap(time, laps) || withinOwnGap(time);
 
       // Filter points to this sport's lap windows
       final sportPoints = activity.points
-          .where((p) => withinAnyLap(p.time, laps))
+          .where((p) => belongsToSport(p.time))
           .toList();
 
       // Filter channels to this sport's lap windows
       final sportChannels = <Channel, List<Sample>>{};
       for (final channelEntry in activity.channels.entries) {
         final samples = channelEntry.value
-            .where((s) => withinAnyLap(s.time, laps))
+            .where((s) => belongsToSport(s.time))
             .toList();
         if (samples.isNotEmpty) {
           sportChannels[channelEntry.key] = samples;
@@ -2008,17 +2048,21 @@ class ActivityFiles {
     );
   }
 
-  static Future<Object> _materializePayload(Object payload) async {
+  static Future<({Object payload, bool unavailable})> _materializePayload(
+    Object payload, {
+    int? maxBytes,
+  }) async {
     if (payload is _ReplayableStreamPayload) {
       try {
-        return await payload.materialize(
-          maxBytes: _defaultStreamBufferLimitBytes,
+        return (
+          payload: await payload.materialize(maxBytes: maxBytes),
+          unavailable: false,
         );
       } catch (_) {
-        return Uint8List(0);
+        return (payload: Uint8List(0), unavailable: true);
       }
     }
-    return payload;
+    return (payload: payload, unavailable: false);
   }
 
   static ActivityFileFormat? _detectFormatSync(

@@ -561,6 +561,46 @@ void main() {
 
         expect(result.activity.laps[0].distanceMeters, equals(1000));
       });
+
+      test('clamps startTime to the first trackpoint when the declared '
+          'StartTime postdates it, so the point survives re-encoding', () {
+        const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:05Z">
+        <TotalTimeSeconds>20</TotalTimeSeconds>
+        <DistanceMeters>100</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position>
+              <LatitudeDegrees>40.0</LatitudeDegrees>
+              <LongitudeDegrees>-105.0</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:20Z</Time>
+            <Position>
+              <LatitudeDegrees>40.001</LatitudeDegrees>
+              <LongitudeDegrees>-105.001</LongitudeDegrees>
+            </Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.points, hasLength(2));
+        expect(
+          result.activity.laps[0].startTime,
+          equals(DateTime.utc(2024, 1, 1, 10, 0, 0)),
+        );
+      });
     });
   });
 }

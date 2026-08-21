@@ -124,6 +124,40 @@ void main() {
         // This test verifies robustness
         expect(result.activity.points.length, greaterThanOrEqualTo(0));
       });
+
+      test('recognizes lat/lng/ele/hr as header synonyms instead of failing '
+          'to parse entirely', () {
+        const csv = '''timestamp,lat,lng,ele,hr
+2024-01-01T10:00:00Z,40.0,-105.0,1600,140''';
+
+        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+        expect(result.activity.points, hasLength(1));
+        expect(result.activity.points.first.latitude, equals(40.0));
+        expect(result.activity.points.first.longitude, equals(-105.0));
+        expect(result.activity.points.first.elevation, equals(1600.0));
+        expect(result.activity.channel(Channel.heartRate), hasLength(1));
+      });
+
+      test('reports a duplicate header instead of silently letting the '
+          'rightmost column corrupt the real field', () {
+        const csv = '''timestamp,latitude,longitude,latitude
+2024-01-01T10:00:00Z,40.0,-105.0,41.0''';
+
+        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+        expect(result.activity.points.first.latitude, equals(41.0));
+        expect(
+          result.diagnostics,
+          contains(
+            isA<ParseDiagnostic>().having(
+              (d) => d.code,
+              'code',
+              'csv.header.duplicate',
+            ),
+          ),
+        );
+      });
     });
 
     group('Edge cases', () {

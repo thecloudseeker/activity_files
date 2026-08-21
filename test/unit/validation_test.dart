@@ -260,6 +260,24 @@ void main() {
       ]);
       expect(clean.hasIssues, isFalse);
     });
+
+    test('still catches inverted/overlapping laps when there are no points '
+        '(indoor/trainer activity)', () {
+      final t0 = DateTime.utc(2024, 1, 1, 12);
+      final t1 = t0.add(const Duration(minutes: 10));
+      final t2 = t0.add(const Duration(minutes: 5));
+      final t3 = t0.add(const Duration(minutes: 15));
+      final result = validateLapBoundariesList([
+        Lap(startTime: t0, endTime: t1),
+        Lap(startTime: t2, endTime: t3),
+      ], warnWhenNoPoints: true);
+
+      expect(
+        result.diagnostics.map((d) => d.code),
+        containsAll(['validation.laps.no_points', 'validation.laps.overlap']),
+      );
+      expect(result.isValid, isFalse);
+    });
   });
 
   group('validateDeviceMetadata', () {

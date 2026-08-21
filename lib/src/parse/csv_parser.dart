@@ -36,7 +36,7 @@ class CsvParser implements ActivityFormatParser {
       }
 
       final headers = csvData.first.map((value) => value.toString()).toList();
-      final headerMap = _createHeaderMap(headers);
+      final headerMap = _createHeaderMap(headers, diagnostics);
 
       final points = <GeoPoint>[];
       final channelMap = <Channel, List<Sample>>{};
@@ -205,11 +205,46 @@ class CsvParser implements ActivityFormatParser {
     'sport',
   };
 
-  /// Create mapping of header names to column indices
-  static Map<String, int> _createHeaderMap(List<String> headers) {
+  /// Recognized abbreviations/variants for a handful of the known columns,
+  /// mapped to their canonical name. Case-insensitive, matched the same way
+  /// the canonical names already are.
+  static const Map<String, String> _headerSynonyms = {
+    'lat': 'latitude',
+    'lng': 'longitude',
+    'lon': 'longitude',
+    'long': 'longitude',
+    'ele': 'elevation',
+    'alt': 'elevation',
+    'altitude': 'elevation',
+    'hr': 'heart_rate',
+    'heartrate': 'heart_rate',
+  };
+
+  /// Create mapping of header names to column indices. A repeated header
+  /// name (including a synonym resolving to an already-seen canonical name)
+  /// is reported: the last occurrence wins (matching a spreadsheet's own
+  /// left-to-right column precedence), silently shadowing every earlier
+  /// column of the same name otherwise.
+  static Map<String, int> _createHeaderMap(
+    List<String> headers,
+    List<ParseDiagnostic> diagnostics,
+  ) {
     final map = <String, int>{};
     for (int i = 0; i < headers.length; i++) {
-      final normalized = headers[i].toLowerCase().trim();
+      final raw = headers[i].toLowerCase().trim();
+      final normalized = _headerSynonyms[raw] ?? raw;
+      if (map.containsKey(normalized)) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'csv.header.duplicate',
+            message:
+                'Duplicate CSV header "$raw" at column ${i + 1} (resolves '
+                'to "$normalized"); the rightmost column wins, earlier '
+                'one(s) are ignored.',
+          ),
+        );
+      }
       map[normalized] = i;
     }
     return map;

@@ -3057,6 +3057,43 @@ void main() {
       );
     });
 
+    test('raising maxPayloadBytes above the 64MB default actually raises '
+        'the limit for the returned payload too, not just parsing', () async {
+      const gpx =
+          '<?xml version="1.0"?>'
+          '<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">'
+          '<trk><trkseg>'
+          '<trkpt lat="40.0" lon="-105.0"><time>2024-01-01T10:00:00Z</time></trkpt>'
+          '</trkseg></trk></gpx>';
+      // Padded past the 64MB default so the bug (second materialize() call
+      // hardcoded to the default instead of the caller's larger limit)
+      // would throw and silently empty .payload despite a successful parse.
+      final padded = utf8.encode(
+        gpx.replaceFirst('</gpx>', '<!--${'x' * (65 * 1024 * 1024)}--></gpx>'),
+      );
+      Stream<List<int>> chunks() async* {
+        const chunkSize = 1024 * 1024;
+        for (var i = 0; i < padded.length; i += chunkSize) {
+          yield padded.sublist(i, (i + chunkSize).clamp(0, padded.length));
+        }
+      }
+
+      final result = await ActivityFiles.load(
+        chunks(),
+        format: ActivityFileFormat.gpx,
+        useIsolate: false,
+        maxPayloadBytes: 70 * 1024 * 1024,
+      );
+
+      expect(result.activity.points, hasLength(1));
+      expect(result.bytesPayload, isNotNull);
+      expect(result.bytesPayload!.length, equals(padded.length));
+      expect(
+        result.diagnostics.any((d) => d.code == 'activity.payload.unavailable'),
+        isFalse,
+      );
+    });
+
     test('diagnostic summary includes node reference info when requested', () {
       const problematicGpx = '''
 <?xml version="1.0" encoding="UTF-8"?>

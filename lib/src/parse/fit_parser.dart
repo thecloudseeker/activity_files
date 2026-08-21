@@ -1049,9 +1049,20 @@ class FitParser implements ActivityFormatParser {
           );
         }
       case IntegrityMode.silent:
+        // Only suppress integrity-related diagnostics, not everything: an
+        // unrelated info diagnostic (multi-session detection, outlier
+        // filtering, etc.) about data that parsed fine shouldn't disappear
+        // just because the caller opted out of caring about a corrupt
+        // header/trailer.
         return ActivityParseResult(
           activity: result.activity,
-          diagnostics: const [],
+          diagnostics: result.diagnostics
+              .where(
+                (d) =>
+                    !d.code.startsWith('fit.header') &&
+                    !d.code.startsWith('fit.trailer'),
+              )
+              .toList(),
           integrityStats: stats,
           integrityMode: integrityConfig.mode,
         );

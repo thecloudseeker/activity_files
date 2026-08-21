@@ -34,9 +34,12 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
 - Encoder options for GPX 1.0/1.1 and TCX v1/v2 output, channel tolerances,
   and coordinate precision.
 
-## Call for real-world files
-As I only have one fitness tracking device, real-world GPX, TCX, FIT, GeoJSON, and CSV files are highly appreciated. Contributed files are used for local testing only; they are never published or committed to the repository.
-Please send them to: `packages@eikedreier.xyz`
+## Found a bug, or have real-world files to share?
+
+[Open an issue](https://github.com/thecloudseeker/activity_files/issues/new/choose) with a sample file and what you expected vs. got. 
+
+Real-world GPX, TCX, FIT, GeoJSON, and CSV files are also highly appreciated. (I only have one device to test against). Used for local testing only, never published or committed.
+Send to: `packages@eikedreier.xyz`
 
 ## Quick links
 
@@ -52,7 +55,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.7.5
+  activity_files: ^0.7.6
 ```
 
 Then install dependencies:

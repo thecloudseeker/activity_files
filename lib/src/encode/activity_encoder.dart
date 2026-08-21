@@ -26,8 +26,11 @@ class ActivityEncoder {
       ActivityFileFormat.gpx => const GpxEncoder().encode(activity, options),
       ActivityFileFormat.tcx => const TcxEncoder().encode(activity, options),
       ActivityFileFormat.fit => const FitEncoder().encode(activity, options),
-      ActivityFileFormat.csv => CsvEncoder.encode(activity),
-      ActivityFileFormat.geojson => GeojsonEncoder.encode(activity),
+      ActivityFileFormat.csv => CsvEncoder.encode(activity, options: options),
+      ActivityFileFormat.geojson => GeojsonEncoder.encode(
+        activity,
+        options: options,
+      ),
     };
   }
 }
