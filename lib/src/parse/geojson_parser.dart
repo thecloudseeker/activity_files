@@ -141,7 +141,13 @@ class GeojsonParser implements ActivityFormatParser {
         }
         points.add(point);
         _collectChannelSamples(point.time, properties, channelMap);
-        sport ??= _parseSport(properties['activity_type']?.toString());
+        // _parseSport never returns null (Sport.unknown is its own
+        // fallback), so `sport ??= ...` would only ever evaluate the first
+        // feature; re-check for Sport.unknown instead, matching
+        // csv_parser.dart's equivalent loop.
+        if (sport == null || sport == Sport.unknown) {
+          sport = _parseSport(properties['activity_type']?.toString());
+        }
       }
 
       if (points.isEmpty) {
@@ -223,14 +229,25 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
-    final primaryResult = _parseFeature(trackFeatures[0], diagnostics);
-    final additionalTracks = <RawActivity>[];
-    for (var i = 1; i < trackFeatures.length; i++) {
-      final result = _parseFeature(trackFeatures[i], diagnostics);
-      if (result.activity.points.isNotEmpty) {
-        additionalTracks.add(result.activity);
-      }
-    }
+    final parsedTracks = [
+      for (final feature in trackFeatures) _parseFeature(feature, diagnostics),
+    ];
+    // The first track feature to actually produce points becomes primary,
+    // not always index 0: a corrupt first feature (e.g. all-malformed
+    // coordinates) would otherwise strand a later, valid track's data in
+    // additionalTracks, where most callers reading activity.points directly
+    // never look.
+    final primaryIndex = parsedTracks.indexWhere(
+      (r) => r.activity.points.isNotEmpty,
+    );
+    final effectivePrimaryIndex = primaryIndex == -1 ? 0 : primaryIndex;
+    final primaryResult = parsedTracks[effectivePrimaryIndex];
+    final additionalTracks = <RawActivity>[
+      for (var i = 0; i < parsedTracks.length; i++)
+        if (i != effectivePrimaryIndex &&
+            parsedTracks[i].activity.points.isNotEmpty)
+          parsedTracks[i].activity,
+    ];
 
     final activity = additionalTracks.isEmpty
         ? primaryResult.activity

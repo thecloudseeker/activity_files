@@ -1,4 +1,21 @@
 # Changelog
+## 0.7.6
+### Fixed
+- GPX trackpoints missing `<time>` no longer drag the segment's lap bounds to the epoch fallback.
+- TCX no longer drops a lap's first trackpoint when `StartTime` postdates it.
+- `validateLapBoundaries()` no longer skips corruption checks on activities with no GPS points.
+- GeoJSON multi-Point `activity_type` is no longer locked to whichever feature parses first.
+- GeoJSON no longer strands real data in `additionalTracks` when the first track feature is empty.
+- `IntegrityMode.silent` no longer discards every diagnostic, only integrity ones.
+- Raising `maxPayloadBytes` above 64MB no longer silently empties `ActivityLoadResult.payload`.
+- `merge()` no longer skips `normalize: true` for a single-activity list.
+- `EncoderOptions` is no longer a silent no-op for CSV/GeoJSON export; CSV lat/lon/elevation now default to fixed precision instead of raw `toString()` output.
+- CSV no longer lets a custom channel named after a fixed column (`elevation`, `latitude`, etc.) corrupt the real field on round-trip.
+- CSV now recognizes header variants like `lat`/`lng`/`ele`/`hr`, not just exact spellings.
+- CSV now reports a duplicate header instead of letting the rightmost column win.
+- `splitBySport()` no longer drops points in a gap between two laps of the same sport.
+- Validation diagnostics no longer point callers at the nonexistent `trimToPoints()`; they suggest `RawEditor.crop()` instead.
+
 ## 0.7.5
 ### Fixed
 - FIT parsing no longer mistakes vendor-specific messages for GPS records, producing garbage coordinates/altitude/heart rate on real files; messages it still can't decode are now reported via diagnostic instead of silently skipped.

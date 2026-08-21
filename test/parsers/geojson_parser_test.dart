@@ -209,6 +209,41 @@ void main() {
         expect(result.activity.channel(Channel.heartRate).length, equals(2));
       });
 
+      test('a Point FeatureCollection picks up activity_type from a later '
+          'feature when the first has none', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'Point',
+                'coordinates': [-105.0, 40.0],
+              },
+              'properties': {'timestamp': '2024-01-01T10:00:00Z'},
+            },
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'Point',
+                'coordinates': [-105.0005, 40.0005],
+              },
+              'properties': {
+                'timestamp': '2024-01-01T10:00:10Z',
+                'activity_type': 'running',
+              },
+            },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.sport, equals(Sport.running));
+      });
+
       test('FeatureCollection with single feature is parsed as Feature', () {
         final geojson = {
           'type': 'FeatureCollection',
@@ -347,6 +382,39 @@ void main() {
         expect(result.activity.points, hasLength(2));
         expect(result.activity.additionalTracks, hasLength(1));
         expect(result.activity.additionalTracks.first.points, hasLength(3));
+      });
+
+      test('picks the first track feature that actually has points as '
+          'primary, instead of always index 0', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {'type': 'LineString', 'coordinates': []},
+              'properties': {},
+            },
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  [-105.0, 40.0],
+                  [-105.001, 40.001],
+                ],
+              },
+              'properties': {},
+            },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(2));
+        expect(result.activity.additionalTracks, isEmpty);
       });
 
       test(

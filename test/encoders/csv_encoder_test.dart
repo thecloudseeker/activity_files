@@ -48,6 +48,31 @@ void main() {
         expect(lines.length, greaterThan(1));
       });
 
+      test('respects EncoderOptions precisionLatLon/precisionEle instead of '
+          'ignoring them', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 47.123456789,
+              longitude: -122.987654321,
+              elevation: 123.456789,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+        );
+
+        final csv = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.csv,
+          options: const EncoderOptions(precisionLatLon: 2, precisionEle: 1),
+        );
+        final row = csv.split('\n')[1].split(',');
+
+        expect(row[1], equals('47.12'));
+        expect(row[2], equals('-122.99'));
+        expect(row[3], equals('123.5'));
+      });
+
       test('encodes multiple points', () {
         final activity = RawActivity(
           points: [
@@ -231,6 +256,32 @@ void main() {
         final csv = ActivityEncoder.encode(activity, ActivityFileFormat.csv);
 
         expect(csv, isNotEmpty); // Should still encode with empty channel
+      });
+
+      test('a custom channel named after a fixed column (e.g. "elevation") '
+          'is not written as a colliding duplicate column', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              elevation: 1600.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+          channels: {
+            Channel.custom('elevation'): [
+              Sample(time: DateTime.utc(2024, 1, 1, 10, 0, 0), value: 42.0),
+            ],
+          },
+        );
+
+        final csv = ActivityEncoder.encode(activity, ActivityFileFormat.csv);
+        final header = csv.split('\n')[0].split(',');
+
+        expect(header.where((h) => h == 'elevation'), hasLength(1));
+        final reparsed = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        expect(reparsed.activity.points.first.elevation, equals(1600.0));
       });
     });
 

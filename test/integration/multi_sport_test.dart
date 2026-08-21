@@ -461,6 +461,29 @@ void main() {
         expect(merged, same(activity));
       });
 
+      test('merge normalizes a single messy activity instead of passing it '
+          'through unprocessed', () {
+        final base = DateTime.utc(2024, 7, 21, 6, 0);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 47.55, longitude: -122.28, time: base),
+            GeoPoint(
+              latitude: 47.551,
+              longitude: -122.281,
+              time: base.subtract(const Duration(seconds: 5)),
+            ),
+          ],
+          sport: Sport.running,
+        );
+
+        final merged = ActivityFiles.merge([activity], normalize: true);
+
+        expect(
+          merged.points.map((p) => p.time),
+          equals([base.subtract(const Duration(seconds: 5)), base]),
+        );
+      });
+
       test('merge throws on empty list', () {
         expect(() => ActivityFiles.merge([]), throwsArgumentError);
       });
@@ -625,8 +648,8 @@ void main() {
         );
       });
 
-      test('splitBySport excludes a point in the gap between two of the same '
-          "sport's own laps", () {
+      test('splitBySport includes a point in the gap between two of the '
+          "same sport's own laps (e.g. an undeclared auto-pause)", () {
         final base = DateTime.utc(2024, 7, 21, 6, 0);
         DateTime at(int minutes) => base.add(Duration(minutes: minutes));
 
@@ -650,11 +673,13 @@ void main() {
 
         expect(
           splits[Sport.running]!.points.map((p) => p.time),
-          [at(5)],
+          [at(5), at(15)],
           reason:
-              'at(15) sits in the gap between the two running laps and '
-              'belongs to neither; at(5) is inside the first lap',
+              'at(15) sits in the gap between the two running laps, not '
+              'claimed by cycling, so it belongs to running like an '
+              'auto-pause gap on a real watch would',
         );
+        expect(splits[Sport.cycling]!.points.map((p) => p.time), [at(45)]);
       });
 
       test('splitBySport returns single activity unchanged', () {

@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
+import '../helpers/fit_helpers.dart';
+
 void main() {
   group('FIT parser integrity modes', () {
     /// Builds a minimal corrupted FIT file with header CRC mismatch.
@@ -47,21 +49,41 @@ void main() {
       expect(result.integrityStats!.crcMismatches, greaterThan(0));
     });
 
-    test('IntegrityMode.silent ignores all integrity issues', () {
+    test('IntegrityMode.silent suppresses the integrity diagnostic', () {
       final corruptedFit = buildFitWithCorruptedHeaderCrc();
       final result = FitParser().parseBytesWithIntegrity(
         corruptedFit,
         integrityConfig: const IntegrityConfig.silent(),
       );
 
-      // Should complete without diagnostics
       expect(
-        result.diagnostics.any((d) => d.code.contains('crc')),
-        // Depending on implementation, may or may not report
-        // For now, just verify it returns a result
-        anything,
+        result.diagnostics.any((d) => d.code == 'fit.header.crc_mismatch'),
+        isFalse,
       );
       expect(result.integrityMode, equals(IntegrityMode.silent));
+    });
+
+    test('IntegrityMode.silent only suppresses header/trailer diagnostics, '
+        'not unrelated ones about data that parsed fine', () {
+      final bytes = buildFitFileWithLapMissingStartTime();
+      // Corrupt the trailer CRC (last 2 bytes) without touching the data.
+      final corrupted = Uint8List.fromList(bytes)
+        ..[bytes.length - 2] = 0xFF
+        ..[bytes.length - 1] = 0xFF;
+
+      final result = FitParser().parseBytesWithIntegrity(
+        corrupted,
+        integrityConfig: const IntegrityConfig.silent(),
+      );
+
+      expect(
+        result.diagnostics.any((d) => d.code == 'fit.trailer.crc_mismatch'),
+        isFalse,
+      );
+      expect(
+        result.diagnostics.any((d) => d.code == 'fit.lap.start_time_inferred'),
+        isTrue,
+      );
     });
 
     test('IntegrityStats tracks different CRC failure types', () {

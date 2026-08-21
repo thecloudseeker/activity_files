@@ -135,8 +135,8 @@ void main() {
     });
 
     test('sundaygreenloop FIT extracts a full, clean point set', () async {
-      // Optional local fixture (see README "Call for real-world files");
-      // keep CI green when private data is absent.
+      // Optional local fixture (see README "Found a bug, or have
+      // real-world files to share?"); keep CI green when private data is absent.
       final file = File('dev/fixtures/user_data/sundaygreenloop.fit');
       if (!await file.exists()) return;
 

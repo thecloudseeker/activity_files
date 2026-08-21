@@ -463,6 +463,36 @@ void main() {
           equals(DateTime.utc(2024, 1, 1, 10, 0, 20)),
         );
       });
+
+      test('a trackpoint missing <time> does not pull the segment lap\'s '
+          'start back to the epoch fallback', () {
+        const gpx = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <trkseg>
+      <trkpt lat="40.0" lon="-105.0">
+        <time>2024-06-01T10:00:00Z</time>
+      </trkpt>
+      <trkpt lat="40.001" lon="-105.001"></trkpt>
+      <trkpt lat="40.002" lon="-105.002">
+        <time>2024-06-01T10:00:20Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+
+        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+
+        expect(result.activity.laps, hasLength(1));
+        expect(
+          result.activity.laps[0].startTime,
+          equals(DateTime.utc(2024, 6, 1, 10, 0, 0)),
+        );
+        expect(
+          result.activity.laps[0].endTime,
+          equals(DateTime.utc(2024, 6, 1, 10, 0, 20)),
+        );
+      });
     });
 
     group('Waypoint parsing', () {

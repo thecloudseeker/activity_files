@@ -1,0 +1,74 @@
+name: Bug report
+description: A parsing error, wrong/missing data, or a crash.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Parsers here should never throw on malformed input. If one did, or
+        the output looks wrong, that's a bug, not you.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect vs. what happened?
+      placeholder: >-
+        e.g. "Elevation was null for every point in this FIT file, but the
+        same file opens fine in Garmin Connect."
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File format
+      options:
+        - GPX
+        - TCX
+        - FIT
+        - GeoJSON
+        - CSV
+        - Not sure / N/A
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message or diagnostic code
+      description: >-
+        The exception text, or a diagnostic `code` like
+        `fit.data.unknown_definition`.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A short snippet that triggers it.
+      render: dart
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: activity_files version
+      placeholder: "0.7.6"
+    validations:
+      required: true
+  - type: checkboxes
+    id: file
+    attributes:
+      label: Sample file
+      description: Most useful thing you can attach.
+      options:
+        - label: Attached below (drag and drop into the description box)
+        - label: Emailed to packages@eikedreier.xyz instead
+        - label: No file to share
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Device or tool that produced the file, if known.
+    validations:
+      required: false

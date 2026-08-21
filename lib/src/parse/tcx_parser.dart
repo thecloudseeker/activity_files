@@ -374,7 +374,13 @@ class TcxParser implements ActivityFormatParser {
         final first = firstTime;
         final last = lastTime;
         if (first != null && last != null) {
-          final start = lapStart ?? first;
+          // Trust the declared StartTime only when it's at or before the
+          // lap's own first trackpoint; if it postdates that point (GPS-lock
+          // delay, clock skew), a lap boundary later than one of its own
+          // points would drop that point on re-encode.
+          final start = lapStart != null && lapStart.isBefore(first)
+              ? lapStart
+              : first;
           allLaps.add(
             Lap(
               startTime: start,

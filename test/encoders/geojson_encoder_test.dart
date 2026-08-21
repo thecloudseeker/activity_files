@@ -575,6 +575,33 @@ void main() {
         expect(coordinates[0], closeTo(-105.654321, 1e-6));
         expect(coordinates[1], closeTo(40.123456, 1e-6));
       });
+
+      test('respects EncoderOptions precisionLatLon/precisionEle instead of '
+          'ignoring them', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 47.123456789,
+              longitude: -122.987654321,
+              elevation: 123.456789,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+        );
+
+        final geojson = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.geojson,
+          options: const EncoderOptions(precisionLatLon: 2, precisionEle: 1),
+        );
+        final decoded = jsonDecode(geojson);
+        final coordinates =
+            decoded['features'][0]['geometry']['coordinates'][0];
+
+        expect(coordinates[0], equals(-122.99));
+        expect(coordinates[1], equals(47.12));
+        expect(coordinates[2], equals(123.5));
+      });
     });
 
     group('Valid GeoJSON output', () {

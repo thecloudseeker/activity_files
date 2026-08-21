@@ -619,12 +619,12 @@ void main() {
         // Row for the sentinel point has an empty elevation column
         // (header: timestamp,latitude,longitude,elevation,...).
         final sentinelRow = rows.firstWhere(
-          (row) => row.split(',')[1] == '40.0',
+          (row) => double.parse(row.split(',')[1]) == 40.0,
         );
         expect(sentinelRow.split(',')[3], isEmpty);
         // The valid point keeps its elevation.
         final validRow = rows.firstWhere(
-          (row) => row.split(',')[1] == '40.001',
+          (row) => double.parse(row.split(',')[1]) == 40.001,
         );
         expect(double.parse(validRow.split(',')[3]), equals(1200.0));
       });

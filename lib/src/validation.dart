@@ -204,7 +204,12 @@ LapValidationResult validateLapBoundariesList(
         priority: 2,
       ),
     );
-    return LapValidationResult.fromDiagnostics(diags);
+    // Fall through instead of returning: inverted/out-of-order/overlap
+    // checks below don't depend on points, and structurally corrupt laps
+    // (e.g. an indoor/trainer session) shouldn't validate as OK just
+    // because there's no GPS track to compare against. Only the
+    // pointsStart/pointsEnd-dependent checks further down need points, and
+    // those are already individually null-guarded.
   }
 
   Lap? previous;
@@ -455,7 +460,7 @@ ValidationResult validateRawActivity(
           'validation.channel.samples_before_track',
           'Channel ${entry.key.id} has samples before the first point (${earliestBefore.toIso8601String()}); normalize timestamps to align sensor data with GPS fixes.',
           suggestedFix:
-              'Call trimToPoints() on the channel, or discard samples outside the track time range.',
+              'Use RawEditor(activity).crop(activity.points.first.time, activity.points.last.time) to clip channel samples to the track time range, or discard samples outside it manually.',
           priority: 3,
         );
       }
@@ -464,7 +469,7 @@ ValidationResult validateRawActivity(
           'validation.channel.samples_after_track',
           'Channel ${entry.key.id} has samples after the last point (${latestAfter.toIso8601String()}); normalize timestamps to align sensor data with GPS fixes.',
           suggestedFix:
-              'Call trimToPoints() on the channel, or discard samples outside the track time range.',
+              'Use RawEditor(activity).crop(activity.points.first.time, activity.points.last.time) to clip channel samples to the track time range, or discard samples outside it manually.',
           priority: 3,
         );
       }

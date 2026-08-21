@@ -241,6 +241,7 @@ class GpxParser implements ActivityFormatParser {
               ),
             );
           }
+          final hasGenuineTime = time != null;
           time ??= DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
           final elevation = eleText != null ? double.tryParse(eleText) : null;
@@ -307,11 +308,15 @@ class GpxParser implements ActivityFormatParser {
             gpxAttributes: pointAttributes,
           );
           trkPoints.add(point);
-          if (segmentStart == null || time.isBefore(segmentStart)) {
-            segmentStart = time;
-          }
-          if (segmentEnd == null || time.isAfter(segmentEnd)) {
-            segmentEnd = time;
+          // A synthesized epoch fallback (no genuine <time>) must not pull
+          // the segment's lap bounds back to 1970.
+          if (hasGenuineTime) {
+            if (segmentStart == null || time.isBefore(segmentStart)) {
+              segmentStart = time;
+            }
+            if (segmentEnd == null || time.isAfter(segmentEnd)) {
+              segmentEnd = time;
+            }
           }
           final prev = previous;
           if (prev != null) {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models.dart';
+import 'encoder_options.dart';
 import 'encoder_utils.dart';
 
 /// Encodes activity data to GeoJSON format
@@ -9,30 +10,51 @@ class GeojsonEncoder {
   /// Encode activity to GeoJSON FeatureCollection format
   ///
   /// Returns GeoJSON string with activity as LineString feature
-  static String encode(RawActivity activity) => jsonEncode({
+  static String encode(
+    RawActivity activity, {
+    EncoderOptions options = const EncoderOptions(),
+  }) => jsonEncode({
     'type': 'FeatureCollection',
     // A single LineString feature is emitted; merge multi-track input.
-    'features': [_buildFeature(activity.flattened())],
+    'features': [_buildFeature(activity.flattened(), options)],
   });
 
   /// Encode multiple activities to GeoJSON FeatureCollection
-  static String encodeMultiple(List<RawActivity> activities) => jsonEncode({
+  static String encodeMultiple(
+    List<RawActivity> activities, {
+    EncoderOptions options = const EncoderOptions(),
+  }) => jsonEncode({
     'type': 'FeatureCollection',
     'features': [
-      for (final activity in activities) _buildFeature(activity.flattened()),
+      for (final activity in activities)
+        _buildFeature(activity.flattened(), options),
     ],
   });
 
   /// Encode activity with all trackpoints as individual point features
-  static String encodeAsPoints(RawActivity activity) =>
-      _encodePointFeatures(activity, includeChannels: false);
+  static String encodeAsPoints(
+    RawActivity activity, {
+    EncoderOptions options = const EncoderOptions(),
+  }) =>
+      _encodePointFeatures(activity, includeChannels: false, options: options);
 
   /// Encode activity with points as individual features including channel data
-  static String encodeAsPointsWithChannels(RawActivity activity) =>
-      _encodePointFeatures(activity, includeChannels: true);
+  static String encodeAsPointsWithChannels(
+    RawActivity activity, {
+    EncoderOptions options = const EncoderOptions(),
+  }) => _encodePointFeatures(activity, includeChannels: true, options: options);
+
+  /// Rounds a coordinate/elevation value to [precision] fractional digits,
+  /// mirroring the GPX encoder's `_round` (JSON numbers, not strings, so the
+  /// value itself is rounded rather than formatted).
+  static double _round(double value, int precision) =>
+      double.parse(value.toStringAsFixed(precision));
 
   /// Build GeoJSON Feature from activity
-  static Map<String, dynamic> _buildFeature(RawActivity activity) => {
+  static Map<String, dynamic> _buildFeature(
+    RawActivity activity,
+    EncoderOptions options,
+  ) => {
     'type': 'Feature',
     'geometry': {
       'type': 'LineString',
@@ -40,7 +62,11 @@ class GeojsonEncoder {
       // omitted when the point has none so nulls round-trip as null.
       'coordinates': [
         for (final p in activity.points)
-          [p.longitude, p.latitude, if (p.elevation != null) p.elevation],
+          [
+            _round(p.longitude, options.precisionLatLon),
+            _round(p.latitude, options.precisionLatLon),
+            if (p.elevation != null) _round(p.elevation!, options.precisionEle),
+          ],
       ],
     },
     'properties': _getProperties(activity),
@@ -114,6 +140,7 @@ class GeojsonEncoder {
   static String _encodePointFeatures(
     RawActivity activity, {
     required bool includeChannels,
+    EncoderOptions options = const EncoderOptions(),
   }) {
     activity = activity.flattened();
     final channelsByTime = includeChannels
@@ -128,14 +155,16 @@ class GeojsonEncoder {
             // Third coordinate is elevation per the GeoJSON spec (RFC 7946
             // §3.1.1); omitted when the point has none so nulls round-trip.
             'coordinates': [
-              p.longitude,
-              p.latitude,
-              if (p.elevation != null) p.elevation,
+              _round(p.longitude, options.precisionLatLon),
+              _round(p.latitude, options.precisionLatLon),
+              if (p.elevation != null)
+                _round(p.elevation!, options.precisionEle),
             ],
           },
           'properties': {
             'timestamp': p.time.toIso8601String(),
-            if (p.elevation != null) 'altitude': p.elevation,
+            if (p.elevation != null)
+              'altitude': _round(p.elevation!, options.precisionEle),
             // Every channel (built-in and custom) is written under its
             // channel id so no sensor data is lost.
             if (includeChannels)
