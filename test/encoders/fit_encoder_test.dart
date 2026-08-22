@@ -68,6 +68,60 @@ void main() {
       expect(parsedDistances.first.value, closeTo(1234.5, 1e-6));
     });
 
+    test('a point timestamped on/after the FIT uint32 rollover (2106) does '
+        'not throw, and clamps instead of wrapping to a garbage date', () {
+      final farFuture = DateTime.utc(2106, 3, 1);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: farFuture),
+          GeoPoint(
+            latitude: 40.0005,
+            longitude: -105.0005,
+            time: farFuture.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+
+      expect(
+        () => ActivityEncoder.encode(activity, ActivityFileFormat.fit),
+        returnsNormally,
+      );
+
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      // Clamped to the max representable FIT timestamp, not wrapped back to
+      // a small/negative delta that would decode as a date near 1989.
+      expect(parsed.activity.points.first.time.year, greaterThan(2100));
+    });
+
+    test('a uint16 channel value of 65535 (the type sentinel minus 0) is '
+        'clamped, not written as the "absent" sentinel itself', () {
+      final start = DateTime.utc(2024, 1, 3, 8);
+      final activity = RawActivity(
+        points: [GeoPoint(latitude: 41.0, longitude: -106.0, time: start)],
+        channels: {
+          Channel.power: [Sample(time: start, value: 65535)],
+        },
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      final power = parsed.activity.channel(Channel.power);
+      expect(power, hasLength(1));
+      expect(power.first.value, equals(65534.0));
+    });
+
     test('parser skips developer data payloads without misalignment', () {
       final bytes = buildFitFileWithDeveloperData();
       final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);

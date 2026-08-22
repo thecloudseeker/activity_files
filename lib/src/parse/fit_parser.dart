@@ -251,13 +251,20 @@ class FitParser implements ActivityFormatParser {
       if (isCompressed) {
         localType = (recordHeader >> 5) & 0x03;
         final offset = recordHeader & 0x1F;
-        final previous = lastTimestamps[localType];
-        if (previous == null) {
-          // Seed timestamp with offset to avoid skipping the message.
+        // Per spec, the compressed-timestamp reference is "the last
+        // timestamp recorded from any previously decoded record" -- one
+        // running value, not one per local message type. Fall back to the
+        // global reference when this local type has never itself carried a
+        // timestamp, instead of misreading the raw 0-31 offset as an
+        // absolute FIT-epoch second count.
+        final reference = lastTimestamps[localType] ?? lastKnownTimestamp;
+        if (reference == null) {
+          // No timestamp reference established anywhere in the file yet;
+          // seed with the raw offset so the message isn't skipped outright.
           compressedTimestamp = offset;
           lastTimestamps[localType] = offset;
         } else {
-          compressedTimestamp = _applyCompressedTimestamp(previous, offset);
+          compressedTimestamp = _applyCompressedTimestamp(reference, offset);
         }
       }
       if (isDefinition) {
@@ -499,34 +506,47 @@ class FitParser implements ActivityFormatParser {
           _asNumber(values[fitFieldEbikeAssistLevelPercent]),
         );
         for (final entry in values.entries) {
-          final numeric = _asNumber(entry.value);
-          if (numeric == null) {
+          // A field can decode to a scalar num or (for an array-width field,
+          // e.g. a 1/2/4-byte-wide developer field declared with size > its
+          // element width) a List<num>; expand an array into one indexed
+          // channel per element instead of silently dropping every element
+          // past the first, matching how session/lap-level array fields
+          // already fan out via _extraFitArrays.
+          final raw = entry.value;
+          final elements = raw is List<num>
+              ? raw
+              : (raw is num ? [raw] : const <num>[]);
+          if (elements.isEmpty) {
             continue;
           }
-          if (_isDeveloperFieldKey(entry.key)) {
-            // field_description supplies the channel name and optional
-            // scale/offset (spec formula: raw / scale - offset); files
-            // without one fall back to the generic fit_dev_<i>_<n> name.
-            var value = numeric.toDouble();
-            final scale = developerFieldScales[entry.key];
-            if (scale != null) value = value / scale;
-            final offset = developerFieldOffsets[entry.key];
-            if (offset != null) value = value - offset;
-            addSample(
-              Channel.custom(
-                developerFieldNames[entry.key] ??
-                    _developerChannelName(
-                      developerIndex: _developerIndexFromKey(entry.key),
-                      fieldNumber: _developerFieldNumberFromKey(entry.key),
-                    ),
-              ),
-              value,
-            );
-          } else if (!_dedicatedRecordFields.contains(entry.key)) {
-            // Unknown native record fields (e.g. running dynamics) are
-            // preserved generically as fit_field_<n> channels with their raw
-            // (unscaled) values so no sensor data is silently dropped.
-            addSample(Channel.custom('fit_field_${entry.key}'), numeric);
+          final isArray = raw is List<num> && raw.length > 1;
+          for (var i = 0; i < elements.length; i++) {
+            final numeric = elements[i];
+            final suffix = isArray ? '_$i' : '';
+            if (_isDeveloperFieldKey(entry.key)) {
+              // field_description supplies the channel name and optional
+              // scale/offset (spec formula: raw / scale - offset); files
+              // without one fall back to the generic fit_dev_<i>_<n> name.
+              var value = numeric.toDouble();
+              final scale = developerFieldScales[entry.key];
+              if (scale != null) value = value / scale;
+              final offset = developerFieldOffsets[entry.key];
+              if (offset != null) value = value - offset;
+              addSample(
+                Channel.custom(
+                  '${developerFieldNames[entry.key] ?? _developerChannelName(developerIndex: _developerIndexFromKey(entry.key), fieldNumber: _developerFieldNumberFromKey(entry.key))}$suffix',
+                ),
+                value,
+              );
+            } else if (!_dedicatedRecordFields.contains(entry.key)) {
+              // Unknown native record fields (e.g. running dynamics) are
+              // preserved generically as fit_field_<n> channels with their raw
+              // (unscaled) values so no sensor data is silently dropped.
+              addSample(
+                Channel.custom('fit_field_${entry.key}$suffix'),
+                numeric,
+              );
+            }
           }
         }
         continue;
@@ -1201,7 +1221,7 @@ int _applyCompressedTimestamp(int previous, int offset) {
   const mask = 0x1F;
   final base = previous & ~mask;
   var value = base | offset;
-  if (value <= previous) {
+  if (value < previous) {
     value += mask + 1;
   }
   return value & 0xFFFFFFFF;
@@ -1428,21 +1448,7 @@ double? _decodeFitScaled(Object? raw, double scale) {
   return value / scale;
 }
 
-num? _asNumber(Object? raw) {
-  if (raw is! num) {
-    return null;
-  }
-  final value = raw.toInt();
-  switch (value) {
-    case 0xFF:
-    case 0xFFFF:
-    case 0xFFFFFF:
-    case 0xFFFFFFFF:
-      return null;
-    default:
-      return raw;
-  }
-}
+num? _asNumber(Object? raw) => raw is num ? raw : null;
 
 class _FitHeader {
   _FitHeader({
@@ -1707,30 +1713,27 @@ class _FitByteReader {
       position = bytes.length;
       return null;
     }
-    final data = bytes.buffer.asByteData();
     Object? value;
     switch (baseType & 0x1F) {
-      case 0x00: // enum
-      case 0x02: // uint8
-      case 0x0A: // uint8z
-        if (position >= bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = bytes[position];
-        position += size;
-        if (raw == 0xFF) return null;
-        value = raw;
+      case 0x00: // enum (scalar or array)
+      case 0x02: // uint8 (scalar or array)
+      case 0x0A: // uint8z (scalar or array)
+        value = _readNumeric(
+          size,
+          1,
+          signed: false,
+          invalid: 0xFF,
+          endian: endian,
+        );
         break;
-      case 0x01: // sint8
-        if (position >= bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = data.getInt8(position);
-        position += size;
-        if (raw == 0x7F) return null;
-        value = raw;
+      case 0x01: // sint8 (scalar or array)
+        value = _readNumeric(
+          size,
+          1,
+          signed: true,
+          invalid: 0x7F,
+          endian: endian,
+        );
         break;
       case 0x03: // sint16 (scalar or array)
         value = _readNumeric(
@@ -1799,7 +1802,7 @@ class _FitByteReader {
     return value;
   }
 
-  /// Reads a 16/32-bit numeric field, consuming the full [size] so array
+  /// Reads an 8/16/32-bit numeric field, consuming the full [size] so array
   /// fields (size larger than [width]) no longer misalign the stream. Returns
   /// a scalar `num` for single values, a `List<num>` for arrays, or null when
   /// every element is the invalid sentinel. [width] is the element byte width.
@@ -1826,13 +1829,17 @@ class _FitByteReader {
     var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * width;
-      final raw = width == 2
-          ? (signed
-                ? data.getInt16(offset, endian)
-                : data.getUint16(offset, endian))
-          : (signed
-                ? data.getInt32(offset, endian)
-                : data.getUint32(offset, endian));
+      final raw = switch (width) {
+        1 => signed ? data.getInt8(offset) : bytes[offset],
+        2 =>
+          signed
+              ? data.getInt16(offset, endian)
+              : data.getUint16(offset, endian),
+        _ =>
+          signed
+              ? data.getInt32(offset, endian)
+              : data.getUint32(offset, endian),
+      };
       if (raw != invalid) allInvalid = false;
       values.add(raw);
     }
