@@ -7,6 +7,11 @@ import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
 
+/// Namespace URI hardcoded to the `ns3` prefix for TPX/LX elements
+/// everywhere this encoder writes them.
+const _activityExtensionNamespace =
+    'http://www.garmin.com/xmlschemas/ActivityExtension/v2';
+
 /// Encoder for the TCX file format.
 class TcxEncoder implements ActivityFormatEncoder {
   const TcxEncoder();
@@ -33,6 +38,25 @@ class TcxEncoder implements ActivityFormatEncoder {
     }
     for (final extension in trackExtensions) {
       _collectExtensionNamespaces(extension, namespaceRegistry);
+    }
+    // The `ns3` prefix is reserved below for Garmin's own ActivityExtension
+    // (TPX/LX), hardcoded at every write site rather than looked up, so it
+    // can never be reassigned to whatever the source file happened to use
+    // it for. TCX's ns2/ns3/ns4... numbering for foreign extensions isn't
+    // standardized (assigned per authoring tool), so a source file's own
+    // foreign <Extensions> content can legitimately claim `ns3` for a
+    // different namespace; move it to a free prefix instead of silently
+    // losing it (or silently rebinding it) on a hardcoded-prefix collision.
+    var extensionPrefixRemap = const <String, String>{};
+    final collidingUri = namespaceRegistry['ns3'];
+    if (collidingUri != null && collidingUri != _activityExtensionNamespace) {
+      var candidate = 4;
+      while (namespaceRegistry.containsKey('ns$candidate')) {
+        candidate++;
+      }
+      final freePrefix = 'ns$candidate';
+      namespaceRegistry[freePrefix] = namespaceRegistry.remove('ns3')!;
+      extensionPrefixRemap = {'ns3': freePrefix};
     }
     final laps = activity.laps.isNotEmpty
         ? activity.laps
@@ -69,7 +93,7 @@ class TcxEncoder implements ActivityFormatEncoder {
     final rootAttributes = <String, String>{
       'xmlns': tcxNamespace,
       // ActivityExtension/v2 for TPX (Speed/Watts) and LX (lap power) nodes.
-      'xmlns:ns3': 'http://www.garmin.com/xmlschemas/ActivityExtension/v2',
+      'xmlns:ns3': _activityExtensionNamespace,
       'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
       'xsi:schemaLocation': '$tcxNamespace $tcxSchema',
     };
@@ -181,7 +205,11 @@ class TcxEncoder implements ActivityFormatEncoder {
                                 'Extensions',
                                 nest: () {
                                   for (final extension in trackExtensions) {
-                                    _writeExtensionNode(builder, extension);
+                                    _writeExtensionNode(
+                                      builder,
+                                      extension,
+                                      prefixRemap: extensionPrefixRemap,
+                                    );
                                   }
                                 },
                               );
@@ -378,7 +406,11 @@ class TcxEncoder implements ActivityFormatEncoder {
                         'Extensions',
                         nest: () {
                           for (final extension in metadataExtensions) {
-                            _writeExtensionNode(builder, extension);
+                            _writeExtensionNode(
+                              builder,
+                              extension,
+                              prefixRemap: extensionPrefixRemap,
+                            );
                           }
                         },
                       );
@@ -391,7 +423,12 @@ class TcxEncoder implements ActivityFormatEncoder {
                       'Creator',
                       attributes: const {'xsi:type': 'Device_t'},
                       nest: () {
-                        final name = device.model ?? creatorLabel;
+                        // Prefer the activity's own creator (e.g. a distinct
+                        // <Creator><Name> from the original source file)
+                        // over the device model, so a round-trip doesn't
+                        // silently overwrite a genuine creator string with
+                        // device metadata.
+                        final name = creatorLabel ?? device.model;
                         if (name != null && name.trim().isNotEmpty) {
                           builder.element('Name', nest: name);
                         } else if (creatorLabel != null) {
@@ -496,10 +533,13 @@ void _collectExtensionNamespaces(
   }
 }
 
-void _writeExtensionNode(XmlBuilder builder, GpxExtensionNode node) {
-  final qualified = node.namespacePrefix != null
-      ? '${node.namespacePrefix}:${node.name}'
-      : node.name;
+void _writeExtensionNode(
+  XmlBuilder builder,
+  GpxExtensionNode node, {
+  Map<String, String> prefixRemap = const {},
+}) {
+  final prefix = prefixRemap[node.namespacePrefix] ?? node.namespacePrefix;
+  final qualified = prefix != null ? '$prefix:${node.name}' : node.name;
   builder.element(
     qualified,
     attributes: node.attributes,
@@ -508,7 +548,7 @@ void _writeExtensionNode(XmlBuilder builder, GpxExtensionNode node) {
         builder.text(node.value!);
       }
       for (final child in node.children) {
-        _writeExtensionNode(builder, child);
+        _writeExtensionNode(builder, child, prefixRemap: prefixRemap);
       }
     },
   );

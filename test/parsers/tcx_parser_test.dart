@@ -602,5 +602,74 @@ void main() {
         );
       });
     });
+
+    group('Multi-activity merge', () {
+      String twoActivityTcx({
+        required String firstNotes,
+        required String secondNotes,
+      }) =>
+          '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Notes>$firstNotes</Notes>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+    </Activity>
+    <Activity Sport="Biking">
+      <Id>2024-01-01T11:00:00Z</Id>
+      <Notes>$secondNotes</Notes>
+      <Lap StartTime="2024-01-01T11:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T11:00:00Z</Time>
+            <Position><LatitudeDegrees>41.0</LatitudeDegrees><LongitudeDegrees>-106.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+
+      test('a later activity with distinct Notes reports the drop instead '
+          'of silently discarding it', () {
+        final tcx = twoActivityTcx(
+          firstNotes: 'Felt great',
+          secondNotes: 'Legs were tired',
+        );
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.tcxNotes, equals('Felt great'));
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('lossy.tcx_activity_notes_dropped'),
+        );
+      });
+
+      test('identical Notes across activities (same watch, multi-sport '
+          'session) does not spuriously report a drop', () {
+        final tcx = twoActivityTcx(
+          firstNotes: 'Brick workout',
+          secondNotes: 'Brick workout',
+        );
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(
+          result.diagnostics.map((d) => d.code),
+          isNot(contains('lossy.tcx_activity_notes_dropped')),
+        );
+      });
+    });
   });
 }

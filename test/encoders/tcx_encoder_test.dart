@@ -672,5 +672,106 @@ void main() {
         );
       });
     });
+
+    group('Foreign extension namespaces', () {
+      test(
+        'a source ns3 prefix bound to a foreign schema is moved to a '
+        'free prefix instead of being silently rebound to ActivityExtension',
+        () {
+          const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:ns3="http://example.com/CustomSchema/v1">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Extensions>
+        <ns3:CustomStat>42</ns3:CustomStat>
+      </Extensions>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+          final parsed = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+          final reencoded = ActivityEncoder.encode(
+            parsed.activity,
+            ActivityFileFormat.tcx,
+          );
+          final doc = XmlDocument.parse(reencoded);
+          final root = doc.rootElement;
+
+          // ns3 must still resolve to Garmin's own ActivityExtension schema
+          // (TPX/LX writing elsewhere hardcodes the `ns3:` prefix literally).
+          expect(
+            root.getAttribute('xmlns:ns3'),
+            equals('http://www.garmin.com/xmlschemas/ActivityExtension/v2'),
+          );
+          // The foreign schema must still be declared, just under a different,
+          // free prefix, with its element re-tagged to match.
+          final foreignPrefix = root.attributes
+              .firstWhere(
+                (a) => a.value == 'http://example.com/CustomSchema/v1',
+              )
+              .name
+              .local
+              .split(':')
+              .last;
+          expect(foreignPrefix, isNot(equals('ns3')));
+          expect(
+            doc.findAllElements('$foreignPrefix:CustomStat'),
+            hasLength(1),
+          );
+        },
+      );
+    });
+
+    group('Creator vs. device metadata', () {
+      test('a distinct activity.creator survives a round trip instead of '
+          'being overwritten by device.model', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 47.0,
+              longitude: 8.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+          creator: 'ActivityFilesTestSuite',
+          device: const ActivityDeviceMetadata(
+            manufacturer: 'Garmin',
+            model: 'Fenix 7',
+          ),
+        );
+
+        final tcxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+        final parsed = ActivityParser.parse(tcxString, ActivityFileFormat.tcx);
+
+        // TCX's Device_t <Creator> has only one <Name> slot, shared between
+        // "creator" and "device model" -- so the two can't both survive when
+        // they differ; the fix is specifically that creator wins that slot
+        // rather than being silently replaced by the device model.
+        expect(
+          doc
+              .findAllElements('Creator')
+              .single
+              .findElements('Name')
+              .single
+              .innerText,
+          equals('ActivityFilesTestSuite'),
+        );
+        expect(parsed.activity.creator, equals('ActivityFilesTestSuite'));
+      });
+    });
   });
 }

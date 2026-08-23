@@ -8,6 +8,9 @@
 - FIT encoding a point timestamped after the 2106 uint32 rollover no longer throws; it's clamped instead.
 - GPX export no longer scrambles which points end up in which `<trkseg>` when two source segments overlap in time.
 - GPX route (`<rte>`) encoding no longer drops non-standard child elements like a route's `<link>`.
+- TCX no longer silently drops a later `<Activity>`'s distinct notes/creator/device info in a multi-activity file.
+- TCX export no longer rebinds a source file's own `ns3` foreign extension namespace to Garmin's schema.
+- TCX export no longer overwrites a genuine `creator` with `device.model` on round-trip.
 
 ## 0.7.6
 ### Fixed
