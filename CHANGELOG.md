@@ -6,6 +6,8 @@
 - FIT's compressed-timestamp header no longer applies a spurious rollover on zero elapsed time, or misreads a local type's first compressed timestamp as an absolute one.
 - FIT encoding no longer collides a legitimate maximum field value with the format's own "absent" sentinel.
 - FIT encoding a point timestamped after the 2106 uint32 rollover no longer throws; it's clamped instead.
+- GPX export no longer scrambles which points end up in which `<trkseg>` when two source segments overlap in time.
+- GPX route (`<rte>`) encoding no longer drops non-standard child elements like a route's `<link>`.
 
 ## 0.7.6
 ### Fixed
