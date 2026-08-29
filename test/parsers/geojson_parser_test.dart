@@ -1059,5 +1059,24 @@ void main() {
         },
       );
     });
+
+    group('Non-finite numeric values', () {
+      test('a coordinate given as the string "NaN" is treated as invalid '
+          'instead of producing a non-finite GeoPoint', () {
+        const geojson = '''
+{"type":"Feature","geometry":{"type":"Point","coordinates":["NaN","-105.0"]},"properties":{}}
+''';
+        final result = ActivityParser.parse(
+          geojson,
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, isEmpty);
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('geojson.point.invalid_coordinate'),
+        );
+      });
+    });
   });
 }

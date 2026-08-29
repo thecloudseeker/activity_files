@@ -11,6 +11,8 @@
 - TCX no longer silently drops a later `<Activity>`'s distinct notes/creator/device info in a multi-activity file.
 - TCX export no longer rebinds a source file's own `ns3` foreign extension namespace to Garmin's schema.
 - TCX export no longer overwrites a genuine `creator` with `device.model` on round-trip.
+- CSV/GeoJSON no longer accept the literal strings `NaN`/`Infinity`/`-Infinity` as valid numeric values.
+- GeoJSON point-features export no longer lets a custom channel named `altitude` overwrite the real point elevation.
 
 ## 0.7.6
 ### Fixed
