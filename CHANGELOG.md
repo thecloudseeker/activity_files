@@ -13,6 +13,8 @@
 - TCX export no longer overwrites a genuine `creator` with `device.model` on round-trip.
 - CSV/GeoJSON no longer accept the literal strings `NaN`/`Infinity`/`-Infinity` as valid numeric values.
 - GeoJSON point-features export no longer lets a custom channel named `altitude` overwrite the real point elevation.
+- `RawActivity.flattened()` no longer drops summary/device/notes/waypoints/routes/metadata carried on `additionalTracks`.
+- `RawActivity.approximateDistance` no longer assumes an unsorted distance channel is already in time order.
 
 ## 0.7.6
 ### Fixed
