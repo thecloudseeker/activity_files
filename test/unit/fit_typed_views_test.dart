@@ -36,6 +36,14 @@ void main() {
             Sample(time: base, value: 255),
             Sample(time: base.add(const Duration(seconds: 10)), value: 275),
           ],
+          // A field_description-named developer field (e.g. a Stryd pod's
+          // "Vertical Oscillation", sanitized by fit_parser.dart into this
+          // channel id) -- neither the hardcoded 'running_power' nor
+          // 'fit_dev_'-prefixed.
+          Channel.custom('vertical_oscillation'): [
+            Sample(time: base, value: 8.2),
+            Sample(time: base.add(const Duration(seconds: 10)), value: 8.4),
+          ],
         },
         laps: [
           Lap(
@@ -91,6 +99,19 @@ void main() {
       expect(channels.containsKey('running_power'), isTrue);
       expect(channels.containsKey(Channel.power.id), isFalse);
       expect(channels['fit_dev_0_1']?.length, equals(2));
+    });
+
+    test('developerChannels includes a named developer field, not just '
+        'running_power/fit_dev_-prefixed ids', () {
+      final view = buildActivity().asFitView();
+
+      final channels = view.developerChannels;
+      expect(channels.containsKey('vertical_oscillation'), isTrue);
+      expect(channels['vertical_oscillation']?.length, equals(2));
+      expect(
+        view.records.first.developerFields['vertical_oscillation'],
+        equals(8.2),
+      );
     });
 
     test('channelMatchWindow controls nearest-sample matching', () {

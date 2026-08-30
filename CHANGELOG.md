@@ -16,6 +16,7 @@
 - `RawActivity.flattened()` no longer drops summary/device/notes/waypoints/routes/metadata carried on `additionalTracks`.
 - `RawActivity.approximateDistance` no longer assumes an unsorted distance channel is already in time order.
 - `validateDeviceMetadata` no longer fires a redundant second diagnostic for an already-reported blank manufacturer.
+- `FitTypedActivityView.developerChannels` now exposes every non-native FIT channel, not just `running_power`/`fit_dev_`-prefixed ids.
 
 ## 0.7.6
 ### Fixed

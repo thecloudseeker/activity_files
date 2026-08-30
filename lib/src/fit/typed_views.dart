@@ -233,5 +233,21 @@ extension FitTypedViewExtension on RawActivity {
   }) => FitTypedActivityView(this, channelMatchWindow: channelMatchWindow);
 }
 
-bool _isDeveloperChannel(String id) =>
-    id == 'running_power' || id.startsWith('fit_dev_');
+/// The only channels [FitTypedActivityView.records]/[FitRecordView] expose
+/// through their own dedicated, named fields.
+const _wellKnownNativeChannelIds = {
+  'heart_rate',
+  'cadence',
+  'power',
+  'temperature',
+  'speed',
+  'distance',
+};
+
+/// Anything not already covered by a dedicated field above -- a real
+/// developer field (named via field_description, or the generic
+/// `fit_dev_<i>_<n>` fallback) as well as an unmapped native record field
+/// (`fit_field_<n>`) -- belongs here instead of being invisible through
+/// this optional convenience API, even though `RawActivity.channels` always
+/// has it.
+bool _isDeveloperChannel(String id) => !_wellKnownNativeChannelIds.contains(id);
