@@ -615,8 +615,12 @@ List<ValidationDiagnostic> validateDeviceMetadata(
       // name, warn when they disagree (case-insensitive).
       final knownName = fitManufacturerNames[mfgId];
       final storedName = metadata.manufacturer?.trim();
+      // A blank-but-set manufacturer is already reported by checkBlankString
+      // above; skip the mismatch check for it instead of firing a second,
+      // redundant diagnostic that quotes an empty string.
       if (knownName != null &&
           storedName != null &&
+          storedName.isNotEmpty &&
           storedName.toLowerCase() != knownName.toLowerCase()) {
         diags.add(
           ValidationDiagnostic(

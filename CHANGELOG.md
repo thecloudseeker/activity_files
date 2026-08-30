@@ -15,6 +15,7 @@
 - GeoJSON point-features export no longer lets a custom channel named `altitude` overwrite the real point elevation.
 - `RawActivity.flattened()` no longer drops summary/device/notes/waypoints/routes/metadata carried on `additionalTracks`.
 - `RawActivity.approximateDistance` no longer assumes an unsorted distance channel is already in time order.
+- `validateDeviceMetadata` no longer fires a redundant second diagnostic for an already-reported blank manufacturer.
 
 ## 0.7.6
 ### Fixed

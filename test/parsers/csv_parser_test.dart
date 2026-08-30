@@ -158,6 +158,30 @@ void main() {
           ),
         );
       });
+
+      test('reports a duplicate channel-column header (not just a reserved '
+          'point-field one) instead of silently letting the last win', () {
+        const csv =
+            'timestamp,latitude,longitude,heart_rate,heart_rate\n'
+            '2024-01-01T10:00:00Z,40.0,-105.0,100,200\n';
+
+        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+        expect(
+          result.activity.channel(Channel.heartRate).single.value,
+          equals(200.0),
+        );
+        expect(
+          result.diagnostics,
+          contains(
+            isA<ParseDiagnostic>().having(
+              (d) => d.code,
+              'code',
+              'csv.header.duplicate',
+            ),
+          ),
+        );
+      });
     });
 
     group('Edge cases', () {
