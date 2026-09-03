@@ -17,6 +17,7 @@
 - `RawActivity.approximateDistance` no longer assumes an unsorted distance channel is already in time order.
 - `validateDeviceMetadata` no longer fires a redundant second diagnostic for an already-reported blank manufacturer.
 - `FitTypedActivityView.developerChannels` now exposes every non-native FIT channel, not just `running_power`/`fit_dev_`-prefixed ids.
+- `RawEditor.ensureStrictTimeOrder()` no longer leaves a lap's `startTime` after its own `endTime` when a tie-break nudge pushes it past.
 
 ## 0.7.6
 ### Fixed

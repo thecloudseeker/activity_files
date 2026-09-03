@@ -107,10 +107,25 @@ class RawEditor {
             sortedPoints,
             pointResult.items,
           );
+    // The nudge above only ever moves startTime forward; a near-zero-duration
+    // lap tied with the next lap's startTime can end up nudged past its own
+    // unmodified endTime. Clamp to a zero-length lap, matching the FIT
+    // parser's `fit.lap.negative_duration_clamped` guard, instead of writing
+    // a negative duration into the encoded output.
+    var clampedLapCount = 0;
+    final clampedLaps = <Lap>[];
+    for (final lap in expandedLaps) {
+      if (lap.startTime.isAfter(lap.endTime)) {
+        clampedLapCount++;
+        clampedLaps.add(lap.copyWith(startTime: lap.endTime));
+      } else {
+        clampedLaps.add(lap);
+      }
+    }
     _activity = _activity.copyWith(
       points: pointResult.items,
       channels: sortedChannels,
-      laps: expandedLaps,
+      laps: clampedLaps,
     );
     final adjustedTotal =
         pointResult.adjustedCount + adjustedSamples + lapResult.adjustedCount;
@@ -124,6 +139,19 @@ class RawEditor {
               'microseconds so the encoded output has strictly increasing '
               'times; no points, samples, or laps were dropped.',
           suggestedFix: 'No action needed; every original entry was kept.',
+          priority: 5,
+        ),
+      );
+    }
+    if (clampedLapCount > 0) {
+      _repairDiagnostics.add(
+        ValidationDiagnostic(
+          severity: ValidationSeverity.warning,
+          code: '${DiagnosticCategory.repaired}.lap_negative_duration_clamped',
+          message:
+              '$clampedLapCount lap(s) had a startTime nudge push past '
+              'their own endTime; clamped to a zero-length lap.',
+          suggestedFix: 'No action needed; the lap was kept, zero-length.',
           priority: 5,
         ),
       );
