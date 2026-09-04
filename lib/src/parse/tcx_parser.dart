@@ -556,15 +556,22 @@ class TcxParser implements ActivityFormatParser {
 
     var creatorLabel = name?.trim();
     if (creatorLabel == null || creatorLabel.isEmpty) {
-      // XmlElement.value is always null (only XmlText/XmlAttribute nodes
-      // have one); a non-standard <Creator> with direct text and no <Name>
-      // (e.g. <Creator>SomeApp</Creator>) needs its own direct XmlText
-      // children instead, not descendant elements' text -- otherwise this
-      // would concatenate Manufacturer/ProductID/etc. text into a garbage
-      // label whenever Name is merely absent but those are present.
+      // XmlElement.value is always null (only XmlText/XmlCDATA/XmlAttribute
+      // nodes have one); a non-standard <Creator> with direct text and no
+      // <Name> (e.g. <Creator>SomeApp</Creator> or a CDATA-wrapped
+      // equivalent) needs its own direct text/CDATA children instead, not
+      // descendant elements' text -- otherwise this would concatenate
+      // Manufacturer/ProductID/etc. text into a garbage label whenever
+      // Name is merely absent but those are present.
       final raw = creatorElement.children
-          .whereType<XmlText>()
-          .map((t) => t.value)
+          .map(
+            (node) => switch (node) {
+              XmlText() => node.value,
+              XmlCDATA() => node.value,
+              _ => null,
+            },
+          )
+          .whereType<String>()
           .join()
           .trim();
       if (raw.isNotEmpty) {

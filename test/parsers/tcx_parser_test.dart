@@ -637,6 +637,17 @@ void main() {
         expect(result.activity.device, isNull);
       });
 
+      test('a non-standard <Creator> with CDATA-wrapped text and no <Name> '
+          'uses that text as the creator label too', () {
+        final tcx = oneActivityTcx(
+          '<Creator xsi:type="Device_t"><![CDATA[MyWatch]]></Creator>',
+        );
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.creator, equals('MyWatch'));
+        expect(result.activity.device, isNull);
+      });
+
       test('a <Creator> with structured fields but no <Name> does not leak '
           "those fields' text into the creator label via the raw-text "
           'fallback', () {
