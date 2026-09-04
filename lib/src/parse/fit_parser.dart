@@ -1319,8 +1319,9 @@ double? _decodeSemicircles(Object? raw) {
   return degrees;
 }
 
-/// Filters points to keep only the largest temporally contiguous group.
-/// This removes corrupted data with timestamps that are years apart from the main activity.
+/// Drops small clusters of points temporally isolated (>24h gap) from the
+/// rest of the track, and flags (without dropping) a start/end point that's
+/// spatially far from its only neighbor.
 List<GeoPoint> _filterContiguousPoints(
   List<GeoPoint> points,
   List<ParseDiagnostic> diagnostics,
@@ -1365,51 +1366,54 @@ List<GeoPoint> _filterContiguousPoints(
       : keptGroups;
   currentGroup = [for (final group in survivors) ...group];
 
-  // Additional filtering: remove points with coordinates far from their neighbors
-  // This catches corrupted records with plausible timestamps but invalid coordinates
-  final filtered = <GeoPoint>[];
-  for (var i = 0; i < currentGroup.length; i++) {
-    final point = currentGroup[i];
-    var isValid = true;
-
-    // Check distance from neighbors (skip first and last if they're outliers)
-    if (currentGroup.length >= 3) {
-      if (i == 0) {
-        // Check first point against second
-        final dist = haversineMeters(point, currentGroup[1]);
-        // If first point is >100km from second, it's likely corrupt
-        if (dist > 100000) {
-          isValid = false;
-        }
-      } else if (i == currentGroup.length - 1) {
-        // Check last point against second-to-last
-        final dist = haversineMeters(point, currentGroup[i - 1]);
-        // If last point is >100km from previous, it's likely corrupt
-        if (dist > 100000) {
-          isValid = false;
-        }
-      }
-    }
-
-    if (isValid) {
-      filtered.add(point);
-    }
-  }
-
-  final totalRemoved = points.length - filtered.length;
+  final totalRemoved = points.length - currentGroup.length;
   if (totalRemoved > 0) {
     diagnostics.add(
       ParseDiagnostic(
         severity: ParseSeverity.warning,
         code: 'fit.points.filtered_outliers',
         message:
-            'Removed $totalRemoved outlier point(s) with invalid timestamps or coordinates.',
+            'Removed $totalRemoved outlier point(s) with invalid timestamps.',
         node: const ParseNodeReference(path: 'fit.points'),
       ),
     );
   }
 
-  return filtered;
+  // A point at the very start/end of the surviving group that's >100km from
+  // its only neighbor can be genuine device corruption (a bad GPS fix before
+  // lock, or lost lock at the end) -- but with only one neighbor to compare
+  // against, it's equally consistent with the real boundary of a second,
+  // geographically-unrelated recording that got flattened into this one and
+  // happens to share a near-identical timestamp with the first (see
+  // `lossy.multi_track_flattened` on the encoder side). There's no way to
+  // tell those two cases apart from here, so the point is kept and flagged
+  // rather than silently dropped.
+  var flaggedEdgeAnomalies = 0;
+  if (currentGroup.length >= 3) {
+    if (haversineMeters(currentGroup[0], currentGroup[1]) > 100000) {
+      flaggedEdgeAnomalies++;
+    }
+    final last = currentGroup.length - 1;
+    if (haversineMeters(currentGroup[last], currentGroup[last - 1]) > 100000) {
+      flaggedEdgeAnomalies++;
+    }
+  }
+  if (flaggedEdgeAnomalies > 0) {
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.info,
+        code: 'fit.points.spatial_edge_anomaly',
+        message:
+            '$flaggedEdgeAnomalies point(s) at the start/end of the track '
+            'are more than 100 km from their nearest neighbor; kept, since '
+            'this can be a real second recording sharing timestamps with '
+            'the first, not just device GPS corruption.',
+        node: const ParseNodeReference(path: 'fit.points'),
+      ),
+    );
+  }
+
+  return currentGroup;
 }
 
 double? _decodeAltitude(Object? raw) {

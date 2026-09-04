@@ -231,6 +231,69 @@ void main() {
       expect(parsed.activity.points, hasLength(40));
     });
 
+    test('keeps a real point from a flattened second track even when it lands '
+        'at the edge of the group, spatially far from its only neighbor', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        // A single-point primary track (e.g. a lone waypoint-style
+        // recording).
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
+        // A geographically-unrelated 14-point secondary track that shares
+        // the primary's degenerate timestamp (both defaulted to the same
+        // base time, e.g. neither source had per-point time data).
+        additionalTracks: [
+          RawActivity(
+            points: [
+              for (var i = 0; i < 14; i++)
+                GeoPoint(
+                  latitude: 40.7 + i * 0.001,
+                  longitude: -74.0,
+                  time: base,
+                ),
+            ],
+          ),
+        ],
+      );
+
+      final exportResult = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.fit,
+        normalize: false,
+      );
+      final parsed = ActivityParser.parseBytes(
+        exportResult.asBytes(),
+        ActivityFileFormat.fit,
+      );
+
+      expect(parsed.activity.points, hasLength(15));
+      expect(
+        parsed.activity.points.where((p) => p.longitude < -90),
+        hasLength(1),
+      );
+      expect(
+        parsed.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.points.spatial_edge_anomaly',
+          ),
+        ),
+      );
+      expect(
+        parsed.diagnostics,
+        isNot(
+          contains(
+            isA<ParseDiagnostic>().having(
+              (d) => d.code,
+              'code',
+              'fit.points.filtered_outliers',
+            ),
+          ),
+        ),
+      );
+    });
+
     test('still filters a lone stray point with a wildly wrong timestamp', () {
       final start = DateTime.utc(2024, 1, 1, 8);
       final activity = RawActivity(
