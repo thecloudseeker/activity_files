@@ -878,7 +878,7 @@ class _FitMessageEncoder {
     } else if (signed) {
       bd.setInt32(
         0,
-        value.round().clamp(-2147483648, 2147483647),
+        value.round().clamp(-2147483648, 2147483646),
         Endian.little,
       );
     } else {
@@ -1077,14 +1077,14 @@ class _FitMessageEncoder {
         break;
       case _FitBaseType.sint8:
         final bd = ByteData(1)
-          ..setInt8(0, scaled == null ? 0x7F : scaled.clamp(-128, 127));
+          ..setInt8(0, scaled == null ? 0x7F : scaled.clamp(-128, 126));
         destination.add(bd.buffer.asUint8List());
         break;
       case _FitBaseType.sint16:
         final bd = ByteData(2)
           ..setInt16(
             0,
-            scaled == null ? 0x7FFF : scaled.clamp(-32768, 32767),
+            scaled == null ? 0x7FFF : scaled.clamp(-32768, 32766),
             Endian.little,
           );
         destination.add(bd.buffer.asUint8List());
@@ -1102,7 +1102,7 @@ class _FitMessageEncoder {
         final bd = ByteData(4)
           ..setInt32(
             0,
-            scaled == null ? 0x7FFFFFFF : scaled.clamp(-2147483648, 2147483647),
+            scaled == null ? 0x7FFFFFFF : scaled.clamp(-2147483648, 2147483646),
             Endian.little,
           );
         destination.add(bd.buffer.asUint8List());
@@ -1184,17 +1184,35 @@ const Map<int, (int size, _FitBaseType type)> _recordFieldWireFormat = {
 
 /// Well-known channels with dedicated FIT record field numbers, built from
 /// [knownFitRecordFields] (the parser/encoder-shared table) so the two
-/// cannot diverge on field number or scale.
+/// cannot diverge on field number or scale. [_recordFieldWireFormat] is a
+/// second, encoder-local table (deliberately not shared: the parser reads
+/// wire types from each file's own message definitions, so it never needs a
+/// static one) that must still cover every field [knownFitRecordFields]
+/// lists; this throws immediately, in every build mode, naming the exact
+/// missing field, instead of a bare null-check crash on first encode if a
+/// future field is ever added to one table but not the other.
 final List<_OptionalRecordField> _knownRecordChannels = [
   for (final field in knownFitRecordFields)
     _OptionalRecordField(
       channel: field.channel,
       number: field.number,
       scale: field.scale,
-      size: _recordFieldWireFormat[field.number]!.$1,
-      type: _recordFieldWireFormat[field.number]!.$2,
+      size: _wireFormatFor(field.number).$1,
+      type: _wireFormatFor(field.number).$2,
     ),
 ];
+
+(int size, _FitBaseType type) _wireFormatFor(int fieldNumber) {
+  final format = _recordFieldWireFormat[fieldNumber];
+  if (format == null) {
+    throw StateError(
+      'fit_encoder.dart: record field $fieldNumber is listed in '
+      'knownFitRecordFields (fit_record_fields.dart) but has no matching '
+      'entry in _recordFieldWireFormat; add its (size, type) there.',
+    );
+  }
+  return format;
+}
 
 /// Builds the ordered list of optional record fields for [activity]: the
 /// present well-known channels first, then every generic `fit_field_<n>`
@@ -1350,6 +1368,6 @@ class _FitDeveloperFieldSpec {
 }
 
 int _clampUint16(int value) =>
-    value < 0 ? 0 : (value > 0xFFFF ? 0xFFFF : value);
+    value < 0 ? 0 : (value > 0xFFFE ? 0xFFFE : value);
 int _clampUint32(int value) =>
-    value < 0 ? 0 : (value > 0xFFFFFFFF ? 0xFFFFFFFF : value);
+    value < 0 ? 0 : (value > 0xFFFFFFFE ? 0xFFFFFFFE : value);

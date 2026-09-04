@@ -779,10 +779,15 @@ class GeojsonParser implements ActivityFormatParser {
 
   /// Safe conversion to double
   static double? _toDouble(dynamic value) {
-    if (value is num) return value.toDouble();
+    if (value is num) return value.isFinite ? value.toDouble() : null;
     if (value is String) {
       try {
-        return double.parse(value);
+        // double.parse accepts the literal strings "NaN"/"Infinity"/
+        // "-Infinity"; treat those as unparseable like any other malformed
+        // value instead of letting a non-finite double reach a GeoPoint/
+        // Sample (and later crash jsonEncode in the GeoJSON encoder).
+        final parsed = double.parse(value);
+        if (parsed.isFinite) return parsed;
       } catch (_) {}
     }
     return null;

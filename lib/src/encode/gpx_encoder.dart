@@ -137,10 +137,11 @@ class GpxEncoder implements ActivityFormatEncoder {
         for (final (index, track) in tracks.indexed) {
           _writeTrack(
             builder: builder,
-            // The primary activity's points are already sorted above.
-            points: index == 0
-                ? points
-                : ([...track.points]..sort((a, b) => a.time.compareTo(b.time))),
+            // Original (unsorted) order: gpxTrackSegments' boundary indices
+            // were computed against this order at parse time, so segment
+            // membership has to be decided before any re-sort, not after --
+            // see _writeTrack's own per-segment sort below.
+            points: track.points,
             channelCursor: ChannelMapper.cursor(
               track.channels,
               maxDelta: searchDelta,
@@ -200,15 +201,19 @@ class GpxEncoder implements ActivityFormatEncoder {
           points.length,
           segmentStarts,
         )) {
+          // Sort within this segment only: segment membership (segStart/
+          // segEnd) was computed against the original per-point order, so
+          // sorting the full point list first -- before splitting into
+          // segments -- would scramble which points end up in which
+          // <trkseg> whenever two segments overlap in time. Sorting inside
+          // each already-determined segment is always safe since it can't
+          // move a point across a segment boundary.
+          final segmentPoints = points.sublist(segStart, segEnd)
+            ..sort((a, b) => a.time.compareTo(b.time));
           builder.element(
             'trkseg',
             nest: () {
-              for (
-                var pointIndex = segStart;
-                pointIndex < segEnd;
-                pointIndex++
-              ) {
-                final point = points[pointIndex];
+              for (final point in segmentPoints) {
                 final snapshot = channelCursor.snapshot(point.time);
                 final tpxValues = [
                   for (final field in _tpxFields)
@@ -341,6 +346,13 @@ class GpxEncoder implements ActivityFormatEncoder {
         for (final key in _routeElementOrder) {
           final value = route.metadata[key];
           if (value != null) builder.element(key, nest: value);
+        }
+        // route.metadata is a generic bag of every non-standard <rte>-level
+        // child element the parser saw (e.g. <link>); re-emit anything not
+        // already covered above instead of silently dropping it.
+        for (final entry in route.metadata.entries) {
+          if (_routeElementOrder.contains(entry.key)) continue;
+          builder.element(entry.key, nest: entry.value);
         }
         for (final point in route.points) {
           _writeWaypointElement(builder, 'rtept', point, options);

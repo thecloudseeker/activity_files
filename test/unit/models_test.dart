@@ -524,6 +524,17 @@ void main() {
       expect(activity.approximateDistance, 0);
     });
 
+    test('approximateDistance from an unsorted distance channel uses the '
+        'max value, not whichever sample happens to be last', () {
+      final samples = [
+        Sample(time: later, value: 1000),
+        Sample(time: now, value: 5000),
+        Sample(time: later.add(const Duration(seconds: 10)), value: 3000),
+      ];
+      final activity = RawActivity(channels: {Channel.distance: samples});
+      expect(activity.approximateDistance, 5000);
+    });
+
     test('copyWith creates new instance with overrides', () {
       final original = RawActivity(
         sport: Sport.cycling,
@@ -627,6 +638,66 @@ void main() {
       );
 
       expect(activity.flattened(), same(activity));
+    });
+
+    test('backfills summary/device/tcxNotes/tcxAuthor from a sub-track when '
+        'the primary track has none, and merges waypoints/routes/metadata', () {
+      final now = DateTime.utc(2024, 1, 1, 10);
+      const subSummary = ActivitySummary(calories: 400.0);
+      const subDevice = ActivityDeviceMetadata(model: 'Fenix 7');
+      final subWaypoint = GeoPoint(
+        latitude: 41.0,
+        longitude: -106.0,
+        time: now,
+      );
+      final subRoute = GpxRoute(name: 'Planned', points: const []);
+      final primary = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: now)],
+        metadata: const {'weather': 'sunny'},
+        additionalTracks: [
+          RawActivity(
+            points: [GeoPoint(latitude: 41.0, longitude: -106.0, time: now)],
+            summary: subSummary,
+            device: subDevice,
+            tcxNotes: 'Felt great',
+            tcxAuthor: 'SubAuthor',
+            gpxWaypoints: [subWaypoint],
+            gpxRoutes: [subRoute],
+            metadata: const {'notes': 'from sub-track', 'weather': 'ignored'},
+          ),
+        ],
+      );
+
+      final flat = primary.flattened();
+
+      expect(flat.summary, same(subSummary));
+      expect(flat.device, same(subDevice));
+      expect(flat.tcxNotes, equals('Felt great'));
+      expect(flat.tcxAuthor, equals('SubAuthor'));
+      expect(flat.gpxWaypoints, contains(subWaypoint));
+      expect(flat.gpxRoutes, contains(subRoute));
+      // Primary's own metadata value wins on key collision; sub-track fills
+      // in keys the primary doesn't have.
+      expect(flat.metadata['weather'], equals('sunny'));
+      expect(flat.metadata['notes'], equals('from sub-track'));
+    });
+
+    test('keeps the primary track\'s own summary/device instead of letting '
+        'a sub-track override it', () {
+      final now = DateTime.utc(2024, 1, 1, 10);
+      const primarySummary = ActivitySummary(calories: 100.0);
+      final primary = RawActivity(
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: now)],
+        summary: primarySummary,
+        additionalTracks: [
+          RawActivity(
+            points: [GeoPoint(latitude: 41.0, longitude: -106.0, time: now)],
+            summary: const ActivitySummary(calories: 999.0),
+          ),
+        ],
+      );
+
+      expect(primary.flattened().summary, same(primarySummary));
     });
   });
 

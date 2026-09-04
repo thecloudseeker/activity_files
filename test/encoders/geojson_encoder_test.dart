@@ -723,5 +723,38 @@ void main() {
         );
       });
     });
+
+    group('Reserved property key collisions', () {
+      test('a custom channel literally named "altitude" does not overwrite '
+          'the real point elevation in the point-features output', () {
+        final t = DateTime.utc(2024, 1, 1, 10, 0, 0);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              elevation: 1600.0,
+              time: t,
+            ),
+          ],
+          channels: {
+            Channel.custom('altitude'): [Sample(time: t, value: 42.0)],
+          },
+        );
+
+        final geojson = ActivityFiles.exportToGeojsonPoints(
+          activity,
+          includeChannels: true,
+        );
+        final decoded = jsonDecode(geojson);
+        final properties = decoded['features'][0]['properties'];
+
+        expect(properties['altitude'], equals(1600.0));
+        expect(
+          decoded['features'][0]['geometry']['coordinates'][2],
+          equals(1600.0),
+        );
+      });
+    });
   });
 }

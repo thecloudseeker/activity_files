@@ -364,6 +364,26 @@ void main() {
       );
     });
 
+    test(
+      'blank-but-set manufacturer with a known fitManufacturerId only '
+      'emits blank_field, not a redundant manufacturer_name_mismatch too',
+      () {
+        const meta = ActivityDeviceMetadata(
+          manufacturer: '   ',
+          fitManufacturerId: 1, // 1 = Garmin
+        );
+        final diags = validateDeviceMetadata(meta);
+        expect(
+          diags.map((d) => d.code),
+          contains('validation.device.blank_field'),
+        );
+        expect(
+          diags.map((d) => d.code),
+          isNot(contains('validation.device.manufacturer_name_mismatch')),
+        );
+      },
+    );
+
     test('negative product ID emits error', () {
       const meta = ActivityDeviceMetadata(fitProductId: -1);
       final diags = validateDeviceMetadata(meta);

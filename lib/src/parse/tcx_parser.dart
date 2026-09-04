@@ -105,12 +105,18 @@ class TcxParser implements ActivityFormatParser {
       );
     }
 
+    var droppedActivityMetadata = false;
     for (final activityElement in activities) {
       final activitySport = _sportFromString(
         activityElement.getAttribute('Sport'),
       );
       overallSport ??= activitySport;
-      notes ??= _firstText(activityElement, 'Notes');
+      final activityNotes = _firstText(activityElement, 'Notes');
+      if (notes == null) {
+        notes = activityNotes;
+      } else if (activityNotes != null && activityNotes != notes) {
+        droppedActivityMetadata = true;
+      }
 
       for (final child in activityElement.childElements) {
         if (child.name.local == 'Extensions') {
@@ -118,9 +124,25 @@ class TcxParser implements ActivityFormatParser {
         }
       }
 
+      // creator and device are independent fields on the merged activity (a
+      // <Creator> with manufacturer/product but no <Name> yields a device
+      // with no creator label; a <Creator> that's just free text yields a
+      // label with no device). Each field gets its own "first non-null
+      // wins" backfill and distinctness check, gated on that field's own
+      // null-ness.
       final creatorInfo = _extractCreatorInfo(activityElement);
-      creator ??= creatorInfo.creator;
-      device ??= creatorInfo.device;
+      if (creator == null) {
+        creator = creatorInfo.creator;
+      } else if (creatorInfo.creator != null &&
+          creatorInfo.creator != creator) {
+        droppedActivityMetadata = true;
+      }
+      if (device == null) {
+        device = creatorInfo.device;
+      } else if (creatorInfo.device != null &&
+          !_sameDevice(creatorInfo.device, device)) {
+        droppedActivityMetadata = true;
+      }
 
       for (final lapElement in _childElements(activityElement, 'Lap')) {
         final lapStartAttribute = lapElement.getAttribute('StartTime');
@@ -404,6 +426,19 @@ class TcxParser implements ActivityFormatParser {
         }
       }
     }
+    if (droppedActivityMetadata) {
+      diagnostics.add(
+        const ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'lossy.tcx_activity_metadata_dropped',
+          message:
+              'A later <Activity> in this multi-activity TCX file has its '
+              'own distinct Notes/Creator/device info; only the first '
+              "activity's is kept on the merged RawActivity.",
+          node: ParseNodeReference(path: 'tcx.activities'),
+        ),
+      );
+    }
 
     // Build the merged activity.
     final channelMap = <Channel, Iterable<Sample>>{};
@@ -521,7 +556,24 @@ class TcxParser implements ActivityFormatParser {
 
     var creatorLabel = name?.trim();
     if (creatorLabel == null || creatorLabel.isEmpty) {
-      final raw = (creatorElement.value ?? "").trim().trim();
+      // XmlElement.value is always null (only XmlText/XmlCDATA/XmlAttribute
+      // nodes have one); a non-standard <Creator> with direct text and no
+      // <Name> (e.g. <Creator>SomeApp</Creator> or a CDATA-wrapped
+      // equivalent) needs its own direct text/CDATA children instead, not
+      // descendant elements' text -- otherwise this would concatenate
+      // Manufacturer/ProductID/etc. text into a garbage label whenever
+      // Name is merely absent but those are present.
+      final raw = creatorElement.children
+          .map(
+            (node) => switch (node) {
+              XmlText() => node.value,
+              XmlCDATA() => node.value,
+              _ => null,
+            },
+          )
+          .whereType<String>()
+          .join()
+          .trim();
       if (raw.isNotEmpty) {
         creatorLabel = raw;
       } else {
@@ -577,6 +629,21 @@ Map<String, String?> _batchTexts(XmlElement element, List<String> localNames) {
 
   _textCache[element] = texts;
   return texts;
+}
+
+/// Field-value equality for [ActivityDeviceMetadata] (the class has no `==`
+/// override); used to tell a genuinely different later-`<Activity>` device
+/// block from a repeat of the same one (e.g. every activity in a
+/// multi-sport TCX recorded on the same watch).
+bool _sameDevice(ActivityDeviceMetadata? a, ActivityDeviceMetadata? b) {
+  if (a == null || b == null) return a == b;
+  return a.manufacturer == b.manufacturer &&
+      a.model == b.model &&
+      a.product == b.product &&
+      a.serialNumber == b.serialNumber &&
+      a.softwareVersion == b.softwareVersion &&
+      a.fitManufacturerId == b.fitManufacturerId &&
+      a.fitProductId == b.fitProductId;
 }
 
 Iterable<XmlElement> _childElements(XmlElement element, String localName) {

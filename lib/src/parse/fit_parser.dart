@@ -251,13 +251,20 @@ class FitParser implements ActivityFormatParser {
       if (isCompressed) {
         localType = (recordHeader >> 5) & 0x03;
         final offset = recordHeader & 0x1F;
-        final previous = lastTimestamps[localType];
-        if (previous == null) {
-          // Seed timestamp with offset to avoid skipping the message.
+        // Per spec, the compressed-timestamp reference is "the last
+        // timestamp recorded from any previously decoded record" -- one
+        // running value, not one per local message type. Fall back to the
+        // global reference when this local type has never itself carried a
+        // timestamp, instead of misreading the raw 0-31 offset as an
+        // absolute FIT-epoch second count.
+        final reference = lastTimestamps[localType] ?? lastKnownTimestamp;
+        if (reference == null) {
+          // No timestamp reference established anywhere in the file yet;
+          // seed with the raw offset so the message isn't skipped outright.
           compressedTimestamp = offset;
           lastTimestamps[localType] = offset;
         } else {
-          compressedTimestamp = _applyCompressedTimestamp(previous, offset);
+          compressedTimestamp = _applyCompressedTimestamp(reference, offset);
         }
       }
       if (isDefinition) {
@@ -499,34 +506,51 @@ class FitParser implements ActivityFormatParser {
           _asNumber(values[fitFieldEbikeAssistLevelPercent]),
         );
         for (final entry in values.entries) {
-          final numeric = _asNumber(entry.value);
-          if (numeric == null) {
+          // A field can decode to a scalar num or (for an array-width field,
+          // e.g. a 1/2/4-byte-wide developer field declared with size > its
+          // element width) a List<num>; expand an array into one indexed
+          // channel per element instead of silently dropping every element
+          // past the first, matching how session/lap-level array fields
+          // already fan out via _extraFitArrays. The reader
+          // (_FitByteReader._readNumeric/_readFloat/_readInt64) has already
+          // dropped any individual element matching the type's invalid
+          // sentinel (e.g. unused trailing slots in a fixed-width array), so
+          // every element reaching this loop is a genuinely present sample.
+          final raw = entry.value;
+          final elements = raw is List<num>
+              ? raw
+              : (raw is num ? [raw] : const <num>[]);
+          if (elements.isEmpty) {
             continue;
           }
-          if (_isDeveloperFieldKey(entry.key)) {
-            // field_description supplies the channel name and optional
-            // scale/offset (spec formula: raw / scale - offset); files
-            // without one fall back to the generic fit_dev_<i>_<n> name.
-            var value = numeric.toDouble();
-            final scale = developerFieldScales[entry.key];
-            if (scale != null) value = value / scale;
-            final offset = developerFieldOffsets[entry.key];
-            if (offset != null) value = value - offset;
-            addSample(
-              Channel.custom(
-                developerFieldNames[entry.key] ??
-                    _developerChannelName(
-                      developerIndex: _developerIndexFromKey(entry.key),
-                      fieldNumber: _developerFieldNumberFromKey(entry.key),
-                    ),
-              ),
-              value,
-            );
-          } else if (!_dedicatedRecordFields.contains(entry.key)) {
-            // Unknown native record fields (e.g. running dynamics) are
-            // preserved generically as fit_field_<n> channels with their raw
-            // (unscaled) values so no sensor data is silently dropped.
-            addSample(Channel.custom('fit_field_${entry.key}'), numeric);
+          final isArray = raw is List<num> && raw.length > 1;
+          for (var i = 0; i < elements.length; i++) {
+            final numeric = elements[i];
+            final suffix = isArray ? '_$i' : '';
+            if (_isDeveloperFieldKey(entry.key)) {
+              // field_description supplies the channel name and optional
+              // scale/offset (spec formula: raw / scale - offset); files
+              // without one fall back to the generic fit_dev_<i>_<n> name.
+              var value = numeric.toDouble();
+              final scale = developerFieldScales[entry.key];
+              if (scale != null) value = value / scale;
+              final offset = developerFieldOffsets[entry.key];
+              if (offset != null) value = value - offset;
+              addSample(
+                Channel.custom(
+                  '${developerFieldNames[entry.key] ?? _developerChannelName(developerIndex: _developerIndexFromKey(entry.key), fieldNumber: _developerFieldNumberFromKey(entry.key))}$suffix',
+                ),
+                value,
+              );
+            } else if (!_dedicatedRecordFields.contains(entry.key)) {
+              // Unknown native record fields (e.g. running dynamics) are
+              // preserved generically as fit_field_<n> channels with their raw
+              // (unscaled) values so no sensor data is silently dropped.
+              addSample(
+                Channel.custom('fit_field_${entry.key}$suffix'),
+                numeric,
+              );
+            }
           }
         }
         continue;
@@ -1201,7 +1225,7 @@ int _applyCompressedTimestamp(int previous, int offset) {
   const mask = 0x1F;
   final base = previous & ~mask;
   var value = base | offset;
-  if (value <= previous) {
+  if (value < previous) {
     value += mask + 1;
   }
   return value & 0xFFFFFFFF;
@@ -1299,8 +1323,9 @@ double? _decodeSemicircles(Object? raw) {
   return degrees;
 }
 
-/// Filters points to keep only the largest temporally contiguous group.
-/// This removes corrupted data with timestamps that are years apart from the main activity.
+/// Drops small clusters of points temporally isolated (>24h gap) from the
+/// rest of the track, and flags (without dropping) a start/end point that's
+/// spatially far from its only neighbor.
 List<GeoPoint> _filterContiguousPoints(
   List<GeoPoint> points,
   List<ParseDiagnostic> diagnostics,
@@ -1345,51 +1370,54 @@ List<GeoPoint> _filterContiguousPoints(
       : keptGroups;
   currentGroup = [for (final group in survivors) ...group];
 
-  // Additional filtering: remove points with coordinates far from their neighbors
-  // This catches corrupted records with plausible timestamps but invalid coordinates
-  final filtered = <GeoPoint>[];
-  for (var i = 0; i < currentGroup.length; i++) {
-    final point = currentGroup[i];
-    var isValid = true;
-
-    // Check distance from neighbors (skip first and last if they're outliers)
-    if (currentGroup.length >= 3) {
-      if (i == 0) {
-        // Check first point against second
-        final dist = haversineMeters(point, currentGroup[1]);
-        // If first point is >100km from second, it's likely corrupt
-        if (dist > 100000) {
-          isValid = false;
-        }
-      } else if (i == currentGroup.length - 1) {
-        // Check last point against second-to-last
-        final dist = haversineMeters(point, currentGroup[i - 1]);
-        // If last point is >100km from previous, it's likely corrupt
-        if (dist > 100000) {
-          isValid = false;
-        }
-      }
-    }
-
-    if (isValid) {
-      filtered.add(point);
-    }
-  }
-
-  final totalRemoved = points.length - filtered.length;
+  final totalRemoved = points.length - currentGroup.length;
   if (totalRemoved > 0) {
     diagnostics.add(
       ParseDiagnostic(
         severity: ParseSeverity.warning,
         code: 'fit.points.filtered_outliers',
         message:
-            'Removed $totalRemoved outlier point(s) with invalid timestamps or coordinates.',
+            'Removed $totalRemoved outlier point(s) with invalid timestamps.',
         node: const ParseNodeReference(path: 'fit.points'),
       ),
     );
   }
 
-  return filtered;
+  // A point at the very start/end of the surviving group that's >100km from
+  // its only neighbor can be genuine device corruption (a bad GPS fix before
+  // lock, or lost lock at the end) -- but with only one neighbor to compare
+  // against, it's equally consistent with the real boundary of a second,
+  // geographically-unrelated recording that got flattened into this one and
+  // happens to share a near-identical timestamp with the first (see
+  // `lossy.multi_track_flattened` on the encoder side). There's no way to
+  // tell those two cases apart from here, so the point is kept and flagged
+  // rather than silently dropped.
+  var flaggedEdgeAnomalies = 0;
+  if (currentGroup.length >= 2) {
+    if (haversineMeters(currentGroup[0], currentGroup[1]) > 100000) {
+      flaggedEdgeAnomalies++;
+    }
+    final last = currentGroup.length - 1;
+    if (haversineMeters(currentGroup[last], currentGroup[last - 1]) > 100000) {
+      flaggedEdgeAnomalies++;
+    }
+  }
+  if (flaggedEdgeAnomalies > 0) {
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.info,
+        code: 'fit.points.spatial_edge_anomaly',
+        message:
+            '$flaggedEdgeAnomalies point(s) at the start/end of the track '
+            'are more than 100 km from their nearest neighbor; kept, since '
+            'this can be a real second recording sharing timestamps with '
+            'the first, not just device GPS corruption.',
+        node: const ParseNodeReference(path: 'fit.points'),
+      ),
+    );
+  }
+
+  return currentGroup;
 }
 
 double? _decodeAltitude(Object? raw) {
@@ -1428,21 +1456,7 @@ double? _decodeFitScaled(Object? raw, double scale) {
   return value / scale;
 }
 
-num? _asNumber(Object? raw) {
-  if (raw is! num) {
-    return null;
-  }
-  final value = raw.toInt();
-  switch (value) {
-    case 0xFF:
-    case 0xFFFF:
-    case 0xFFFFFF:
-    case 0xFFFFFFFF:
-      return null;
-    default:
-      return raw;
-  }
-}
+num? _asNumber(Object? raw) => raw is num ? raw : null;
 
 class _FitHeader {
   _FitHeader({
@@ -1707,30 +1721,27 @@ class _FitByteReader {
       position = bytes.length;
       return null;
     }
-    final data = bytes.buffer.asByteData();
     Object? value;
     switch (baseType & 0x1F) {
-      case 0x00: // enum
-      case 0x02: // uint8
-      case 0x0A: // uint8z
-        if (position >= bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = bytes[position];
-        position += size;
-        if (raw == 0xFF) return null;
-        value = raw;
+      case 0x00: // enum (scalar or array)
+      case 0x02: // uint8 (scalar or array)
+      case 0x0A: // uint8z (scalar or array)
+        value = _readNumeric(
+          size,
+          1,
+          signed: false,
+          invalid: 0xFF,
+          endian: endian,
+        );
         break;
-      case 0x01: // sint8
-        if (position >= bytes.length) {
-          position = bytes.length;
-          return null;
-        }
-        final raw = data.getInt8(position);
-        position += size;
-        if (raw == 0x7F) return null;
-        value = raw;
+      case 0x01: // sint8 (scalar or array)
+        value = _readNumeric(
+          size,
+          1,
+          signed: true,
+          invalid: 0x7F,
+          endian: endian,
+        );
         break;
       case 0x03: // sint16 (scalar or array)
         value = _readNumeric(
@@ -1799,10 +1810,16 @@ class _FitByteReader {
     return value;
   }
 
-  /// Reads a 16/32-bit numeric field, consuming the full [size] so array
-  /// fields (size larger than [width]) no longer misalign the stream. Returns
-  /// a scalar `num` for single values, a `List<num>` for arrays, or null when
-  /// every element is the invalid sentinel. [width] is the element byte width.
+  /// Reads an 8/16/32-bit numeric field, consuming the full [size] so array
+  /// fields (size larger than [width]) no longer misalign the stream. Each
+  /// element is checked against [invalid] individually and dropped rather
+  /// than kept: a fixed-width array field commonly pads unused trailing
+  /// slots with the same invalid sentinel a narrower scalar field would use,
+  /// and surfacing that padding as real sample values downstream would be
+  /// wrong. Returns a scalar `num` when exactly one element survives, a
+  /// `List<num>` (indexed by position among the *surviving* elements, not
+  /// their original slot) when more than one does, or null when none do.
+  /// [width] is the element byte width.
   Object? _readNumeric(
     int size,
     int width, {
@@ -1823,29 +1840,33 @@ class _FitByteReader {
     }
     final data = bytes.buffer.asByteData();
     final values = <num>[];
-    var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * width;
-      final raw = width == 2
-          ? (signed
-                ? data.getInt16(offset, endian)
-                : data.getUint16(offset, endian))
-          : (signed
-                ? data.getInt32(offset, endian)
-                : data.getUint32(offset, endian));
-      if (raw != invalid) allInvalid = false;
-      values.add(raw);
+      final raw = switch (width) {
+        1 => signed ? data.getInt8(offset) : bytes[offset],
+        2 =>
+          signed
+              ? data.getInt16(offset, endian)
+              : data.getUint16(offset, endian),
+        _ =>
+          signed
+              ? data.getInt32(offset, endian)
+              : data.getUint32(offset, endian),
+      };
+      if (raw != invalid) values.add(raw);
     }
     position += safe; // Consume the whole field, including any odd remainder.
-    if (allInvalid) return null;
-    if (count == 1) return values.first;
+    if (values.isEmpty) return null;
+    if (values.length == 1) return values.first;
     return values;
   }
 
   /// Reads a float32/float64 field ([width] 4 or 8), consuming the full
   /// [size]. The FIT invalid sentinel is the all-ones bit pattern (a NaN
-  /// encoding), detected on the raw bits before conversion. Returns a scalar
-  /// `num`, a `List<num>` for arrays, or null when every element is invalid.
+  /// encoding), detected on the raw bits before conversion and checked per
+  /// element so padding within an array field is dropped rather than kept
+  /// (see [_readNumeric]). Returns a scalar `num` when exactly one element
+  /// survives, a `List<num>` when more than one does, or null when none do.
   Object? _readFloat(int size, int width, {required Endian endian}) {
     if (size <= 0 || position >= bytes.length) {
       position = bytes.length;
@@ -1860,7 +1881,6 @@ class _FitByteReader {
     }
     final data = bytes.buffer.asByteData();
     final values = <num>[];
-    var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * width;
       final bool invalid;
@@ -1874,20 +1894,21 @@ class _FitByteReader {
             data.getUint32(offset + 4, endian) == 0xFFFFFFFF;
         raw = data.getFloat64(offset, endian);
       }
-      if (!invalid) allInvalid = false;
-      values.add(raw);
+      if (!invalid) values.add(raw);
     }
     position += safe;
-    if (allInvalid) return null;
-    if (count == 1) return values.first;
+    if (values.isEmpty) return null;
+    if (values.length == 1) return values.first;
     return values;
   }
 
   /// Reads a 64-bit integer field, consuming the full [size]. Values are
   /// combined from two 32-bit halves in double arithmetic (web-safe; exact up
-  /// to 2^53, beyond which sensor data does not occur in practice). Returns a
-  /// scalar `num`, a `List<num>` for arrays, or null when every element is
-  /// the invalid sentinel (sint64 0x7FFF…, uint64 0xFFFF…).
+  /// to 2^53, beyond which sensor data does not occur in practice). Each
+  /// element is checked against the invalid sentinel (sint64 0x7FFF…, uint64
+  /// 0xFFFF…) individually and dropped rather than kept (see [_readNumeric]).
+  /// Returns a scalar `num` when exactly one element survives, a `List<num>`
+  /// when more than one does, or null when none do.
   Object? _readInt64(int size, {required bool signed, required Endian endian}) {
     if (size <= 0 || position >= bytes.length) {
       position = bytes.length;
@@ -1902,7 +1923,6 @@ class _FitByteReader {
     }
     final data = bytes.buffer.asByteData();
     final values = <num>[];
-    var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * 8;
       final first = data.getUint32(offset, endian);
@@ -1912,7 +1932,7 @@ class _FitByteReader {
       final invalid = signed
           ? hi == 0x7FFFFFFF && lo == 0xFFFFFFFF
           : hi == 0xFFFFFFFF && lo == 0xFFFFFFFF;
-      if (!invalid) allInvalid = false;
+      if (invalid) continue;
       final unsignedValue = hi.toDouble() * 4294967296.0 + lo.toDouble();
       values.add(
         signed && (hi & 0x80000000) != 0
@@ -1921,8 +1941,8 @@ class _FitByteReader {
       );
     }
     position += safe;
-    if (allInvalid) return null;
-    if (count == 1) return values.first;
+    if (values.isEmpty) return null;
+    if (values.length == 1) return values.first;
     return values;
   }
 

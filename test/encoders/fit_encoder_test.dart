@@ -68,6 +68,60 @@ void main() {
       expect(parsedDistances.first.value, closeTo(1234.5, 1e-6));
     });
 
+    test('a point timestamped on/after the FIT uint32 rollover (2106) does '
+        'not throw, and clamps instead of wrapping to a garbage date', () {
+      final farFuture = DateTime.utc(2106, 3, 1);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: farFuture),
+          GeoPoint(
+            latitude: 40.0005,
+            longitude: -105.0005,
+            time: farFuture.add(const Duration(seconds: 10)),
+          ),
+        ],
+      );
+
+      expect(
+        () => ActivityEncoder.encode(activity, ActivityFileFormat.fit),
+        returnsNormally,
+      );
+
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      // Clamped to the max representable FIT timestamp, not wrapped back to
+      // a small/negative delta that would decode as a date near 1989.
+      expect(parsed.activity.points.first.time.year, greaterThan(2100));
+    });
+
+    test('a uint16 channel value of 65535 (the type sentinel minus 0) is '
+        'clamped, not written as the "absent" sentinel itself', () {
+      final start = DateTime.utc(2024, 1, 3, 8);
+      final activity = RawActivity(
+        points: [GeoPoint(latitude: 41.0, longitude: -106.0, time: start)],
+        channels: {
+          Channel.power: [Sample(time: start, value: 65535)],
+        },
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+      final power = parsed.activity.channel(Channel.power);
+      expect(power, hasLength(1));
+      expect(power.first.value, equals(65534.0));
+    });
+
     test('parser skips developer data payloads without misalignment', () {
       final bytes = buildFitFileWithDeveloperData();
       final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
@@ -175,6 +229,120 @@ void main() {
         ActivityFileFormat.fit,
       );
       expect(parsed.activity.points, hasLength(40));
+    });
+
+    test('keeps a real point from a flattened second track even when it lands '
+        'at the edge of the group, spatially far from its only neighbor', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        // A single-point primary track (e.g. a lone waypoint-style
+        // recording).
+        points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: base)],
+        // A geographically-unrelated 14-point secondary track that shares
+        // the primary's degenerate timestamp (both defaulted to the same
+        // base time, e.g. neither source had per-point time data).
+        additionalTracks: [
+          RawActivity(
+            points: [
+              for (var i = 0; i < 14; i++)
+                GeoPoint(
+                  latitude: 40.7 + i * 0.001,
+                  longitude: -74.0,
+                  time: base,
+                ),
+            ],
+          ),
+        ],
+      );
+
+      final exportResult = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.fit,
+        normalize: false,
+      );
+      final parsed = ActivityParser.parseBytes(
+        exportResult.asBytes(),
+        ActivityFileFormat.fit,
+      );
+
+      expect(parsed.activity.points, hasLength(15));
+      expect(
+        parsed.activity.points.where((p) => p.longitude < -90),
+        hasLength(1),
+      );
+      expect(
+        parsed.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.points.spatial_edge_anomaly',
+          ),
+        ),
+      );
+      expect(
+        parsed.diagnostics,
+        isNot(
+          contains(
+            isA<ParseDiagnostic>().having(
+              (d) => d.code,
+              'code',
+              'fit.points.filtered_outliers',
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('flags a spatial edge anomaly even when the surviving group is '
+        'only 2 points, not just groups of 3+', () {
+      // 9 mutually-isolated (>24h gap) single-point "noise" groups, followed
+      // by a 2-point group whose two points are close in time but >100km
+      // apart in space. None of the 10 groups exceeds this function's own
+      // >10-points-to-keep threshold, so the survivor-selection fallback
+      // (largest group) picks the 2-point group -- the smallest size that
+      // can still have two points each be the other's "only neighbor".
+      final base = DateTime.utc(2024, 1, 1);
+      final activity = RawActivity(
+        points: [
+          for (var i = 0; i < 9; i++)
+            GeoPoint(
+              latitude: 10.0 + i,
+              longitude: 10.0 + i,
+              time: base.add(Duration(days: 2 * i)),
+            ),
+          GeoPoint(
+            latitude: 40.0,
+            longitude: -105.0,
+            time: base.add(const Duration(days: 18)),
+          ),
+          GeoPoint(
+            latitude: 41.0,
+            longitude: 10.0,
+            time: base.add(const Duration(days: 18, seconds: 10)),
+          ),
+        ],
+      );
+      final fitPayload = ActivityEncoder.encode(
+        activity,
+        ActivityFileFormat.fit,
+      );
+      final parsed = ActivityParser.parseBytes(
+        base64Decode(fitPayload),
+        ActivityFileFormat.fit,
+      );
+
+      expect(parsed.activity.points, hasLength(2));
+      expect(
+        parsed.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'fit.points.spatial_edge_anomaly',
+          ),
+        ),
+      );
     });
 
     test('still filters a lone stray point with a wildly wrong timestamp', () {

@@ -416,6 +416,89 @@ void main() {
     });
   });
 
+  group('RawEditor.ensureStrictTimeOrder', () {
+    test('clamps a zero-duration lap nudged past its own endTime instead of '
+        'leaving startTime after endTime', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: base.add(const Duration(seconds: 10)),
+          ),
+        ],
+        laps: [
+          Lap(startTime: base, endTime: base.add(const Duration(seconds: 10))),
+          // Tied on startTime with the lap above, and already
+          // zero-duration: the tie-break nudge alone would push its
+          // startTime one microsecond past its own unmodified endTime.
+          Lap(startTime: base, endTime: base),
+        ],
+      );
+
+      final editor = RawEditor(activity)..ensureStrictTimeOrder();
+      final laps = editor.activity.laps;
+
+      expect(laps, hasLength(2));
+      expect(
+        laps[1].startTime.isAfter(laps[1].endTime),
+        isFalse,
+        reason: 'lap startTime must never end up after its own endTime',
+      );
+      expect(
+        laps[1].startTime,
+        equals(laps[1].endTime),
+        reason: 'clamped to zero-length, not a negative or positive one',
+      );
+      expect(
+        laps[1].startTime,
+        isNot(equals(laps[0].startTime)),
+        reason:
+            'clamping by moving endTime forward to the already-nudged '
+            'startTime must not reintroduce the duplicate startTime the '
+            'tie-break nudge just resolved',
+      );
+      expect(
+        editor.repairDiagnostics.map((d) => d.code),
+        contains('repaired.lap_negative_duration_clamped'),
+      );
+    });
+
+    test('leaves well-formed, already-ordered laps untouched', () {
+      final base = DateTime.utc(2024, 1, 1, 10);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.001,
+            time: base.add(const Duration(seconds: 20)),
+          ),
+        ],
+        laps: [
+          Lap(startTime: base, endTime: base.add(const Duration(seconds: 10))),
+          Lap(
+            startTime: base.add(const Duration(seconds: 10)),
+            endTime: base.add(const Duration(seconds: 20)),
+          ),
+        ],
+      );
+
+      final editor = RawEditor(activity)..ensureStrictTimeOrder();
+      final laps = editor.activity.laps;
+
+      expect(laps, hasLength(2));
+      expect(laps[0].startTime, equals(base));
+      expect(laps[1].endTime, equals(base.add(const Duration(seconds: 20))));
+      expect(
+        editor.repairDiagnostics.map((d) => d.code),
+        isNot(contains('repaired.lap_negative_duration_clamped')),
+      );
+    });
+  });
+
   group('RawActivity.copyWith', () {
     test('reuses immutable collections when unchanged', () {
       final base = DateTime.utc(2024, 1, 5, 7);

@@ -1404,6 +1404,19 @@ class RawActivity {
     final mergedSets = <WorkoutSet>[...sets];
     final mergedEvents = <ActivityEvent>[...events];
     final mergedLengths = <SwimLength>[...lengths];
+    // Non-timeseries fields: at most one value survives per activity (there's
+    // no per-track slot for these on the flattened result), so a sub-track's
+    // value only fills in when the primary track doesn't already have one --
+    // first sub-track with a value wins among sub-tracks. List/map fields
+    // (waypoints, routes, metadata) merge instead, since those genuinely can
+    // hold every track's contribution.
+    var mergedSummary = summary;
+    var mergedDevice = device;
+    var mergedTcxNotes = tcxNotes;
+    var mergedTcxAuthor = tcxAuthor;
+    final mergedGpxWaypoints = <GeoPoint>[...gpxWaypoints];
+    final mergedGpxRoutes = <GpxRoute>[...gpxRoutes];
+    final mergedMetadata = <String, Object?>{...metadata};
     for (final track in additionalTracks) {
       final flat = track.flattened();
       mergedPoints.addAll(flat.points);
@@ -1423,6 +1436,15 @@ class RawActivity {
       mergedSets.addAll(flat.sets);
       mergedEvents.addAll(flat.events);
       mergedLengths.addAll(flat.lengths);
+      mergedSummary ??= flat.summary;
+      mergedDevice ??= flat.device;
+      mergedTcxNotes ??= flat.tcxNotes;
+      mergedTcxAuthor ??= flat.tcxAuthor;
+      mergedGpxWaypoints.addAll(flat.gpxWaypoints);
+      mergedGpxRoutes.addAll(flat.gpxRoutes);
+      for (final entry in flat.metadata.entries) {
+        mergedMetadata.putIfAbsent(entry.key, () => entry.value);
+      }
     }
     // Stable sorts: tracks commonly share timestamps (e.g. all-epoch
     // fallback when none of the source points had a <time>), and an
@@ -1451,6 +1473,13 @@ class RawActivity {
       sets: mergedSets,
       events: mergedEvents,
       lengths: mergedLengths,
+      summary: mergedSummary,
+      device: mergedDevice,
+      tcxNotes: mergedTcxNotes,
+      tcxAuthor: mergedTcxAuthor,
+      gpxWaypoints: mergedGpxWaypoints,
+      gpxRoutes: mergedGpxRoutes,
+      metadata: mergedMetadata,
       additionalTracks: const [],
       // Segment boundaries index the primary track's points; after merging and
       // re-sorting they no longer align, so drop them.
@@ -1472,7 +1501,13 @@ class RawActivity {
   double _computeApproximateDistance() {
     final distanceSamples = channels[Channel.distance];
     if (distanceSamples != null && distanceSamples.isNotEmpty) {
-      return distanceSamples.last.value;
+      // A monotonically-increasing distance channel's max (not necessarily
+      // its last element -- only true when the channel happens to already
+      // be time-sorted, which normalize:false doesn't guarantee) is the
+      // total distance.
+      return distanceSamples
+          .map((s) => s.value)
+          .reduce((a, b) => a > b ? a : b);
     }
     if (points.length < 2) {
       return 0;

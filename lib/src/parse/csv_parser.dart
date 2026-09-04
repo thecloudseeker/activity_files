@@ -273,7 +273,12 @@ class CsvParser implements ActivityFormatParser {
     final value = _getString(row, headerMap, headerName);
     if (value != null) {
       try {
-        return double.parse(value);
+        // double.parse accepts the literal strings "NaN"/"Infinity"/
+        // "-Infinity"; treat those as unparseable like any other malformed
+        // value instead of letting a non-finite double reach a GeoPoint/
+        // Sample (and later crash jsonEncode in the GeoJSON encoder).
+        final parsed = double.parse(value);
+        if (parsed.isFinite) return parsed;
       } catch (_) {}
     }
     return null;

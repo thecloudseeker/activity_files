@@ -404,5 +404,73 @@ void main() {
         expect(parsed.activity.points.length, equals(original.points.length));
       });
     });
+
+    group('Track segments', () {
+      test('overlapping-in-time segments keep their own points on re-encode '
+          'instead of getting scrambled by a global time sort', () {
+        const gpx = '''<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><name>Workout</name>
+    <trkseg>
+      <trkpt lat="10.0" lon="10.0"><time>2024-01-01T10:00:00Z</time></trkpt>
+      <trkpt lat="10.1" lon="10.1"><time>2024-01-01T10:10:00Z</time></trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="20.0" lon="20.0"><time>2024-01-01T10:05:00Z</time></trkpt>
+      <trkpt lat="20.1" lon="20.1"><time>2024-01-01T10:15:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>''';
+        final parsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final reencoded = ActivityEncoder.encode(
+          parsed.activity,
+          ActivityFileFormat.gpx,
+        );
+        final doc = XmlDocument.parse(reencoded);
+        final segments = doc.findAllElements('trkseg').toList();
+
+        expect(segments, hasLength(2));
+        final firstSegLats = segments[0]
+            .findElements('trkpt')
+            .map((e) => double.parse(e.getAttribute('lat')!))
+            .toList();
+        final secondSegLats = segments[1]
+            .findElements('trkpt')
+            .map((e) => double.parse(e.getAttribute('lat')!))
+            .toList();
+        expect(firstSegLats, everyElement(closeTo(10.0, 0.2)));
+        expect(secondSegLats, everyElement(closeTo(20.0, 0.2)));
+      });
+    });
+
+    group('Route metadata', () {
+      test('a non-standard <rte> child element (e.g. <link>) survives a '
+          'parse -> encode round trip', () {
+        const gpx = '''<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1">
+  <rte>
+    <name>Planned Loop</name>
+    <cmt>scenic</cmt>
+    <link href="https://example.com"><text>More info</text></link>
+    <rtept lat="47.0" lon="11.0"></rtept>
+  </rte>
+</gpx>''';
+        final parsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        expect(parsed.activity.gpxRoutes.single.metadata['link'], isNotNull);
+
+        final reencoded = ActivityEncoder.encode(
+          parsed.activity,
+          ActivityFileFormat.gpx,
+        );
+        final doc = XmlDocument.parse(reencoded);
+        final route = doc.findAllElements('rte').single;
+
+        expect(route.findElements('cmt').single.innerText, equals('scenic'));
+        expect(
+          route.findElements('link').single.innerText,
+          equals('More info'),
+        );
+      });
+    });
   });
 }

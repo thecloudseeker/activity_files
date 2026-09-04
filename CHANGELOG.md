@@ -1,4 +1,26 @@
 # Changelog
+## 0.7.7
+### Fixed
+- FIT no longer nulls out a legitimate max-range value (e.g. a calories/power reading of 255) that collides with a narrower type's sentinel.
+- FIT array fields one byte wide no longer truncate to their first element and misalign every field after them.
+- FIT array fields no longer surface an unused element's invalid-sentinel padding as a real sample value.
+- FIT's compressed-timestamp header no longer applies a spurious rollover on zero elapsed time, or misreads a local type's first compressed timestamp as an absolute one.
+- FIT encoding no longer collides a legitimate maximum field value with the format's own "absent" sentinel.
+- FIT encoding a point timestamped after the 2106 uint32 rollover no longer throws; it's clamped instead.
+- GPX export no longer scrambles which points end up in which `<trkseg>` when two source segments overlap in time.
+- GPX route (`<rte>`) encoding no longer drops non-standard child elements like a route's `<link>`.
+- TCX no longer silently drops a later `<Activity>`'s distinct notes/creator/device info in a multi-activity file.
+- TCX export no longer rebinds a source file's own `ns3` foreign extension namespace to Garmin's schema.
+- TCX export no longer overwrites a genuine `creator` with `device.model` on round-trip.
+- CSV/GeoJSON no longer accept the literal strings `NaN`/`Infinity`/`-Infinity` as valid numeric values.
+- GeoJSON point-features export no longer lets a custom channel named `altitude` overwrite the real point elevation.
+- `RawActivity.flattened()` no longer drops summary/device/notes/waypoints/routes/metadata carried on `additionalTracks`.
+- `RawActivity.approximateDistance` no longer assumes an unsorted distance channel is already in time order.
+- `validateDeviceMetadata` no longer fires a redundant second diagnostic for an already-reported blank manufacturer.
+- `FitTypedActivityView.developerChannels` now exposes every non-native FIT channel, not just `running_power`/`fit_dev_`-prefixed ids.
+- `RawEditor.ensureStrictTimeOrder()` no longer leaves a lap's `startTime` after its own `endTime` when a tie-break nudge pushes it past.
+- FIT parsing no longer drops a real point at the start/end of the track just because it's spatially far from its one neighbor.
+
 ## 0.7.6
 ### Fixed
 - GPX trackpoints missing `<time>` no longer drag the segment's lap bounds to the epoch fallback.

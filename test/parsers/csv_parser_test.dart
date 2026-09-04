@@ -158,6 +158,30 @@ void main() {
           ),
         );
       });
+
+      test('reports a duplicate channel-column header (not just a reserved '
+          'point-field one) instead of silently letting the last win', () {
+        const csv =
+            'timestamp,latitude,longitude,heart_rate,heart_rate\n'
+            '2024-01-01T10:00:00Z,40.0,-105.0,100,200\n';
+
+        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+        expect(
+          result.activity.channel(Channel.heartRate).single.value,
+          equals(200.0),
+        );
+        expect(
+          result.diagnostics,
+          contains(
+            isA<ParseDiagnostic>().having(
+              (d) => d.code,
+              'code',
+              'csv.header.duplicate',
+            ),
+          ),
+        );
+      });
     });
 
     group('Edge cases', () {
@@ -387,6 +411,34 @@ void main() {
         final hrChannel = result.activity.channel(Channel.heartRate);
         expect(hrChannel[0].time, equals(result.activity.points[0].time));
         expect(hrChannel[1].time, equals(result.activity.points[1].time));
+      });
+    });
+
+    group('Non-finite numeric values', () {
+      test('"NaN"/"Infinity" coordinates are treated as invalid instead of '
+          'producing a non-finite GeoPoint that later crashes an encoder', () {
+        const csv =
+            'timestamp,latitude,longitude,heart_rate\n'
+            '2024-01-01T10:00:00Z,NaN,-105.0,140\n'
+            '2024-01-01T10:00:10Z,40.001,Infinity,142\n'
+            '2024-01-01T10:00:20Z,40.002,-105.002,-Infinity\n';
+
+        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+
+        for (final point in result.activity.points) {
+          expect(point.latitude.isFinite, isTrue);
+          expect(point.longitude.isFinite, isTrue);
+        }
+        for (final sample in result.activity.channel(Channel.heartRate)) {
+          expect(sample.value.isFinite, isTrue);
+        }
+        expect(
+          () => ActivityEncoder.encode(
+            result.activity,
+            ActivityFileFormat.geojson,
+          ),
+          returnsNormally,
+        );
       });
     });
   });

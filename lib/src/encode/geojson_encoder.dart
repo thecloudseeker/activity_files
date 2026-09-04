@@ -7,6 +7,14 @@ import 'encoder_utils.dart';
 /// Encodes activity data to GeoJSON format
 /// Supports export of trackpoints as LineString features with properties
 class GeojsonEncoder {
+  /// Reserved per-point property keys in [_encodePointFeatures]'s output; a
+  /// channel id colliding with one of these is skipped rather than silently
+  /// overwriting it (map literals let a later duplicate key win).
+  static const Set<String> _reservedPointFeatureKeys = {
+    'timestamp',
+    'altitude',
+  };
+
   /// Encode activity to GeoJSON FeatureCollection format
   ///
   /// Returns GeoJSON string with activity as LineString feature
@@ -166,10 +174,16 @@ class GeojsonEncoder {
             if (p.elevation != null)
               'altitude': _round(p.elevation!, options.precisionEle),
             // Every channel (built-in and custom) is written under its
-            // channel id so no sensor data is lost.
+            // channel id so no sensor data is lost -- except a channel id
+            // that collides with a reserved key above (e.g. a custom
+            // channel literally named "altitude"), which would otherwise
+            // silently overwrite the real elevation value in this same map
+            // literal (later duplicate keys win). Skip it here, matching
+            // csv_encoder.dart's equivalent reserved-column handling.
             if (includeChannels)
               for (final entry in (channelsByTime[p.time] ?? const {}).entries)
-                entry.key.id: entry.value,
+                if (!_reservedPointFeatureKeys.contains(entry.key.id))
+                  entry.key.id: entry.value,
           },
         },
     ];
