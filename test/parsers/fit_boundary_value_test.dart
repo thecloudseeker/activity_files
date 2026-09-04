@@ -100,6 +100,101 @@ void main() {
     );
   });
 
+  test('a developer field array with an invalid-sentinel element between '
+      'two valid ones drops only that element, renumbering the survivors', () {
+    final data = BytesBuilder()
+      // Same field_description (206) as above: a uint8 'legs' field.
+      ..add([
+        0x40, 0x00, 0x00,
+        ...uint16LeBytes(206),
+        4,
+        0x00, 1, 0x02, // developer_data_index
+        0x01, 1, 0x02, // field_definition_number
+        0x02, 1, 0x02, // fit_base_type_id
+        0x03, 5, 0x07, // field_name (string, 4 chars + terminator)
+      ])
+      ..add([0x00, 0x00, 0x00, 0x02, ...'legs'.codeUnits, 0x00])
+      // Record (20), local 1: timestamp, lat, lon, then a developer field
+      // declared uint8 (0x02) with size 3 (a 3-element array).
+      ..add([
+        0x61, 0x00, 0x00,
+        ...uint16LeBytes(20),
+        3,
+        0xFD, 4, 0x86, // timestamp
+        0x00, 4, 0x85, // latitude
+        0x01, 4, 0x85, // longitude
+        1, // one developer field
+        0x00, 3, 0x00, // field 0, size 3, developer index 0
+      ])
+      ..add([
+        0x01,
+        ...uint32LeBytes(1000),
+        ...int32LeBytes(encodeSemicircles(47.0)),
+        ...int32LeBytes(encodeSemicircles(11.0)),
+        10, 0xFF, 20, // middle element is the uint8 invalid sentinel
+      ]);
+
+    final bytes = finish(data);
+    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+    expect(
+      result.activity.channel(Channel.custom('legs_0')).single.value,
+      equals(10.0),
+    );
+    expect(
+      result.activity.channel(Channel.custom('legs_1')).single.value,
+      equals(20.0),
+    );
+    expect(result.activity.channel(Channel.custom('legs_2')), isEmpty);
+  });
+
+  test(
+    'a developer field array with only one non-invalid element collapses '
+    'to a plain (unsuffixed) channel instead of staying a 1-element array',
+    () {
+      final data = BytesBuilder()
+        ..add([
+          0x40, 0x00, 0x00,
+          ...uint16LeBytes(206),
+          4,
+          0x00, 1, 0x02, // developer_data_index
+          0x01, 1, 0x02, // field_definition_number
+          0x02, 1, 0x02, // fit_base_type_id
+          0x03, 5, 0x07, // field_name (string, 4 chars + terminator)
+        ])
+        ..add([0x00, 0x00, 0x00, 0x02, ...'legs'.codeUnits, 0x00])
+        // Record (20), local 1: developer field declared uint8 with size 2,
+        // its first element the invalid sentinel and only the second real.
+        ..add([
+          0x61, 0x00, 0x00,
+          ...uint16LeBytes(20),
+          3,
+          0xFD, 4, 0x86, // timestamp
+          0x00, 4, 0x85, // latitude
+          0x01, 4, 0x85, // longitude
+          1, // one developer field
+          0x00, 2, 0x00, // field 0, size 2, developer index 0
+        ])
+        ..add([
+          0x01,
+          ...uint32LeBytes(1000),
+          ...int32LeBytes(encodeSemicircles(47.0)),
+          ...int32LeBytes(encodeSemicircles(11.0)),
+          0xFF, 33, // first element invalid, second the only real value
+        ]);
+
+      final bytes = finish(data);
+      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+
+      expect(
+        result.activity.channel(Channel.custom('legs')).single.value,
+        equals(33.0),
+      );
+      expect(result.activity.channel(Channel.custom('legs_0')), isEmpty);
+      expect(result.activity.channel(Channel.custom('legs_1')), isEmpty);
+    },
+  );
+
   test('a compressed-timestamp offset equal to the reference low 5 bits is '
       'zero elapsed time, not a spurious +32s rollover', () {
     final recordDef = BytesBuilder()

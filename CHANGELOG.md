@@ -3,6 +3,7 @@
 ### Fixed
 - FIT no longer nulls out a legitimate max-range value (e.g. a calories/power reading of 255) that collides with a narrower type's sentinel.
 - FIT array fields one byte wide no longer truncate to their first element and misalign every field after them.
+- FIT array fields no longer surface an unused element's invalid-sentinel padding as a real sample value.
 - FIT's compressed-timestamp header no longer applies a spurious rollover on zero elapsed time, or misreads a local type's first compressed timestamp as an absolute one.
 - FIT encoding no longer collides a legitimate maximum field value with the format's own "absent" sentinel.
 - FIT encoding a point timestamped after the 2106 uint32 rollover no longer throws; it's clamped instead.

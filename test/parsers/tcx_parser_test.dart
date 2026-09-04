@@ -653,7 +653,7 @@ void main() {
         expect(result.activity.tcxNotes, equals('Felt great'));
         expect(
           result.diagnostics.map((d) => d.code),
-          contains('lossy.tcx_activity_notes_dropped'),
+          contains('lossy.tcx_activity_metadata_dropped'),
         );
       });
 
@@ -667,7 +667,55 @@ void main() {
 
         expect(
           result.diagnostics.map((d) => d.code),
-          isNot(contains('lossy.tcx_activity_notes_dropped')),
+          isNot(contains('lossy.tcx_activity_metadata_dropped')),
+        );
+      });
+
+      test('a later activity with a distinct Creator reports the same drop '
+          'code as distinct Notes, not a Notes-specific one', () {
+        const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">
+        <Name>Forerunner 945</Name>
+      </Creator>
+    </Activity>
+    <Activity Sport="Biking">
+      <Id>2024-01-01T11:00:00Z</Id>
+      <Lap StartTime="2024-01-01T11:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T11:00:00Z</Time>
+            <Position><LatitudeDegrees>41.0</LatitudeDegrees><LongitudeDegrees>-106.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">
+        <Name>Edge 530</Name>
+      </Creator>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.device?.model, equals('Forerunner 945'));
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('lossy.tcx_activity_metadata_dropped'),
         );
       });
     });

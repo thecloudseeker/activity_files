@@ -511,7 +511,11 @@ class FitParser implements ActivityFormatParser {
           // element width) a List<num>; expand an array into one indexed
           // channel per element instead of silently dropping every element
           // past the first, matching how session/lap-level array fields
-          // already fan out via _extraFitArrays.
+          // already fan out via _extraFitArrays. The reader
+          // (_FitByteReader._readNumeric/_readFloat/_readInt64) has already
+          // dropped any individual element matching the type's invalid
+          // sentinel (e.g. unused trailing slots in a fixed-width array), so
+          // every element reaching this loop is a genuinely present sample.
           final raw = entry.value;
           final elements = raw is List<num>
               ? raw
@@ -1807,9 +1811,15 @@ class _FitByteReader {
   }
 
   /// Reads an 8/16/32-bit numeric field, consuming the full [size] so array
-  /// fields (size larger than [width]) no longer misalign the stream. Returns
-  /// a scalar `num` for single values, a `List<num>` for arrays, or null when
-  /// every element is the invalid sentinel. [width] is the element byte width.
+  /// fields (size larger than [width]) no longer misalign the stream. Each
+  /// element is checked against [invalid] individually and dropped rather
+  /// than kept: a fixed-width array field commonly pads unused trailing
+  /// slots with the same invalid sentinel a narrower scalar field would use,
+  /// and surfacing that padding as real sample values downstream would be
+  /// wrong. Returns a scalar `num` when exactly one element survives, a
+  /// `List<num>` (indexed by position among the *surviving* elements, not
+  /// their original slot) when more than one does, or null when none do.
+  /// [width] is the element byte width.
   Object? _readNumeric(
     int size,
     int width, {
@@ -1830,7 +1840,6 @@ class _FitByteReader {
     }
     final data = bytes.buffer.asByteData();
     final values = <num>[];
-    var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * width;
       final raw = switch (width) {
@@ -1844,19 +1853,20 @@ class _FitByteReader {
               ? data.getInt32(offset, endian)
               : data.getUint32(offset, endian),
       };
-      if (raw != invalid) allInvalid = false;
-      values.add(raw);
+      if (raw != invalid) values.add(raw);
     }
     position += safe; // Consume the whole field, including any odd remainder.
-    if (allInvalid) return null;
-    if (count == 1) return values.first;
+    if (values.isEmpty) return null;
+    if (values.length == 1) return values.first;
     return values;
   }
 
   /// Reads a float32/float64 field ([width] 4 or 8), consuming the full
   /// [size]. The FIT invalid sentinel is the all-ones bit pattern (a NaN
-  /// encoding), detected on the raw bits before conversion. Returns a scalar
-  /// `num`, a `List<num>` for arrays, or null when every element is invalid.
+  /// encoding), detected on the raw bits before conversion and checked per
+  /// element so padding within an array field is dropped rather than kept
+  /// (see [_readNumeric]). Returns a scalar `num` when exactly one element
+  /// survives, a `List<num>` when more than one does, or null when none do.
   Object? _readFloat(int size, int width, {required Endian endian}) {
     if (size <= 0 || position >= bytes.length) {
       position = bytes.length;
@@ -1871,7 +1881,6 @@ class _FitByteReader {
     }
     final data = bytes.buffer.asByteData();
     final values = <num>[];
-    var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * width;
       final bool invalid;
@@ -1885,20 +1894,21 @@ class _FitByteReader {
             data.getUint32(offset + 4, endian) == 0xFFFFFFFF;
         raw = data.getFloat64(offset, endian);
       }
-      if (!invalid) allInvalid = false;
-      values.add(raw);
+      if (!invalid) values.add(raw);
     }
     position += safe;
-    if (allInvalid) return null;
-    if (count == 1) return values.first;
+    if (values.isEmpty) return null;
+    if (values.length == 1) return values.first;
     return values;
   }
 
   /// Reads a 64-bit integer field, consuming the full [size]. Values are
   /// combined from two 32-bit halves in double arithmetic (web-safe; exact up
-  /// to 2^53, beyond which sensor data does not occur in practice). Returns a
-  /// scalar `num`, a `List<num>` for arrays, or null when every element is
-  /// the invalid sentinel (sint64 0x7FFF…, uint64 0xFFFF…).
+  /// to 2^53, beyond which sensor data does not occur in practice). Each
+  /// element is checked against the invalid sentinel (sint64 0x7FFF…, uint64
+  /// 0xFFFF…) individually and dropped rather than kept (see [_readNumeric]).
+  /// Returns a scalar `num` when exactly one element survives, a `List<num>`
+  /// when more than one does, or null when none do.
   Object? _readInt64(int size, {required bool signed, required Endian endian}) {
     if (size <= 0 || position >= bytes.length) {
       position = bytes.length;
@@ -1913,7 +1923,6 @@ class _FitByteReader {
     }
     final data = bytes.buffer.asByteData();
     final values = <num>[];
-    var allInvalid = true;
     for (var i = 0; i < count; i++) {
       final offset = position + i * 8;
       final first = data.getUint32(offset, endian);
@@ -1923,7 +1932,7 @@ class _FitByteReader {
       final invalid = signed
           ? hi == 0x7FFFFFFF && lo == 0xFFFFFFFF
           : hi == 0xFFFFFFFF && lo == 0xFFFFFFFF;
-      if (!invalid) allInvalid = false;
+      if (invalid) continue;
       final unsignedValue = hi.toDouble() * 4294967296.0 + lo.toDouble();
       values.add(
         signed && (hi & 0x80000000) != 0
@@ -1932,8 +1941,8 @@ class _FitByteReader {
       );
     }
     position += safe;
-    if (allInvalid) return null;
-    if (count == 1) return values.first;
+    if (values.isEmpty) return null;
+    if (values.length == 1) return values.first;
     return values;
   }
 

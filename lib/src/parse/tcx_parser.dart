@@ -420,7 +420,7 @@ class TcxParser implements ActivityFormatParser {
       diagnostics.add(
         const ParseDiagnostic(
           severity: ParseSeverity.info,
-          code: 'lossy.tcx_activity_notes_dropped',
+          code: 'lossy.tcx_activity_metadata_dropped',
           message:
               'A later <Activity> in this multi-activity TCX file has its '
               'own distinct Notes/Creator/device info; only the first '
