@@ -124,18 +124,23 @@ class TcxParser implements ActivityFormatParser {
         }
       }
 
+      // creator and device are independent fields on the merged activity (a
+      // <Creator> with manufacturer/product but no <Name> yields a device
+      // with no creator label; a <Creator> that's just free text yields a
+      // label with no device). Each field gets its own "first non-null
+      // wins" backfill and distinctness check, gated on that field's own
+      // null-ness.
       final creatorInfo = _extractCreatorInfo(activityElement);
       if (creator == null) {
         creator = creatorInfo.creator;
+      } else if (creatorInfo.creator != null &&
+          creatorInfo.creator != creator) {
+        droppedActivityMetadata = true;
+      }
+      if (device == null) {
         device = creatorInfo.device;
-      } else if ((creatorInfo.creator != null &&
-              creatorInfo.creator != creator) ||
-          (creatorInfo.device != null &&
-              !_sameDevice(creatorInfo.device, device))) {
-        // A later <Activity> that simply omits Creator/device (both null
-        // here) isn't distinct metadata being dropped, just absent; only a
-        // later activity that actually supplies its own differing value
-        // counts as a real drop.
+      } else if (creatorInfo.device != null &&
+          !_sameDevice(creatorInfo.device, device)) {
         droppedActivityMetadata = true;
       }
 
@@ -551,7 +556,17 @@ class TcxParser implements ActivityFormatParser {
 
     var creatorLabel = name?.trim();
     if (creatorLabel == null || creatorLabel.isEmpty) {
-      final raw = (creatorElement.value ?? "").trim().trim();
+      // XmlElement.value is always null (only XmlText/XmlAttribute nodes
+      // have one); a non-standard <Creator> with direct text and no <Name>
+      // (e.g. <Creator>SomeApp</Creator>) needs its own direct XmlText
+      // children instead, not descendant elements' text -- otherwise this
+      // would concatenate Manufacturer/ProductID/etc. text into a garbage
+      // label whenever Name is merely absent but those are present.
+      final raw = creatorElement.children
+          .whereType<XmlText>()
+          .map((t) => t.value)
+          .join()
+          .trim();
       if (raw.isNotEmpty) {
         creatorLabel = raw;
       } else {

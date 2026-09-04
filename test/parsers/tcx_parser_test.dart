@@ -603,6 +603,55 @@ void main() {
       });
     });
 
+    group('Creator/device metadata', () {
+      String oneActivityTcx(String creatorXml) =>
+          '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      $creatorXml
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+
+      test('a non-standard <Creator> with direct text and no <Name> uses '
+          'that text as the creator label, with no device (nothing '
+          'structured was present to build one from)', () {
+        final tcx = oneActivityTcx(
+          '<Creator xsi:type="Device_t">MyWatch</Creator>',
+        );
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.creator, equals('MyWatch'));
+        expect(result.activity.device, isNull);
+      });
+
+      test('a <Creator> with structured fields but no <Name> does not leak '
+          "those fields' text into the creator label via the raw-text "
+          'fallback', () {
+        final tcx = oneActivityTcx(
+          '<Creator xsi:type="Device_t">'
+          '<Manufacturer>garmin</Manufacturer><ProductID>1</ProductID>'
+          '</Creator>',
+        );
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.creator, isNull);
+        expect(result.activity.device?.manufacturer, equals('garmin'));
+      });
+    });
+
     group('Multi-activity merge', () {
       String twoActivityTcx({
         required String firstNotes,
@@ -758,6 +807,105 @@ void main() {
         final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.device?.model, equals('Forerunner 945'));
+        expect(
+          result.diagnostics.map((d) => d.code),
+          isNot(contains('lossy.tcx_activity_metadata_dropped')),
+        );
+      });
+
+      test('a Name-less Creator (manufacturer/product only) keeps the first '
+          "activity's device across a later, differing Creator", () {
+        const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">
+        <Manufacturer>garmin</Manufacturer>
+        <ProductID>1</ProductID>
+      </Creator>
+    </Activity>
+    <Activity Sport="Biking">
+      <Id>2024-01-01T11:00:00Z</Id>
+      <Lap StartTime="2024-01-01T11:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T11:00:00Z</Time>
+            <Position><LatitudeDegrees>41.0</LatitudeDegrees><LongitudeDegrees>-106.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">
+        <Manufacturer>wahoo_fitness</Manufacturer>
+        <ProductID>2</ProductID>
+      </Creator>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.device?.manufacturer, equals('garmin'));
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('lossy.tcx_activity_metadata_dropped'),
+        );
+      });
+
+      test('a first activity with only a text Creator (no structured device '
+          "fields) still lets a later activity's device backfill in, "
+          'independently of the already-set creator label', () {
+        const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">MyWatch</Creator>
+    </Activity>
+    <Activity Sport="Biking">
+      <Id>2024-01-01T11:00:00Z</Id>
+      <Lap StartTime="2024-01-01T11:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T11:00:00Z</Time>
+            <Position><LatitudeDegrees>41.0</LatitudeDegrees><LongitudeDegrees>-106.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">
+        <Manufacturer>wahoo_fitness</Manufacturer>
+        <ProductID>2</ProductID>
+      </Creator>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.creator, equals('MyWatch'));
+        expect(result.activity.device?.manufacturer, equals('wahoo_fitness'));
         expect(
           result.diagnostics.map((d) => d.code),
           isNot(contains('lossy.tcx_activity_metadata_dropped')),
