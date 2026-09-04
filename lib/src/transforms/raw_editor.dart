@@ -109,15 +109,19 @@ class RawEditor {
           );
     // The nudge above only ever moves startTime forward; a near-zero-duration
     // lap tied with the next lap's startTime can end up nudged past its own
-    // unmodified endTime. Clamp to a zero-length lap, matching the FIT
-    // parser's `fit.lap.negative_duration_clamped` guard, instead of writing
-    // a negative duration into the encoded output.
+    // unmodified endTime. Clamp to a zero-length lap instead of writing a
+    // negative duration into the encoded output, matching the FIT parser's
+    // `fit.lap.negative_duration_clamped` guard -- by moving endTime forward
+    // to the (already nudged) startTime, not startTime backward to endTime:
+    // pulling startTime back would reintroduce the very duplicate this pass
+    // just nudged it away from, undoing the nudge and breaking the strictly-
+    // increasing-times guarantee this method exists to provide.
     var clampedLapCount = 0;
     final clampedLaps = <Lap>[];
     for (final lap in expandedLaps) {
       if (lap.startTime.isAfter(lap.endTime)) {
         clampedLapCount++;
-        clampedLaps.add(lap.copyWith(startTime: lap.endTime));
+        clampedLaps.add(lap.copyWith(endTime: lap.startTime));
       } else {
         clampedLaps.add(lap);
       }

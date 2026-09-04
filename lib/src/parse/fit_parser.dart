@@ -1393,7 +1393,7 @@ List<GeoPoint> _filterContiguousPoints(
   // tell those two cases apart from here, so the point is kept and flagged
   // rather than silently dropped.
   var flaggedEdgeAnomalies = 0;
-  if (currentGroup.length >= 3) {
+  if (currentGroup.length >= 2) {
     if (haversineMeters(currentGroup[0], currentGroup[1]) > 100000) {
       flaggedEdgeAnomalies++;
     }

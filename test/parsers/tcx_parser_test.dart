@@ -718,6 +718,51 @@ void main() {
           contains('lossy.tcx_activity_metadata_dropped'),
         );
       });
+
+      test('a later activity that simply omits Creator does not spuriously '
+          'report a drop (absent is not distinct)', () {
+        const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
+<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+  <Activities>
+    <Activity Sport="Running">
+      <Id>2024-01-01T10:00:00Z</Id>
+      <Lap StartTime="2024-01-01T10:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T10:00:00Z</Time>
+            <Position><LatitudeDegrees>40.0</LatitudeDegrees><LongitudeDegrees>-105.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+      <Creator xsi:type="Device_t">
+        <Name>Forerunner 945</Name>
+      </Creator>
+    </Activity>
+    <Activity Sport="Biking">
+      <Id>2024-01-01T11:00:00Z</Id>
+      <Lap StartTime="2024-01-01T11:00:00Z">
+        <TotalTimeSeconds>10</TotalTimeSeconds>
+        <DistanceMeters>50</DistanceMeters>
+        <Track>
+          <Trackpoint>
+            <Time>2024-01-01T11:00:00Z</Time>
+            <Position><LatitudeDegrees>41.0</LatitudeDegrees><LongitudeDegrees>-106.0</LongitudeDegrees></Position>
+          </Trackpoint>
+        </Track>
+      </Lap>
+    </Activity>
+  </Activities>
+</TrainingCenterDatabase>''';
+        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+
+        expect(result.activity.device?.model, equals('Forerunner 945'));
+        expect(
+          result.diagnostics.map((d) => d.code),
+          isNot(contains('lossy.tcx_activity_metadata_dropped')),
+        );
+      });
     });
   });
 }

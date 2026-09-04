@@ -448,6 +448,19 @@ void main() {
         reason: 'lap startTime must never end up after its own endTime',
       );
       expect(
+        laps[1].startTime,
+        equals(laps[1].endTime),
+        reason: 'clamped to zero-length, not a negative or positive one',
+      );
+      expect(
+        laps[1].startTime,
+        isNot(equals(laps[0].startTime)),
+        reason:
+            'clamping by moving endTime forward to the already-nudged '
+            'startTime must not reintroduce the duplicate startTime the '
+            'tie-break nudge just resolved',
+      );
+      expect(
         editor.repairDiagnostics.map((d) => d.code),
         contains('repaired.lap_negative_duration_clamped'),
       );

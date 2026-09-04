@@ -130,7 +130,12 @@ class TcxParser implements ActivityFormatParser {
         device = creatorInfo.device;
       } else if ((creatorInfo.creator != null &&
               creatorInfo.creator != creator) ||
-          !_sameDevice(creatorInfo.device, device)) {
+          (creatorInfo.device != null &&
+              !_sameDevice(creatorInfo.device, device))) {
+        // A later <Activity> that simply omits Creator/device (both null
+        // here) isn't distinct metadata being dropped, just absent; only a
+        // later activity that actually supplies its own differing value
+        // counts as a real drop.
         droppedActivityMetadata = true;
       }
 
