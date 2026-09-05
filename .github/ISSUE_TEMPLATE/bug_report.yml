@@ -21,7 +21,11 @@ body:
   - type: dropdown
     id: format
     attributes:
-      label: File format
+      label: File format(s)
+      description: >-
+        Select all involved. For a conversion bug, that's both the source
+        and target format.
+      multiple: true
       options:
         - GPX
         - TCX
@@ -31,6 +35,21 @@ body:
         - Not sure / N/A
     validations:
       required: true
+  - type: dropdown
+    id: operation
+    attributes:
+      label: Operation
+      description: Which part of the pipeline was involved, if known.
+      multiple: true
+      options:
+        - Parsing (load)
+        - Encoding / conversion
+        - Validation
+        - Merge / split
+        - Point editing (RawEditor)
+        - Not sure / N/A
+    validations:
+      required: false
   - type: textarea
     id: error
     attributes:
@@ -53,7 +72,7 @@ body:
     id: version
     attributes:
       label: activity_files version
-      placeholder: "0.7.6"
+      placeholder: "0.7.8"
     validations:
       required: true
   - type: checkboxes

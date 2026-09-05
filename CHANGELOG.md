@@ -1,4 +1,6 @@
 # Changelog
+## 0.7.8
+
 ## 0.7.7
 ### Fixed
 - FIT no longer nulls out a legitimate max-range value (e.g. a calories/power reading of 255) that collides with a narrower type's sentinel.
