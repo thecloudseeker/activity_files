@@ -10,6 +10,15 @@ final DateTime _geojsonFallbackTimestamp = DateTime.fromMillisecondsSinceEpoch(
   isUtc: true,
 );
 
+const ParseDiagnostic _syntheticTimestampDiagnostic = ParseDiagnostic(
+  severity: ParseSeverity.warning,
+  code: 'geojson.feature.missing_timestamp',
+  message:
+      'Feature has no per-point or feature-level timestamp data; its '
+      'points were given a synthetic epoch-based fallback time, not a real '
+      'recording time.',
+);
+
 /// Type-checking casts instead of `as`: a malformed feature (e.g. a
 /// `"geometry"` field that's a string, not an object) must degrade to a
 /// per-feature diagnostic, not an uncaught TypeError that wipes every other
@@ -113,6 +122,23 @@ class GeojsonParser implements ActivityFormatParser {
     }).toList();
 
     if (pointFeatures.length == features.length) {
+      if (!_anyFeatureHasParseableTimestamp(pointFeatures)) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.point_features_dropped',
+            message:
+                '${pointFeatures.length} standalone Point feature(s) with no '
+                'per-point timestamp carry no track-ordering signal and were '
+                'treated as unrelated markers, not a connected track.',
+          ),
+        );
+        return ActivityParseResult(
+          activity: RawActivity(),
+          diagnostics: diagnostics,
+        );
+      }
+
       final points = <GeoPoint>[];
       final channelMap = <Channel, List<Sample>>{};
       Sport? sport;
@@ -232,11 +258,6 @@ class GeojsonParser implements ActivityFormatParser {
     final parsedTracks = [
       for (final feature in trackFeatures) _parseFeature(feature, diagnostics),
     ];
-    // The first track feature to actually produce points becomes primary,
-    // not always index 0: a corrupt first feature (e.g. all-malformed
-    // coordinates) would otherwise strand a later, valid track's data in
-    // additionalTracks, where most callers reading activity.points directly
-    // never look.
     final primaryIndex = parsedTracks.indexWhere(
       (r) => r.activity.points.isNotEmpty,
     );
@@ -323,6 +344,9 @@ class GeojsonParser implements ActivityFormatParser {
         properties,
         diagnostics,
       );
+      if (times == null && properties['timestamp'] == null) {
+        diagnostics.add(_syntheticTimestampDiagnostic);
+      }
       for (var i = 0; i < coordinates.length; i++) {
         final coord = coordinates[i];
         if (coord is! List || coord.length < 2) continue;
@@ -366,6 +390,9 @@ class GeojsonParser implements ActivityFormatParser {
       );
       final lineTimes = _multiLineCoordinateTimes(properties);
       final coordinateChannels = _coordinateChannels(properties);
+      if (lineTimes == null && properties['timestamp'] == null) {
+        diagnostics.add(_syntheticTimestampDiagnostic);
+      }
       for (var lineIndex = 0; lineIndex < coordinates.length; lineIndex++) {
         final lineCoords = coordinates[lineIndex];
         if (lineCoords is! List) continue;
@@ -407,6 +434,9 @@ class GeojsonParser implements ActivityFormatParser {
           properties,
           diagnostics,
         );
+        if (times == null && properties['timestamp'] == null) {
+          diagnostics.add(_syntheticTimestampDiagnostic);
+        }
         for (var i = 0; i < exterior.length; i++) {
           final coord = exterior[i];
           if (coord is! List || coord.length < 2) continue;
@@ -620,6 +650,21 @@ class GeojsonParser implements ActivityFormatParser {
           .putIfAbsent(Channel.custom(entry.key), () => [])
           .add(Sample(time: timestamp, value: value.toDouble()));
     }
+  }
+
+  static bool _anyFeatureHasParseableTimestamp(List<Map> pointFeatures) {
+    for (final feature in pointFeatures) {
+      final properties = _asMapOrNull(feature['properties']);
+      final raw = properties?['timestamp'];
+      if (raw == null) continue;
+      try {
+        parseTimestampAssumeUtc(raw.toString());
+        return true;
+      } catch (_) {
+        continue;
+      }
+    }
+    return false;
   }
 
   /// Parses `properties['timestamp']`, if present. Callers that share one

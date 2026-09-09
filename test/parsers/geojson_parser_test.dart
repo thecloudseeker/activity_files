@@ -1078,5 +1078,226 @@ void main() {
         );
       });
     });
+
+    group('all-Point FeatureCollection with no timestamp signal', () {
+      test('is treated as unrelated markers, not a connected track', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            for (var i = 0; i < 5; i++)
+              {
+                'type': 'Feature',
+                'geometry': {
+                  'type': 'Point',
+                  'coordinates': [-105.0 + i * 0.01, 40.0 + i * 0.01],
+                },
+                'properties': {},
+              },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, isEmpty);
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('geojson.point_features_dropped'),
+        );
+      });
+
+      test('is still read as a track when at least one feature carries a '
+          'timestamp', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'Point',
+                'coordinates': [-105.0, 40.0],
+              },
+              'properties': {},
+            },
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'Point',
+                'coordinates': [-105.01, 40.01],
+              },
+              'properties': {'timestamp': '2024-01-01T10:00:10Z'},
+            },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(result.activity.points, hasLength(2));
+      });
+    });
+
+    group('synthetic fallback timestamps', () {
+      test('a LineString with no coordTimes/timestamp gets a warning that '
+          'its points are synthetic', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              [-105.0, 40.0],
+              [-105.001, 40.001],
+            ],
+          },
+          'properties': {},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('geojson.feature.missing_timestamp'),
+        );
+      });
+
+      test('a LineString with coordTimes does not get the synthetic-'
+          'timestamp warning', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'LineString',
+            'coordinates': [
+              [-105.0, 40.0],
+              [-105.001, 40.001],
+            ],
+          },
+          'properties': {
+            'coordTimes': ['2024-01-01T10:00:00Z', '2024-01-01T10:00:10Z'],
+          },
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.diagnostics.map((d) => d.code),
+          isNot(contains('geojson.feature.missing_timestamp')),
+        );
+      });
+
+      test('a MultiLineString with no coordTimes/timestamp gets the '
+          'synthetic-timestamp warning', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'MultiLineString',
+            'coordinates': [
+              [
+                [-105.0, 40.0],
+                [-105.001, 40.001],
+              ],
+            ],
+          },
+          'properties': {},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('geojson.feature.missing_timestamp'),
+        );
+      });
+
+      test('a Polygon with no coordTimes/timestamp gets the synthetic-'
+          'timestamp warning', () {
+        final geojson = {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'Polygon',
+            'coordinates': [
+              [
+                [-105.0, 40.0],
+                [-105.001, 40.0],
+                [-105.001, 40.001],
+                [-105.0, 40.0],
+              ],
+            ],
+          },
+          'properties': {},
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('geojson.feature.missing_timestamp'),
+        );
+      });
+
+      test('an untimed LineString mixed with a genuinely-timestamped one '
+          'keeps both tracks\' points instead of dropping the untimed one', () {
+        final geojson = {
+          'type': 'FeatureCollection',
+          'features': [
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  [-105.0, 40.0],
+                  [-105.001, 40.001],
+                ],
+              },
+              'properties': {
+                'coordTimes': ['2020-01-01T00:00:00Z', '2020-01-01T00:00:10Z'],
+              },
+            },
+            {
+              'type': 'Feature',
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  [-106.0, 41.0],
+                  [-106.001, 41.001],
+                  [-106.002, 41.002],
+                ],
+              },
+              'properties': {},
+            },
+          ],
+        };
+
+        final result = ActivityParser.parse(
+          jsonEncode(geojson),
+          ActivityFileFormat.geojson,
+        );
+
+        expect(
+          result.diagnostics.where(
+            (d) => d.code == 'geojson.feature.missing_timestamp',
+          ),
+          hasLength(1),
+        );
+        expect(result.activity.points, hasLength(2));
+        expect(result.activity.additionalTracks, hasLength(1));
+        expect(result.activity.additionalTracks.first.points, hasLength(3));
+      });
+    });
   });
 }

@@ -133,7 +133,25 @@ class TcxEncoder implements ActivityFormatEncoder {
                     nest: group.laps.first.startTime.toUtc().toIso8601String(),
                   );
                   var wroteTrackExtensions = false;
-                  for (final lap in group.laps) {
+                  for (final (lapIndex, lap) in group.laps.indexed) {
+                    final prevLap = lapIndex > 0
+                        ? group.laps[lapIndex - 1]
+                        : null;
+                    final nextLap = lapIndex < group.laps.length - 1
+                        ? group.laps[lapIndex + 1]
+                        : null;
+                    final effectiveStart = _lapEffectiveStart(
+                      lap.startTime,
+                      prevLap?.endTime,
+                      isVeryFirstLap: groupIndex == 0 && lapIndex == 0,
+                    );
+                    final effectiveEnd = _lapEffectiveEnd(
+                      lap.endTime,
+                      nextLap?.startTime,
+                      isVeryLastLap:
+                          groupIndex == lapGroups.length - 1 &&
+                          lapIndex == group.laps.length - 1,
+                    );
                     builder.element(
                       'Lap',
                       attributes: {
@@ -219,8 +237,10 @@ class TcxEncoder implements ActivityFormatEncoder {
                             GeoPoint? previous;
                             for (final point in points.where(
                               (p) =>
-                                  !p.time.isBefore(lap.startTime) &&
-                                  !p.time.isAfter(lap.endTime) &&
+                                  (effectiveStart == null ||
+                                      !p.time.isBefore(effectiveStart)) &&
+                                  (effectiveEnd == null ||
+                                      !p.time.isAfter(effectiveEnd)) &&
                                   !writtenPointTimes.contains(p.time),
                             )) {
                               writtenPointTimes.add(point.time);
@@ -509,6 +529,30 @@ List<_LapGroup> _groupLapsBySport(List<Lap> laps, Sport activitySport) {
     }
   }
   return groups.isEmpty ? [_LapGroup(activitySport, laps)] : groups;
+}
+
+DateTime? _lapEffectiveStart(
+  DateTime start,
+  DateTime? prevLapEnd, {
+  required bool isVeryFirstLap,
+}) {
+  if (prevLapEnd == null) return isVeryFirstLap ? null : start;
+  if (prevLapEnd.isBefore(start)) {
+    return prevLapEnd.add(start.difference(prevLapEnd) ~/ 2);
+  }
+  return start;
+}
+
+DateTime? _lapEffectiveEnd(
+  DateTime end,
+  DateTime? nextLapStart, {
+  required bool isVeryLastLap,
+}) {
+  if (nextLapStart == null) return isVeryLastLap ? null : end;
+  if (end.isBefore(nextLapStart)) {
+    return end.add(nextLapStart.difference(end) ~/ 2);
+  }
+  return end;
 }
 
 String _round(double value, int precision) => value.toStringAsFixed(precision);

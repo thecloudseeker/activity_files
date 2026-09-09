@@ -1,5 +1,9 @@
 # Changelog
 ## 0.7.8
+### Fixed
+- GeoJSON no longer treats an all-Point `FeatureCollection` with no timestamps as one connected track; it's read as unrelated markers now, matching GPX's own waypoint handling.
+- GeoJSON LineString/MultiLineString/Polygon features with no timestamp data no longer get an unmarked synthetic epoch fallback time; a diagnostic reports it now.
+- TCX export no longer drops a point sitting outside every lap's time range; lap boundaries are widened to cover it now.
 
 ## 0.7.7
 ### Fixed

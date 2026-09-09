@@ -448,6 +448,118 @@ void main() {
 
         expect(lapElement.getAttribute('StartTime'), contains('2024-01-01'));
       });
+
+      test('a point recorded before the first lap starts is kept, not '
+          'dropped', () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+            GeoPoint(
+              latitude: 40.0001,
+              longitude: -105.0,
+              time: base.add(const Duration(seconds: 5)),
+            ),
+            GeoPoint(
+              latitude: 40.0002,
+              longitude: -105.0,
+              time: base.add(const Duration(seconds: 10)),
+            ),
+          ],
+          laps: [
+            Lap(
+              startTime: base.add(const Duration(seconds: 1)),
+              endTime: base.add(const Duration(seconds: 10)),
+            ),
+          ],
+        );
+
+        final tcxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+        final times = doc.findAllElements('Time').toList();
+
+        expect(times, hasLength(3));
+        expect(times.first.innerText, equals(base.toIso8601String()));
+      });
+
+      test('a point recorded after the last lap ends is kept, not dropped', () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+            GeoPoint(
+              latitude: 40.0001,
+              longitude: -105.0,
+              time: base.add(const Duration(seconds: 5)),
+            ),
+            GeoPoint(
+              latitude: 40.0002,
+              longitude: -105.0,
+              time: base.add(const Duration(seconds: 15)),
+            ),
+          ],
+          laps: [
+            Lap(startTime: base, endTime: base.add(const Duration(seconds: 5))),
+          ],
+        );
+
+        final tcxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+        final times = doc.findAllElements('Time').toList();
+
+        expect(times, hasLength(3));
+        expect(
+          times.last.innerText,
+          equals(base.add(const Duration(seconds: 15)).toIso8601String()),
+        );
+      });
+
+      test('a point in a gap between two laps is kept, attributed to the '
+          'nearer lap', () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final activity = RawActivity(
+          points: [
+            for (var i = 0; i <= 9; i++)
+              GeoPoint(
+                latitude: 40.0 + i * 0.001,
+                longitude: -105.0,
+                time: base.add(Duration(seconds: i)),
+              ),
+          ],
+          laps: [
+            Lap(startTime: base, endTime: base.add(const Duration(seconds: 2))),
+            Lap(
+              startTime: base.add(const Duration(seconds: 6)),
+              endTime: base.add(const Duration(seconds: 9)),
+            ),
+          ],
+        );
+
+        final tcxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+        final lapElements = doc.findAllElements('Lap').toList();
+        final firstLapTimes = lapElements[0].findAllElements('Time').toList();
+        final secondLapTimes = lapElements[1].findAllElements('Time').toList();
+
+        expect(firstLapTimes.length + secondLapTimes.length, equals(10));
+        expect(
+          firstLapTimes.last.innerText,
+          equals(base.add(const Duration(seconds: 4)).toIso8601String()),
+        );
+        expect(
+          secondLapTimes.first.innerText,
+          equals(base.add(const Duration(seconds: 5)).toIso8601String()),
+        );
+      });
     });
 
     group('Multi-sport Activity splitting', () {
