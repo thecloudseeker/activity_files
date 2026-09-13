@@ -611,6 +611,132 @@ void main() {
         );
         expect(cyclingTrackpoints, hasLength(3));
       });
+
+      test('a point in the gap between the last lap of one sport and the '
+          'first lap of the next is kept, not dropped at the sport '
+          'boundary', () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        final transitionPoint = base.add(const Duration(seconds: 3));
+        final points = [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 2)),
+          ),
+          GeoPoint(latitude: 40.002, longitude: -105.0, time: transitionPoint),
+          GeoPoint(
+            latitude: 40.003,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 6)),
+          ),
+          GeoPoint(
+            latitude: 40.004,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 8)),
+          ),
+        ];
+        final laps = [
+          Lap(
+            startTime: base,
+            endTime: base.add(const Duration(seconds: 2)),
+            sport: Sport.swimming,
+            name: 'Swim',
+          ),
+          Lap(
+            startTime: base.add(const Duration(seconds: 6)),
+            endTime: base.add(const Duration(seconds: 8)),
+            sport: Sport.cycling,
+            name: 'Bike',
+          ),
+        ];
+        final activity = RawActivity(
+          points: points,
+          laps: laps,
+          sport: Sport.swimming,
+        );
+
+        final tcxString = ActivityEncoder.encode(
+          activity,
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+        final allTimes = doc
+            .findAllElements('Time')
+            .map((e) => DateTime.parse(e.innerText).toUtc())
+            .toSet();
+
+        expect(allTimes, contains(transitionPoint));
+      });
+
+      test('a point landing exactly on the midpoint of a cross-sport gap is '
+          'written once, to the earlier sport', () {
+        final base = DateTime.utc(2024, 1, 1, 10);
+        // Swim ends at +2s and bike starts at +6s, so the widened lap
+        // boundary splits that gap at +4s -- exactly where this point sits.
+        final midpoint = base.add(const Duration(seconds: 4));
+        final points = [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.001,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 2)),
+          ),
+          GeoPoint(latitude: 40.002, longitude: -105.0, time: midpoint),
+          GeoPoint(
+            latitude: 40.003,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 6)),
+          ),
+          GeoPoint(
+            latitude: 40.004,
+            longitude: -105.0,
+            time: base.add(const Duration(seconds: 8)),
+          ),
+        ];
+        final laps = [
+          Lap(
+            startTime: base,
+            endTime: base.add(const Duration(seconds: 2)),
+            sport: Sport.swimming,
+            name: 'Swim',
+          ),
+          Lap(
+            startTime: base.add(const Duration(seconds: 6)),
+            endTime: base.add(const Duration(seconds: 8)),
+            sport: Sport.cycling,
+            name: 'Bike',
+          ),
+        ];
+
+        final tcxString = ActivityEncoder.encode(
+          RawActivity(points: points, laps: laps, sport: Sport.swimming),
+          ActivityFileFormat.tcx,
+        );
+        final doc = XmlDocument.parse(tcxString);
+
+        List<DateTime> timesIn(XmlNode node) => node
+            .findAllElements('Time')
+            .map((e) => DateTime.parse(e.innerText).toUtc())
+            .toList();
+
+        final activities = doc.findAllElements('Activity').toList();
+        expect(activities, hasLength(2));
+
+        expect(
+          timesIn(doc).where((t) => t == midpoint),
+          hasLength(1),
+          reason: 'the midpoint point belongs to one sport, not both',
+        );
+        expect(timesIn(activities[0]), contains(midpoint));
+        expect(timesIn(activities[1]), isNot(contains(midpoint)));
+
+        // Splitting the gap still costs no points overall.
+        final written = timesIn(doc).toSet();
+        for (final point in points) {
+          expect(written, contains(point.time));
+        }
+      });
     });
 
     group('Empty activities', () {

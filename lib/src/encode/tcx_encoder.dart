@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
+import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
 
 import '../channel_mapper.dart';
@@ -58,7 +59,7 @@ class TcxEncoder implements ActivityFormatEncoder {
       namespaceRegistry[freePrefix] = namespaceRegistry.remove('ns3')!;
       extensionPrefixRemap = {'ns3': freePrefix};
     }
-    final laps = activity.laps.isNotEmpty
+    final unorderedLaps = activity.laps.isNotEmpty
         ? activity.laps
         : [
             Lap(
@@ -68,6 +69,16 @@ class TcxEncoder implements ActivityFormatEncoder {
               name: 'Lap 1',
             ),
           ];
+    // _lapEffectiveStart/_lapEffectiveEnd below find each lap's true
+    // chronological neighbor by adjacency in this list; callers normally
+    // sort laps first (RawEditor.sortAndDedup(), applied by default on
+    // convert()/export()), but nothing enforces that on a direct encode()
+    // call, and an out-of-order neighbor would silently widen a lap's
+    // window against the wrong boundary.
+    final laps = [...unorderedLaps];
+    if (!_isSortedByStart(laps)) {
+      mergeSort(laps, compare: (a, b) => a.startTime.compareTo(b.startTime));
+    }
     final hrDelta = options.maxDeltaFor(Channel.heartRate);
     final cadenceDelta = options.maxDeltaFor(Channel.cadence);
     final distanceDelta = options.maxDeltaFor(Channel.distance);
@@ -115,6 +126,21 @@ class TcxEncoder implements ActivityFormatEncoder {
         // multi-sport (triathlon) activity round-trips back to multiple
         // <Activity> elements. A single-sport activity yields exactly one.
         final lapGroups = _groupLapsBySport(laps, activity.sport);
+        // Each group is a contiguous slice of the (now globally sorted)
+        // `laps` list, so this maps a group's own lap index back to its
+        // position in that full list -- needed so a lap's chronological
+        // neighbor for boundary-widening is its true neighbor in the whole
+        // activity, not just within its own sport group. Using the
+        // group-local neighbor left a gap unwidened at every sport-to-sport
+        // transition (a lap at the edge of its group has no group-local
+        // neighbor even though the very next/previous lap, in the adjacent
+        // group, is right there).
+        final groupStartIndex = <int>[];
+        var runningOffset = 0;
+        for (final group in lapGroups) {
+          groupStartIndex.add(runningOffset);
+          runningOffset += group.laps.length;
+        }
         builder.element(
           'Activities',
           nest: () {
@@ -134,23 +160,20 @@ class TcxEncoder implements ActivityFormatEncoder {
                   );
                   var wroteTrackExtensions = false;
                   for (final (lapIndex, lap) in group.laps.indexed) {
-                    final prevLap = lapIndex > 0
-                        ? group.laps[lapIndex - 1]
+                    final globalIndex = groupStartIndex[groupIndex] + lapIndex;
+                    final prevLap = globalIndex > 0
+                        ? laps[globalIndex - 1]
                         : null;
-                    final nextLap = lapIndex < group.laps.length - 1
-                        ? group.laps[lapIndex + 1]
+                    final nextLap = globalIndex < laps.length - 1
+                        ? laps[globalIndex + 1]
                         : null;
                     final effectiveStart = _lapEffectiveStart(
                       lap.startTime,
                       prevLap?.endTime,
-                      isVeryFirstLap: groupIndex == 0 && lapIndex == 0,
                     );
                     final effectiveEnd = _lapEffectiveEnd(
                       lap.endTime,
                       nextLap?.startTime,
-                      isVeryLastLap:
-                          groupIndex == lapGroups.length - 1 &&
-                          lapIndex == group.laps.length - 1,
                     );
                     builder.element(
                       'Lap',
@@ -509,6 +532,13 @@ class TcxEncoder implements ActivityFormatEncoder {
   };
 }
 
+bool _isSortedByStart(List<Lap> laps) {
+  for (var i = 1; i < laps.length; i++) {
+    if (laps[i].startTime.isBefore(laps[i - 1].startTime)) return false;
+  }
+  return true;
+}
+
 /// A run of consecutive laps sharing one sport, emitted as one `<Activity>`.
 class _LapGroup {
   _LapGroup(this.sport, this.laps);
@@ -531,24 +561,36 @@ List<_LapGroup> _groupLapsBySport(List<Lap> laps, Sport activitySport) {
   return groups.isEmpty ? [_LapGroup(activitySport, laps)] : groups;
 }
 
-DateTime? _lapEffectiveStart(
-  DateTime start,
-  DateTime? prevLapEnd, {
-  required bool isVeryFirstLap,
-}) {
-  if (prevLapEnd == null) return isVeryFirstLap ? null : start;
+/// [prevLapEnd] is the chronologically previous lap's endTime across the
+/// *whole* activity (null only when this is the very first lap overall);
+/// widens the boundary halfway into a gap so a point sitting between two
+/// laps still lands in one of them, or leaves it unbounded (null) when
+/// there's truly no earlier lap to bound against.
+///
+/// The widened start sits one microsecond past the midpoint that
+/// [_lapEffectiveEnd] hands the previous lap, so a point landing exactly on
+/// the midpoint belongs to the earlier lap alone. Both windows are
+/// inclusive, and `writtenPointTimes` only dedupes within one `<Activity>`,
+/// so sharing that instant would write the point into both sports' tracks
+/// when the gap straddles a sport change. A lap whose start already equals
+/// or precedes [prevLapEnd] keeps its own start: overlapping laps are
+/// deduped within the group, and the shared instant of two *touching* laps
+/// is deliberately written to both sports (a transition point belongs to
+/// each).
+DateTime? _lapEffectiveStart(DateTime start, DateTime? prevLapEnd) {
+  if (prevLapEnd == null) return null;
   if (prevLapEnd.isBefore(start)) {
-    return prevLapEnd.add(start.difference(prevLapEnd) ~/ 2);
+    return prevLapEnd
+        .add(start.difference(prevLapEnd) ~/ 2)
+        .add(const Duration(microseconds: 1));
   }
   return start;
 }
 
-DateTime? _lapEffectiveEnd(
-  DateTime end,
-  DateTime? nextLapStart, {
-  required bool isVeryLastLap,
-}) {
-  if (nextLapStart == null) return isVeryLastLap ? null : end;
+/// See [_lapEffectiveStart]; [nextLapStart] is likewise the whole
+/// activity's next lap, not just this `<Activity>` group's.
+DateTime? _lapEffectiveEnd(DateTime end, DateTime? nextLapStart) {
+  if (nextLapStart == null) return null;
   if (end.isBefore(nextLapStart)) {
     return end.add(nextLapStart.difference(end) ~/ 2);
   }
