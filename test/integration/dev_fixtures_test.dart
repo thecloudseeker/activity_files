@@ -156,5 +156,9 @@ void main() {
         );
       }
     }
-  }, timeout: Timeout.factor(4));
+    // One parse plus up to two conversions per file, over however large a
+    // corpus the contributor has linked in (dev/fixtures entries are often
+    // symlinks to a directory of real device files, which Directory.list
+    // follows), so this needs far more than the default budget.
+  }, timeout: Timeout.factor(30));
 }

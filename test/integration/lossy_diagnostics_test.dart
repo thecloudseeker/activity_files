@@ -188,6 +188,44 @@ void main() {
       );
     });
 
+    test('a waypoints-only activity reports waypoints_dropped for every '
+        'format except GPX', () {
+      final waypointsOnly = RawActivity(
+        gpxWaypoints: [
+          GeoPoint(latitude: 47.0, longitude: 11.0, time: t0),
+          GeoPoint(latitude: 47.001, longitude: 11.001, time: t0),
+        ],
+      );
+      // FIT is excluded: it refuses to encode an activity with zero
+      // points/channels regardless of waypoints, a separate, pre-existing
+      // constraint unrelated to this diagnostic.
+      for (final to in [
+        ActivityFileFormat.tcx,
+        ActivityFileFormat.csv,
+        ActivityFileFormat.geojson,
+      ]) {
+        final result = ActivityFiles.export(
+          activity: waypointsOnly,
+          to: to,
+          normalize: false,
+          runValidation: false,
+        );
+        expect(
+          lossyCodes(result),
+          contains('lossy.waypoints_dropped'),
+          reason: '$to should report dropping the 2 waypoints',
+        );
+      }
+
+      final gpxResult = ActivityFiles.export(
+        activity: waypointsOnly,
+        to: ActivityFileFormat.gpx,
+        normalize: false,
+        runValidation: false,
+      );
+      expect(lossyCodes(gpxResult), isNot(contains('lossy.waypoints_dropped')));
+    });
+
     test('an activity with no extra features yields no lossy diagnostics', () {
       final plain = RawActivity(
         points: [

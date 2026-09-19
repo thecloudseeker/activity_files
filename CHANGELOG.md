@@ -1,4 +1,11 @@
 # Changelog
+## 0.7.8
+### Fixed
+- GeoJSON features with no timestamp data no longer get an unmarked synthetic epoch fallback time; a diagnostic reports it now.
+- GeoJSON no longer reports a moot missing-timestamp warning for a feature that has no valid coordinates at all.
+- TCX export no longer drops a point sitting outside every lap's time range, including across a sport-to-sport transition.
+- Exporting an activity whose only data is `gpxWaypoints` to a non-GPX format now reports `lossy.waypoints_dropped` instead of silently producing a near-empty file.
+
 ## 0.7.7
 ### Fixed
 - FIT no longer nulls out a legitimate max-range value (e.g. a calories/power reading of 255) that collides with a narrower type's sentinel.

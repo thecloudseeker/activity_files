@@ -1,0 +1,53 @@
+name: Feature request
+description: New format/device support, an API addition, or other enhancement.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like to see?
+      description: What's missing, and what would using it look like?
+      placeholder: >-
+        e.g. "Parse Suunto's proprietary FIT developer fields into named
+        channels instead of leaving them as raw extraFitFields."
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: File format(s)
+      description: Select all involved, if this is format-specific.
+      multiple: true
+      options:
+        - GPX
+        - TCX
+        - FIT
+        - GeoJSON
+        - CSV
+        - Not format-specific
+    validations:
+      required: false
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is this needed?
+      description: What are you trying to accomplish that isn't possible today?
+    validations:
+      required: true
+  - type: checkboxes
+    id: file
+    attributes:
+      label: Sample file
+      description: If this is format/device-specific, a sample is the most useful thing you can attach.
+      options:
+        - label: Attached below (drag and drop into the description box)
+        - label: Emailed to packages@eikedreier.xyz instead
+        - label: No file to share
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Links to relevant spec docs, other tools that support this, etc.
+    validations:
+      required: false
