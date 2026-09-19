@@ -449,6 +449,20 @@ class ActivityFiles {
         fix: 'Export to TCX or FIT to preserve laps.',
       );
     }
+    // gpxWaypoints only has a writer in gpx_encoder.dart; every other format
+    // silently drops it. Ordinarily a supplementary field alongside real
+    // track points, but a GeoJSON source with only untimed marker features
+    // (no track-ordering signal) parses to an activity whose *entire*
+    // payload lives in gpxWaypoints -- exporting that to anything but GPX
+    // would otherwise produce a near-empty file with no diagnostic at all.
+    if (to != ActivityFileFormat.gpx && activity.gpxWaypoints.isNotEmpty) {
+      add(
+        'waypoints_dropped',
+        '${activity.gpxWaypoints.length} waypoint(s) cannot be represented '
+            'in $format and are dropped.',
+        fix: 'Export to GPX to preserve waypoints.',
+      );
+    }
     // TCX's TPX extension only carries these five channels; there's no
     // fallback slot for arbitrary custom channels (unlike GPX's
     // TrackPointExtension, which round-trips unknown tags), so anything

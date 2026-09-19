@@ -122,26 +122,10 @@ class GeojsonParser implements ActivityFormatParser {
     }).toList();
 
     if (pointFeatures.length == features.length) {
-      if (!_anyFeatureHasParseableTimestamp(pointFeatures)) {
-        diagnostics.add(
-          ParseDiagnostic(
-            severity: ParseSeverity.warning,
-            code: 'geojson.point_features_dropped',
-            message:
-                '${pointFeatures.length} standalone Point feature(s) with no '
-                'per-point timestamp carry no track-ordering signal and were '
-                'treated as unrelated markers, not a connected track.',
-          ),
-        );
-        return ActivityParseResult(
-          activity: RawActivity(),
-          diagnostics: diagnostics,
-        );
-      }
-
       final points = <GeoPoint>[];
       final channelMap = <Channel, List<Sample>>{};
       Sport? sport;
+      var featuresWithoutTimestamp = 0;
 
       for (final feature in pointFeatures) {
         final geometry = _asMapOrNull(feature['geometry'])!;
@@ -157,6 +141,10 @@ class GeojsonParser implements ActivityFormatParser {
           );
           continue;
         }
+        // This feature's own timestamp, independent of whether any sibling
+        // feature has one; a feature with none still falls through to the
+        // synthetic epoch fallback and is counted for the warning below.
+        if (properties['timestamp'] == null) featuresWithoutTimestamp++;
         final point = _coordinateToGeoPoint(
           coordinates,
           properties,
@@ -174,6 +162,20 @@ class GeojsonParser implements ActivityFormatParser {
         if (sport == null || sport == Sport.unknown) {
           sport = _parseSport(properties['activity_type']?.toString());
         }
+      }
+
+      if (points.isNotEmpty && featuresWithoutTimestamp > 0) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.feature.missing_timestamp',
+            message:
+                '$featuresWithoutTimestamp of ${pointFeatures.length} Point '
+                'feature(s) have no timestamp property; those points were '
+                'given a synthetic epoch-based fallback time, not a real '
+                'recording time.',
+          ),
+        );
       }
 
       if (points.isEmpty) {
@@ -258,6 +260,10 @@ class GeojsonParser implements ActivityFormatParser {
     final parsedTracks = [
       for (final feature in trackFeatures) _parseFeature(feature, diagnostics),
     ];
+    // The first track with actual points becomes primary, not index 0: an
+    // empty/malformed first feature must not strand a later, valid track in
+    // additionalTracks instead of being the one callers see via
+    // activity.points.
     final primaryIndex = parsedTracks.indexWhere(
       (r) => r.activity.points.isNotEmpty,
     );
@@ -330,6 +336,16 @@ class GeojsonParser implements ActivityFormatParser {
     final geomType = _asStringOrNull(geometry['type']);
     final points = <GeoPoint>[];
     final channelMap = <Channel, List<Sample>>{};
+    // Where *this* feature put its synthetic-timestamp warning in the shared
+    // list, so the moot-warning cleanup below drops that entry rather than an
+    // identical one a sibling feature contributed. Only one geometry branch
+    // runs per call, and everything between here and that cleanup appends, so
+    // the recorded index stays valid.
+    int? syntheticTimestampIndex;
+    void addSyntheticTimestampDiagnostic() {
+      syntheticTimestampIndex = diagnostics.length;
+      diagnostics.add(_syntheticTimestampDiagnostic);
+    }
 
     if (geomType == 'LineString') {
       // LineString: array of [lon, lat, ...] coordinates. Per-point times may
@@ -344,8 +360,12 @@ class GeojsonParser implements ActivityFormatParser {
         properties,
         diagnostics,
       );
-      if (times == null && properties['timestamp'] == null) {
-        diagnostics.add(_syntheticTimestampDiagnostic);
+      if (!_hasTimestampForEveryPoint(
+        coordinates.length,
+        times,
+        sharedTimestamp,
+      )) {
+        addSyntheticTimestampDiagnostic();
       }
       for (var i = 0; i < coordinates.length; i++) {
         final coord = coordinates[i];
@@ -371,7 +391,20 @@ class GeojsonParser implements ActivityFormatParser {
       }
     } else if (geomType == 'Point') {
       // Point: [lon, lat, ...]
-      final point = _coordinateToGeoPoint(coordinates, properties, diagnostics);
+      final sharedTimestamp = _resolvePropertyTimestamp(
+        properties,
+        diagnostics,
+      );
+      if (!_hasTimestampForEveryPoint(1, null, sharedTimestamp)) {
+        addSyntheticTimestampDiagnostic();
+      }
+      final point = _coordinateToGeoPoint(
+        coordinates,
+        properties,
+        diagnostics,
+        timeOverride: sharedTimestamp,
+        resolvePropertyTimestamp: false,
+      );
       if (point != null) {
         points.add(point);
         _collectChannelSamples(point.time, properties, channelMap);
@@ -390,8 +423,12 @@ class GeojsonParser implements ActivityFormatParser {
       );
       final lineTimes = _multiLineCoordinateTimes(properties);
       final coordinateChannels = _coordinateChannels(properties);
-      if (lineTimes == null && properties['timestamp'] == null) {
-        diagnostics.add(_syntheticTimestampDiagnostic);
+      if (!_hasTimestampForEveryMultiLinePoint(
+        coordinates,
+        lineTimes,
+        sharedTimestamp,
+      )) {
+        addSyntheticTimestampDiagnostic();
       }
       for (var lineIndex = 0; lineIndex < coordinates.length; lineIndex++) {
         final lineCoords = coordinates[lineIndex];
@@ -434,8 +471,12 @@ class GeojsonParser implements ActivityFormatParser {
           properties,
           diagnostics,
         );
-        if (times == null && properties['timestamp'] == null) {
-          diagnostics.add(_syntheticTimestampDiagnostic);
+        if (!_hasTimestampForEveryPoint(
+          exterior.length,
+          times,
+          sharedTimestamp,
+        )) {
+          addSyntheticTimestampDiagnostic();
         }
         for (var i = 0; i < exterior.length; i++) {
           final coord = exterior[i];
@@ -482,6 +523,19 @@ class GeojsonParser implements ActivityFormatParser {
     }
 
     if (points.isEmpty) {
+      // A synthetic-timestamp warning added above (this feature had no
+      // timestamp signal) is moot once it turns out nothing survived to
+      // carry that timestamp at all; geojson.no_points already covers this
+      // case with the more specific error. This removes by index rather than
+      // by value because `diagnostics` is shared across every feature in a
+      // FeatureCollection and the warning is a single canonical const: a
+      // value-based remove deletes whichever copy sits first in the list,
+      // which may belong to another feature whose points did survive with
+      // fabricated timestamps.
+      final syntheticIndex = syntheticTimestampIndex;
+      if (syntheticIndex != null) {
+        diagnostics.removeAt(syntheticIndex);
+      }
       diagnostics.add(
         ParseDiagnostic(
           severity: ParseSeverity.error,
@@ -584,6 +638,43 @@ class GeojsonParser implements ActivityFormatParser {
     ];
   }
 
+  /// Whether every one of [count] points along a coordinate sequence will
+  /// get a genuine timestamp -- a feature-level [sharedTimestamp], or a
+  /// fully-populated, all-parseable per-point [times] array -- rather than
+  /// falling through to [_geojsonFallbackTimestamp] in
+  /// [_coordinateToGeoPoint]. A [times] array that merely exists but is
+  /// shorter than [count], or has an unparseable entry, still leaves at
+  /// least one point without a real timestamp.
+  static bool _hasTimestampForEveryPoint(
+    int count,
+    List<DateTime?>? times,
+    DateTime? sharedTimestamp,
+  ) {
+    if (sharedTimestamp != null) return true;
+    if (times == null || times.length < count) return false;
+    return times.take(count).every((t) => t != null);
+  }
+
+  /// [_hasTimestampForEveryPoint] for a MultiLineString's nested per-line
+  /// coordinate lists.
+  static bool _hasTimestampForEveryMultiLinePoint(
+    List coordinateLines,
+    List<List<DateTime?>?>? lineTimes,
+    DateTime? sharedTimestamp,
+  ) {
+    if (sharedTimestamp != null) return true;
+    if (lineTimes == null) return false;
+    for (var lineIndex = 0; lineIndex < coordinateLines.length; lineIndex++) {
+      final lineCoords = coordinateLines[lineIndex];
+      if (lineCoords is! List) continue;
+      final times = lineIndex < lineTimes.length ? lineTimes[lineIndex] : null;
+      if (!_hasTimestampForEveryPoint(lineCoords.length, times, null)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   static DateTime? _tryParseTimestampAssumeUtc(String text) {
     try {
       return parseTimestampAssumeUtc(text);
@@ -650,21 +741,6 @@ class GeojsonParser implements ActivityFormatParser {
           .putIfAbsent(Channel.custom(entry.key), () => [])
           .add(Sample(time: timestamp, value: value.toDouble()));
     }
-  }
-
-  static bool _anyFeatureHasParseableTimestamp(List<Map> pointFeatures) {
-    for (final feature in pointFeatures) {
-      final properties = _asMapOrNull(feature['properties']);
-      final raw = properties?['timestamp'];
-      if (raw == null) continue;
-      try {
-        parseTimestampAssumeUtc(raw.toString());
-        return true;
-      } catch (_) {
-        continue;
-      }
-    }
-    return false;
   }
 
   /// Parses `properties['timestamp']`, if present. Callers that share one
