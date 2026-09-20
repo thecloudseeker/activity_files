@@ -34,8 +34,6 @@ const int _maxFormatDetectBytes = 128 * 1024;
 class ActivityFiles {
   const ActivityFiles._();
 
-  static final List<SportMapper> _sportMappers = <SportMapper>[];
-
   /// Default maximum payload size (bytes) processed by loaders when handling
   /// inline strings/byte arrays or buffered streams.
   static const int defaultMaxPayloadBytes = _defaultStreamBufferLimitBytes;
@@ -44,6 +42,7 @@ class ActivityFiles {
       'https://schemas.activityfiles.dev/extensions';
   static const String gpxDefaultExtensionPrefix = 'ext';
 
+  // Import -- file/bytes/stream => RawActivity.
   /// Imports [source] into a [RawActivity], attempting to infer the file format.
   ///
   /// Supported source types:
@@ -157,582 +156,24 @@ class ActivityFiles {
     );
   }
 
-  /// Deprecated name for [import]; forwards with identical behavior.
-  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.9.0.')
-  static Future<ActivityLoadResult> load(
+  /// Attempts to detect the activity format without parsing.
+  ///
+  /// This helper is useful when you want to branch your own logic based on
+  /// format before calling [load] or [convert].
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit; pass `null`
+  /// to disable the limit.
+  static ActivityFileFormat? detectFormat(
     Object source, {
-    ActivityFileFormat? format,
-    bool useIsolate = true,
     Encoding encoding = utf8,
     bool allowFilePaths = false,
-    bool strictFitIntegrity = false,
-    FitCorruptionHandling fitCorruptionHandling =
-        FitCorruptionHandling.bestEffort,
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) => import(
+  }) => _detectFormatSync(
     source,
-    format: format,
-    useIsolate: useIsolate,
     encoding: encoding,
     allowFilePaths: allowFilePaths,
-    strictFitIntegrity: strictFitIntegrity,
-    fitCorruptionHandling: fitCorruptionHandling,
     maxPayloadBytes: maxPayloadBytes,
   );
-
-  /// Export an activity to CSV format.
-  @Deprecated(
-    'Use ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv) '
-    'instead. Will be removed in 0.9.0.',
-  )
-  static String exportToCsv(RawActivity activity) =>
-      CsvEncoder.encode(activity);
-
-  /// Export multiple activities to CSV format.
-  @Deprecated(
-    'Unused and will be removed in 0.9.0 with no replacement. Use '
-    'RawEditor.merge() followed by ActivityFiles.export() instead.',
-  )
-  static String exportToCsvMultiple(List<RawActivity> activities) =>
-      CsvEncoder.encodeMultiple(activities);
-
-  /// Import a CSV payload into a [RawActivity].
-  @Deprecated(
-    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
-    '(async, with normalize/validate). For a bare sync parse, use '
-    'CsvParser().parse(input) directly. Will be removed in 0.9.0.',
-  )
-  static ActivityParseResult importFromCsv(String input) =>
-      const CsvParser().parse(input);
-
-  /// Export an activity to GeoJSON FeatureCollection (LineString).
-  @Deprecated(
-    'Use ActivityFiles.export(activity: activity, to: '
-    'ActivityFileFormat.geojson) instead. Will be removed in 0.9.0.',
-  )
-  static String exportToGeojson(RawActivity activity) =>
-      GeojsonEncoder.encode(activity);
-
-  /// Export an activity to GeoJSON Point FeatureCollection.
-  static String exportToGeojsonPoints(
-    RawActivity activity, {
-    bool includeChannels = false,
-  }) => includeChannels
-      ? GeojsonEncoder.encodeAsPointsWithChannels(activity)
-      : GeojsonEncoder.encodeAsPoints(activity);
-
-  /// Import a GeoJSON payload into a [RawActivity].
-  @Deprecated(
-    'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
-    'instead (async, with normalize/validate). For a bare sync parse, use '
-    'GeojsonParser().parse(input) directly. Will be removed in 0.9.0.',
-  )
-  static ActivityParseResult importFromGeojson(String input) =>
-      const GeojsonParser().parse(input);
-
-  /// Converts [source] to [to], optionally inferring the source format.
-  ///
-  /// The returned [ActivityConversionResult] exposes the normalized activity,
-  /// encoder output, and parser diagnostics gathered while loading the source.
-  /// When [normalize] is `true` (default) the converter applies
-  /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to
-  /// encoding. When `false`, timestamps are still nudged into strict order
-  /// if needed (nothing is dropped); see `repaired.duplicate_timestamps_adjusted`.
-  /// Set [exportInIsolate] to `true` to offload encoding onto a background
-  /// isolate while keeping parsing control via [useIsolate]. Enable
-  /// [runValidation] to append structural validation diagnostics/results;
-  /// disable it when conversion throughput matters more than validation output.
-  ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
-  static Future<ActivityConversionResult> convert({
-    required Object source,
-    required ActivityFileFormat to,
-    ActivityFileFormat? from,
-    EncoderOptions options = const EncoderOptions(),
-    bool normalize = true,
-    bool useIsolate = true,
-    Encoding encoding = utf8,
-    bool allowFilePaths = false,
-    bool exportInIsolate = false,
-    bool runValidation = true,
-    bool strictFitIntegrity = false,
-    FitCorruptionHandling fitCorruptionHandling =
-        FitCorruptionHandling.bestEffort,
-    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) async {
-    final loadResult = await import(
-      source,
-      format: from,
-      useIsolate: useIsolate,
-      encoding: encoding,
-      allowFilePaths: allowFilePaths,
-      strictFitIntegrity: strictFitIntegrity,
-      fitCorruptionHandling: fitCorruptionHandling,
-      maxPayloadBytes: maxPayloadBytes,
-    );
-    var activity = loadResult.activity;
-    // Flatten before normalizing/ordering, not just before encoding: both of
-    // those steps (and the lossy-diagnostics checks below) otherwise only
-    // ever see the primary track, silently leaving additionalTracks' points,
-    // laps, sets, etc. unprocessed until the encoder's own internal flatten
-    // call right before writing bytes, by which point it's too late to fix
-    // them up. RawActivity.flattened() is a no-op when there's nothing to
-    // flatten, so this is free for single-track sources.
-    final additionalTrackCount = activity.additionalTracks.length;
-    if (to != ActivityFileFormat.gpx) {
-      activity = activity.flattened();
-    }
-    NormalizationStats? normalizationStats;
-    var repairDiagnostics = const <ValidationDiagnostic>[];
-    if (normalize) {
-      final normalized = _normalize(
-        activity,
-        sortAndDedup: true,
-        trimInvalid: true,
-        captureStats: true,
-      );
-      activity = normalized.activity;
-      normalizationStats = normalized.stats;
-      repairDiagnostics = normalized.repairDiagnostics;
-    }
-    var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
-    diagnostics.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
-    var exportActivity = activity;
-    if (!normalize) {
-      final ordered = _ensureOrderedForExport(activity);
-      exportActivity = ordered.activity;
-      diagnostics.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
-    }
-    if (to == ActivityFileFormat.gpx) {
-      final trackResult = _normalizeAdditionalTracksForExport(
-        exportActivity,
-        normalize: normalize,
-      );
-      exportActivity = trackResult.activity;
-      diagnostics.addAll(
-        trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
-      );
-    }
-    if (autoFix.isEnabled) {
-      final fixed = _autoFixCommonIssues(exportActivity, autoFix);
-      diagnostics = [
-        ...diagnostics,
-        ..._autoFixDiagnostics(exportActivity, fixed),
-      ];
-      exportActivity = fixed;
-    }
-    if (!exportInIsolate) {
-      diagnostics = [
-        ...diagnostics,
-        ..._lossyDiagnostics(
-          exportActivity,
-          to,
-          additionalTrackCount: additionalTrackCount,
-        ),
-      ];
-      final encoded = ActivityEncoder.encode(
-        exportActivity,
-        to,
-        options: options,
-      );
-      ValidationResult? validation;
-      Duration? validationDuration;
-      if (runValidation) {
-        final stopwatch = Stopwatch()..start();
-        validation = validateRawActivity(exportActivity);
-        stopwatch.stop();
-        validationDuration = stopwatch.elapsed;
-        diagnostics = [
-          ...diagnostics,
-          ..._diagnosticsFromValidation(validation),
-        ];
-      }
-      return ActivityConversionResult._(
-        activity: exportActivity,
-        sourceFormat: loadResult.format,
-        targetFormat: to,
-        diagnostics: diagnostics,
-        encoderOptions: options,
-        encoded: encoded,
-        validation: validation,
-        processingStats: ActivityProcessingStats(
-          normalization: normalizationStats,
-          validationDuration: validationDuration,
-        ),
-      );
-    }
-    // exportAsync's isolate path re-derives the rest of _lossyDiagnostics
-    // from exportActivity itself once it lands in _exportFromActivity, but
-    // exportActivity is already flattened by this point, so additionalTracks
-    // reads 0 there; only this one check needs the count captured above.
-    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
-      diagnostics = [
-        ...diagnostics,
-        ParseDiagnostic(
-          severity: ParseSeverity.info,
-          code: '${DiagnosticCategory.lossy}.multi_track_flattened',
-          message:
-              'Source contains $additionalTrackCount additional track(s); '
-              'the ${to.name} format cannot represent multiple tracks, so '
-              'all tracks are merged into one during encoding.',
-          suggestedFix: 'Export to GPX to preserve the multi-track structure.',
-          priority: 4,
-        ),
-      ];
-    }
-    final exportResult = await exportAsync(
-      activity: exportActivity,
-      to: to,
-      options: options,
-      normalize: false,
-      diagnostics: diagnostics,
-      runValidation: runValidation,
-      useIsolate: true,
-    );
-    return ActivityConversionResult._(
-      activity: exportResult.activity,
-      sourceFormat: loadResult.format,
-      targetFormat: to,
-      encoderOptions: options,
-      encoded: exportResult.encoded,
-      binary: exportResult.isBinary ? exportResult.asBytes() : null,
-      diagnostics: exportResult.diagnostics,
-      validation: exportResult.validation,
-      processingStats: exportResult.processingStats.copyWith(
-        normalization: normalizationStats,
-      ),
-    );
-  }
-
-  /// Diagnostics for data an [activity] carries that the [to] format cannot
-  /// represent, so target-format loss is reported rather than silent.
-  ///
-  /// Only *full* drops are reported: features the target encoder writes in some
-  /// form (e.g. GPX channel extensions, GeoJSON lap aggregates) are not flagged.
-  static List<ParseDiagnostic> _lossyDiagnostics(
-    RawActivity activity,
-    ActivityFileFormat to, {
-    required int additionalTrackCount,
-  }) {
-    final diagnostics = <ParseDiagnostic>[];
-    final format = to.name;
-    void add(String code, String message, {String? fix}) {
-      diagnostics.add(
-        ParseDiagnostic(
-          severity: ParseSeverity.info,
-          code: '${DiagnosticCategory.lossy}.$code',
-          message: message,
-          suggestedFix: fix,
-          priority: 4,
-        ),
-      );
-    }
-
-    const toFit = 'Export to FIT to preserve it.';
-    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
-      add(
-        'multi_track_flattened',
-        'Source contains $additionalTrackCount additional '
-            'track(s); the $format format cannot represent multiple tracks, so '
-            'all tracks are merged into one during encoding.',
-        fix: 'Export to GPX to preserve the multi-track structure.',
-      );
-    }
-    // Sets, timer events, swim lengths, additional sessions, and the session
-    // summary are only representable in FIT.
-    if (to != ActivityFileFormat.fit) {
-      if (activity.sets.isNotEmpty) {
-        add(
-          'sets_dropped',
-          '${activity.sets.length} strength-training set(s) cannot be '
-              'represented in $format and are dropped.',
-          fix: toFit,
-        );
-      }
-      if (activity.events.isNotEmpty) {
-        add(
-          'events_dropped',
-          '${activity.events.length} timer event(s) cannot be represented in '
-              '$format and are dropped.',
-          fix: toFit,
-        );
-      }
-      if (activity.lengths.isNotEmpty) {
-        add(
-          'lengths_dropped',
-          '${activity.lengths.length} pool-swim length(s) cannot be '
-              'represented in $format and are dropped.',
-          fix: toFit,
-        );
-      }
-      if (activity.additionalSessions.isNotEmpty) {
-        add(
-          'sessions_dropped',
-          '${activity.additionalSessions.length} additional session(s) cannot '
-              'be represented in $format and are dropped.',
-          fix: toFit,
-        );
-      }
-      if (activity.summary?.isNotEmpty ?? false) {
-        add(
-          'summary_dropped',
-          'The session summary statistics are not written to $format.',
-          fix: toFit,
-        );
-      }
-    }
-    // Laps survive in TCX (native) and GeoJSON (aggregate properties); GPX and
-    // CSV keep no lap information.
-    const noLapFormats = {ActivityFileFormat.gpx, ActivityFileFormat.csv};
-    if (noLapFormats.contains(to) && activity.laps.isNotEmpty) {
-      add(
-        'laps_dropped',
-        '${activity.laps.length} lap(s) cannot be represented in $format and '
-            'are dropped.',
-        fix: 'Export to TCX or FIT to preserve laps.',
-      );
-    }
-    // gpxWaypoints only has a writer in gpx_encoder.dart; every other format
-    // silently drops it. Ordinarily a supplementary field alongside real
-    // track points, but a GeoJSON source with only untimed marker features
-    // (no track-ordering signal) parses to an activity whose *entire*
-    // payload lives in gpxWaypoints -- exporting that to anything but GPX
-    // would otherwise produce a near-empty file with no diagnostic at all.
-    if (to != ActivityFileFormat.gpx && activity.gpxWaypoints.isNotEmpty) {
-      add(
-        'waypoints_dropped',
-        '${activity.gpxWaypoints.length} waypoint(s) cannot be represented '
-            'in $format and are dropped.',
-        fix: 'Export to GPX to preserve waypoints.',
-      );
-    }
-    // TCX's TPX extension only carries these five channels; there's no
-    // fallback slot for arbitrary custom channels (unlike GPX's
-    // TrackPointExtension, which round-trips unknown tags), so anything
-    // else is dropped rather than invented as a non-standard tag.
-    if (to == ActivityFileFormat.tcx) {
-      final tcxChannels = {
-        Channel.heartRate,
-        Channel.cadence,
-        Channel.speed,
-        Channel.power,
-        Channel.distance,
-      };
-      final droppedChannels =
-          activity.channels.keys
-              .where((channel) => !tcxChannels.contains(channel))
-              .map((channel) => channel.id)
-              .toList()
-            ..sort();
-      if (droppedChannels.isNotEmpty) {
-        add(
-          'channels_dropped',
-          'Channel(s) ${droppedChannels.join(', ')} cannot be represented '
-              'in TCX and are dropped.',
-          fix: 'Export to FIT, GPX, GeoJSON, or CSV to preserve them.',
-        );
-      }
-    }
-    // FIT timestamps are seconds (unsigned) since the FIT epoch
-    // (1989-12-31); anything earlier has no valid representation and is
-    // clamped to the epoch by the encoder.
-    if (to == ActivityFileFormat.fit && _hasPreFitEpochTimestamp(activity)) {
-      add(
-        'pre_fit_epoch_timestamps_clamped',
-        'Some timestamp(s) predate the FIT epoch (1989-12-31) and were '
-            'clamped to it; FIT cannot represent earlier dates.',
-      );
-    }
-    return diagnostics;
-  }
-
-  static bool _hasPreFitEpochTimestamp(RawActivity activity) =>
-      activity.points.any((p) => p.time.isBefore(fitEpoch)) ||
-      activity.channels.values.any(
-        (samples) => samples.any((s) => s.time.isBefore(fitEpoch)),
-      ) ||
-      activity.laps.any(
-        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
-      ) ||
-      activity.events.any((e) => e.time.isBefore(fitEpoch)) ||
-      activity.lengths.any(
-        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
-      ) ||
-      activity.sets.any(
-        (s) => s.startTime.isBefore(fitEpoch) || s.endTime.isBefore(fitEpoch),
-      );
-
-  /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
-  /// last-in-first-out so callers can override earlier defaults.
-  static void registerSportMapper(SportMapper mapper) {
-    if (_sportMappers.contains(mapper)) {
-      return;
-    }
-    _sportMappers.add(mapper);
-  }
-
-  /// Removes a previously registered [mapper].
-  static bool unregisterSportMapper(SportMapper mapper) =>
-      _sportMappers.remove(mapper);
-
-  /// Clears all registered sport mappers.
-  static void clearSportMappers() => _sportMappers.clear();
-
-  /// Resolves [Sport] by applying registered mappers and built-in heuristics.
-  static Sport inferSport(dynamic source, {Sport fallback = Sport.unknown}) {
-    final resolved = _resolveSport(source);
-    return resolved ?? fallback;
-  }
-
-  /// Starts a builder for assembling a [RawActivity] incrementally.
-  ///
-  /// Use [seed] to pre-populate the builder from an existing activity.
-  static RawActivityBuilder builder([RawActivity? seed]) =>
-      RawActivityBuilder(seed: seed);
-
-  /// Creates a builder populated from raw location/channel streams.
-  static RawActivityBuilder builderFromStreams({
-    required Iterable<LocationStreamSample> location,
-    Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
-    Iterable<Lap> laps = const <Lap>[],
-    StreamTimestampDecoder? timestampConverter,
-    Sport? sport,
-    String? creator,
-    ActivityDeviceMetadata? device,
-  }) {
-    final decode = timestampConverter ?? _defaultTimestampDecoder;
-    final rawBuilder = ActivityFiles.builder();
-    if (sport != null) {
-      rawBuilder.sport = sport;
-    }
-    if (creator != null) {
-      rawBuilder.creator = creator;
-    }
-    if (device != null) {
-      rawBuilder.setDeviceMetadata(device);
-    }
-    for (final sample in location) {
-      rawBuilder.addPoint(
-        latitude: sample.latitude,
-        longitude: sample.longitude,
-        elevation: sample.elevation,
-        time: decode(sample.timestamp),
-      );
-    }
-    for (final entry in channels.entries) {
-      for (final sample in entry.value) {
-        rawBuilder.addSample(
-          channel: entry.key,
-          time: decode(sample.timestamp),
-          value: sample.value.toDouble(),
-        );
-      }
-    }
-    if (laps.isNotEmpty) {
-      rawBuilder.addLaps(laps);
-    }
-    return rawBuilder;
-  }
-
-  /// Returns a [RawEditor] for fluent editing pipelines.
-  static RawEditor edit(RawActivity activity) => RawEditor(activity);
-
-  /// Returns a normalized copy applying common cleanup transforms.
-  ///
-  /// When [sortAndDedup] or [trimInvalid] are `false` the corresponding step is
-  /// skipped. Additional transforms can be chained post-call via
-  /// [ActivityFiles.edit].
-  @Deprecated(
-    'Use ActivityFiles.edit(activity).sortAndDedup().trimInvalid().activity '
-    'instead. Will be removed in 0.9.0.',
-  )
-  static RawActivity normalizeActivity(
-    RawActivity activity, {
-    bool sortAndDedup = true,
-    bool trimInvalid = true,
-  }) => _normalize(
-    activity,
-    sortAndDedup: sortAndDedup,
-    trimInvalid: trimInvalid,
-    captureStats: false,
-  ).activity;
-
-  /// Convenience wrapper for [RawEditor.sortAndDedup].
-  @Deprecated(
-    'Use ActivityFiles.edit(activity).sortAndDedup().activity instead. '
-    'Will be removed in 0.9.0.',
-  )
-  static RawActivity sortAndDedup(RawActivity activity) =>
-      RawEditor(activity).sortAndDedup().activity;
-
-  /// Convenience wrapper for [RawEditor.trimInvalid].
-  @Deprecated(
-    'Use ActivityFiles.edit(activity).trimInvalid().activity instead. '
-    'Will be removed in 0.9.0.',
-  )
-  static RawActivity trimInvalid(RawActivity activity) =>
-      RawEditor(activity).trimInvalid().activity;
-
-  /// Convenience wrapper for [RawEditor.crop].
-  @Deprecated(
-    'Use ActivityFiles.edit(activity).crop(start, end).activity instead. '
-    'Will be removed in 0.9.0.',
-  )
-  static RawActivity crop(
-    RawActivity activity, {
-    required DateTime start,
-    required DateTime end,
-  }) => RawEditor(activity).crop(start, end).activity;
-
-  /// Convenience wrapper for [RawEditor.smoothHR].
-  @Deprecated(
-    'Use ActivityFiles.edit(activity).smoothHR(window).activity instead. '
-    'Will be removed in 0.9.0.',
-  )
-  static RawActivity smoothHeartRate(RawActivity activity, {int window = 5}) =>
-      RawEditor(activity).smoothHR(window).activity;
-
-  /// Convenience wrapper for [RawEditor.recomputeDistanceAndSpeed].
-  @Deprecated(
-    'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed().activity '
-    'instead. Will be removed in 0.9.0.',
-  )
-  static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
-      RawEditor(activity).recomputeDistanceAndSpeed().activity;
-
-  /// Returns all channels from [activity] as [ChannelStreamSample] lists,
-  /// ready to pass directly to [convertAndExport].
-  ///
-  /// This removes the per-channel reconstruction glue when re-exporting a
-  /// previously imported [RawActivity]. Timestamps are milliseconds since the
-  /// epoch, matching [LocationStreamSample]/[ChannelStreamSample]'s
-  /// [StreamTimestampDecoder] contract used by [builderFromStreams] and
-  /// [convertAndExport] — round-tripping through this method does not lose
-  /// sub-second precision.
-  ///
-  /// ```dart
-  /// final channels = ActivityFiles.channelSamplesFrom(stored);
-  /// await ActivityFiles.convertAndExport(
-  ///   location: locationSamples,
-  ///   channels: channels,
-  ///   to: ActivityFileFormat.gpx,
-  /// );
-  /// ```
-  static Map<Channel, List<ChannelStreamSample>> channelSamplesFrom(
-    RawActivity activity,
-  ) {
-    final result = <Channel, List<ChannelStreamSample>>{};
-    for (final entry in activity.channels.entries) {
-      if (entry.value.isEmpty) continue;
-      result[entry.key] = [
-        for (final sample in entry.value)
-          (timestamp: sample.time.millisecondsSinceEpoch, value: sample.value),
-      ];
-    }
-    return result;
-  }
 
   /// Imports multiple sources in sequence and returns a [BatchImportResult].
   ///
@@ -795,944 +236,6 @@ class ActivityFiles {
       total: total,
     );
   }
-
-  /// Deprecated name for [importBatch]; forwards with identical behavior.
-  @Deprecated(
-    'Use ActivityFiles.importBatch instead. Will be removed in 0.9.0.',
-  )
-  static Future<BatchImportResult> loadBatch(
-    Iterable<Object> sources, {
-    ActivityFileFormat? format,
-    bool useIsolate = true,
-    void Function(int completed, int total)? onProgress,
-    bool stopOnError = false,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) => importBatch(
-    sources,
-    format: format,
-    useIsolate: useIsolate,
-    onProgress: onProgress,
-    stopOnError: stopOnError,
-    maxPayloadBytes: maxPayloadBytes,
-  );
-
-  static ({
-    RawActivity activity,
-    NormalizationStats? stats,
-    List<ValidationDiagnostic> repairDiagnostics,
-  })
-  _normalize(
-    RawActivity activity, {
-    required bool sortAndDedup,
-    required bool trimInvalid,
-    required bool captureStats,
-  }) {
-    final requested = sortAndDedup || trimInvalid;
-    // Short-circuit when data is already normalized to avoid redundant cloning
-    // in UI hot paths (performance optimization). Still counts as "applied"
-    // when normalization was requested, even though no changes were needed.
-    if (!requested ||
-        _isAlreadyNormalized(activity, sortAndDedup, trimInvalid)) {
-      final stats = captureStats
-          ? NormalizationStats(
-              applied: requested,
-              pointsBefore: activity.points.length,
-              pointsAfter: activity.points.length,
-              totalSamplesBefore: _totalSamples(activity),
-              totalSamplesAfter: _totalSamples(activity),
-              duration: Duration.zero,
-            )
-          : null;
-      return (activity: activity, stats: stats, repairDiagnostics: const []);
-    }
-    final beforePoints = activity.points.length;
-    final beforeSamples = captureStats ? _totalSamples(activity) : 0;
-    final stopwatch = Stopwatch()..start();
-    var editor = RawEditor(activity);
-    if (sortAndDedup) {
-      editor = editor.sortAndDedup();
-    }
-    if (trimInvalid) {
-      editor = editor.trimInvalid();
-    }
-    final normalized = editor.activity;
-    stopwatch.stop();
-    return (
-      activity: normalized,
-      stats: captureStats
-          ? NormalizationStats(
-              applied: true,
-              pointsBefore: beforePoints,
-              pointsAfter: normalized.points.length,
-              totalSamplesBefore: beforeSamples,
-              totalSamplesAfter: _totalSamples(normalized),
-              duration: stopwatch.elapsed,
-            )
-          : null,
-      repairDiagnostics: editor.repairDiagnostics,
-    );
-  }
-
-  /// Checks if the activity data is already normalized based on requested operations.
-  static bool _isAlreadyNormalized(
-    RawActivity activity,
-    bool checkSortAndDedup,
-    bool checkTrimInvalid,
-  ) {
-    if (checkSortAndDedup && !_isStrictlyOrderedActivity(activity)) {
-      return false;
-    }
-    if (checkTrimInvalid) {
-      final validCoordinates = activity.points.every(
-        (p) =>
-            p.latitude.isFinite &&
-            p.latitude >= -90 &&
-            p.latitude <= 90 &&
-            p.longitude.isFinite &&
-            p.longitude >= -180 &&
-            p.longitude <= 180 &&
-            !(p.latitude.abs() < 1e-6 && p.longitude.abs() < 1e-6) &&
-            (p.elevation == null || p.elevation! > -499.0),
-      );
-      if (!validCoordinates) return false;
-      if (activity.points.isNotEmpty) {
-        final start = activity.points.first.time;
-        final end = activity.points.last.time;
-        final channelsInRange = activity.channels.values.every(
-          (samples) => samples.every(
-            (s) => !s.time.isBefore(start) && !s.time.isAfter(end),
-          ),
-        );
-        if (!channelsInRange) return false;
-        final lapsInRange = activity.laps.every(
-          (lap) => !lap.startTime.isBefore(start) && !lap.endTime.isAfter(end),
-        );
-        if (!lapsInRange) return false;
-      }
-    }
-    return true;
-  }
-
-  static bool _isStrictlyOrderedActivity(RawActivity activity) =>
-      _isStrictlyOrdered(activity.points, (p) => p.time) &&
-      activity.channels.values.every(
-        (samples) => _isStrictlyOrdered(samples, (s) => s.time),
-      ) &&
-      _isStrictlyOrdered(activity.laps, (l) => l.startTime);
-
-  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
-  _ensureOrderedForExport(RawActivity activity) {
-    if (_isStrictlyOrderedActivity(activity)) {
-      return (activity: activity, diagnostics: const []);
-    }
-    final editor = RawEditor(activity).ensureStrictTimeOrder();
-    return (activity: editor.activity, diagnostics: editor.repairDiagnostics);
-  }
-
-  /// Runs the same normalize-or-order-for-export step applied to the
-  /// primary track on each of [activity]'s `additionalTracks`.
-  ///
-  /// GPX is the only target that keeps `additionalTracks` instead of
-  /// flattening them into the primary track before export (see convert()'s
-  /// flatten comment), so it's the only path where secondary tracks would
-  /// otherwise skip sortAndDedup/trimInvalid/time-ordering entirely.
-  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
-  _normalizeAdditionalTracksForExport(
-    RawActivity activity, {
-    required bool normalize,
-  }) {
-    if (activity.additionalTracks.isEmpty) {
-      return (activity: activity, diagnostics: const []);
-    }
-    final diagnostics = <ValidationDiagnostic>[];
-    final tracks = <RawActivity>[];
-    for (final track in activity.additionalTracks) {
-      if (normalize) {
-        final result = _normalize(
-          track,
-          sortAndDedup: true,
-          trimInvalid: true,
-          captureStats: false,
-        );
-        tracks.add(result.activity);
-        diagnostics.addAll(result.repairDiagnostics);
-      } else {
-        final result = _ensureOrderedForExport(track);
-        tracks.add(result.activity);
-        diagnostics.addAll(result.diagnostics);
-      }
-    }
-    return (
-      activity: activity.copyWith(additionalTracks: tracks),
-      diagnostics: diagnostics,
-    );
-  }
-
-  /// Checks if a list is sorted by time with no duplicate timestamps
-  /// (each entry strictly after its predecessor).
-  static bool _isStrictlyOrdered<T>(
-    List<T> items,
-    DateTime Function(T) timeOf,
-  ) {
-    for (var i = 1; i < items.length; i++) {
-      if (!timeOf(items[i]).toUtc().isAfter(timeOf(items[i - 1]).toUtc())) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  /// Performs structural validation and returns detailed findings.
-  static ValidationResult validate(
-    RawActivity activity, {
-    Duration gapWarningThreshold = const Duration(minutes: 5),
-  }) => validateRawActivity(activity, gapWarningThreshold: gapWarningThreshold);
-
-  /// Maps channels close to [timestamp] for quick lookups and UI overlays.
-  static ChannelSnapshot channelSnapshot(
-    DateTime timestamp,
-    RawActivity activity, {
-    Duration maxDelta = const Duration(seconds: 5),
-  }) => ChannelMapper.mapAt(timestamp, activity.channels, maxDelta: maxDelta);
-
-  /// Deprecated name for [RawEditor.merge]; forwards with identical behavior.
-  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.9.0.')
-  static RawActivity merge(
-    List<RawActivity> activities, {
-    bool preserveSportPerLap = false,
-    bool normalize = true,
-    String? creator,
-  }) => RawEditor.merge(
-    activities,
-    preserveSportPerLap: preserveSportPerLap,
-    normalize: normalize,
-    creator: creator,
-  );
-
-  /// Deprecated name for [RawEditor.splitBySport]; forwards with identical
-  /// behavior.
-  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.9.0.')
-  static Map<Sport, RawActivity> splitBySport(
-    RawActivity activity, {
-    bool normalize = true,
-  }) => RawEditor.splitBySport(activity, normalize: normalize);
-
-  /// Deprecated name for [RawActivityBuilder.activityLabelNode]; forwards
-  /// with identical behavior.
-  @Deprecated(
-    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.9.0.',
-  )
-  static GpxExtensionNode gpxActivityLabelNode(
-    String label, {
-    String prefix = gpxDefaultExtensionPrefix,
-    String? namespaceUri,
-    Map<String, String> attributes = const <String, String>{},
-  }) => RawActivityBuilder.activityLabelNode(
-    label,
-    prefix: prefix,
-    namespaceUri: namespaceUri,
-    attributes: attributes,
-  );
-
-  /// Deprecated name for [RawActivityBuilder.deviceNode]; forwards with
-  /// identical behavior.
-  @Deprecated(
-    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.9.0.',
-  )
-  static GpxExtensionNode gpxDeviceNode(
-    ActivityDeviceMetadata metadata, {
-    String prefix = gpxDefaultExtensionPrefix,
-    String? namespaceUri,
-    Map<String, String> attributes = const <String, String>{},
-    Map<String, Object?> extras = const <String, Object?>{},
-  }) => RawActivityBuilder.deviceNode(
-    metadata,
-    prefix: prefix,
-    namespaceUri: namespaceUri,
-    attributes: attributes,
-    extras: extras,
-  );
-
-  /// Deprecated name for [RawActivityBuilder.deviceSummaryNode]; forwards
-  /// with identical behavior.
-  @Deprecated(
-    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.9.0.',
-  )
-  static GpxExtensionNode gpxDeviceSummaryNode(
-    ActivityDeviceMetadata metadata, {
-    String prefix = gpxDefaultExtensionPrefix,
-    String? namespaceUri,
-    Map<String, Object?> extras = const <String, Object?>{},
-  }) => RawActivityBuilder.deviceSummaryNode(
-    metadata,
-    prefix: prefix,
-    namespaceUri: namespaceUri,
-    extras: extras,
-  );
-
-  static DateTime _defaultTimestampDecoder(int timestamp) =>
-      DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true);
-
-  static Sport? _resolveSport(dynamic source) {
-    final custom = _applySportMappers(source);
-    if (custom != null) {
-      return custom;
-    }
-    final primitive = _inferSportPrimitive(source);
-    if (primitive != null) {
-      return primitive;
-    }
-    if (source is Map) {
-      for (final value in source.values) {
-        final nested = _resolveSport(value);
-        if (nested != null) {
-          return nested;
-        }
-      }
-    } else if (source is Iterable) {
-      for (final value in source) {
-        final nested = _resolveSport(value);
-        if (nested != null) {
-          return nested;
-        }
-      }
-    }
-    return null;
-  }
-
-  static Sport? _applySportMappers(dynamic source) {
-    for (var i = _sportMappers.length - 1; i >= 0; i--) {
-      final result = _sportMappers[i](source);
-      if (result != null) {
-        return result;
-      }
-    }
-    return null;
-  }
-
-  static Sport? _inferSportPrimitive(dynamic source) => switch (source) {
-    null => null,
-    final Sport sport => sport,
-    final String text => _inferSportFromString(text),
-    final num value
-        when value.toInt() >= 0 && value.toInt() < _sportByNumericId.length =>
-      _sportByNumericId[value.toInt()],
-    _ => null,
-  };
-
-  static final RegExp _sportDelimiter = RegExp(r'[^a-z0-9]+');
-
-  /// Keyword matching order matters: earlier entries win on mixed labels.
-  static const Map<Sport, List<String>> _sportKeywords = {
-    Sport.running: ['run', 'running', 'jog', 'jogging'],
-    Sport.cycling: ['cycle', 'cycling', 'bike', 'biking', 'ride'],
-    Sport.swimming: ['swim', 'swimming'],
-    Sport.walking: ['walk', 'walking'],
-    Sport.hiking: ['hike', 'hiking'],
-    Sport.other: ['other'],
-  };
-
-  static const List<Sport> _sportByNumericId = [
-    Sport.other,
-    Sport.running,
-    Sport.cycling,
-    Sport.swimming,
-    Sport.walking,
-    Sport.hiking,
-  ];
-
-  static Sport? _inferSportFromString(String text) {
-    final tokens = text
-        .trim()
-        .toLowerCase()
-        .split(_sportDelimiter)
-        .where((token) => token.isNotEmpty)
-        .toSet();
-    for (final entry in _sportKeywords.entries) {
-      if (entry.value.any(tokens.contains)) {
-        return entry.key;
-      }
-    }
-    return null;
-  }
-
-  /// Encodes an in-memory [activity] to [to], returning encoded payloads and
-  /// aggregated diagnostics.
-  static ActivityExportResult export({
-    required RawActivity activity,
-    required ActivityFileFormat to,
-    EncoderOptions options = const EncoderOptions(),
-    bool normalize = true,
-    Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
-    bool runValidation = true,
-    ValidationResult? validation,
-  }) => _exportFromActivity(
-    activity: activity,
-    to: to,
-    options: options,
-    normalize: normalize,
-    diagnostics: diagnostics,
-    runValidation: runValidation,
-    validation: validation,
-  );
-
-  static ActivityExportResult _exportFromActivity({
-    required RawActivity activity,
-    required ActivityFileFormat to,
-    required EncoderOptions options,
-    required bool normalize,
-    required Iterable<ParseDiagnostic> diagnostics,
-    required bool runValidation,
-    ValidationResult? validation,
-  }) {
-    var working = activity;
-    // See convert()'s matching comment: flatten before normalizing/ordering
-    // so additionalTracks' points/laps/sets go through the same repairs as
-    // the primary track, not just the encoder's own last-minute flatten.
-    final additionalTrackCount = working.additionalTracks.length;
-    if (to != ActivityFileFormat.gpx) {
-      working = working.flattened();
-    }
-    NormalizationStats? normalizationStats;
-    var repairDiagnostics = const <ValidationDiagnostic>[];
-    if (!normalize) {
-      final ordered = _ensureOrderedForExport(working);
-      working = ordered.activity;
-      repairDiagnostics = ordered.diagnostics;
-    }
-    if (normalize) {
-      final normalized = _normalize(
-        working,
-        sortAndDedup: true,
-        trimInvalid: true,
-        captureStats: true,
-      );
-      working = normalized.activity;
-      normalizationStats = normalized.stats;
-      repairDiagnostics = normalized.repairDiagnostics;
-    }
-    if (to == ActivityFileFormat.gpx) {
-      final trackResult = _normalizeAdditionalTracksForExport(
-        working,
-        normalize: normalize,
-      );
-      working = trackResult.activity;
-      repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
-    }
-    final encoded = ActivityEncoder.encode(working, to, options: options);
-    final binary = to == ActivityFileFormat.fit
-        ? Uint8List.fromList(base64Decode(encoded))
-        : null;
-    Duration? validationDuration;
-    final validationResult =
-        validation ??
-        (runValidation
-            ? (() {
-                final stopwatch = Stopwatch()..start();
-                final result = validateRawActivity(working);
-                stopwatch.stop();
-                validationDuration = stopwatch.elapsed;
-                return result;
-              })()
-            : null);
-    if (validation != null && runValidation) {
-      validationDuration ??= Duration.zero;
-    }
-    final mergedDiagnostics = <ParseDiagnostic>[
-      ...diagnostics,
-      ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
-      ..._lossyDiagnostics(
-        working,
-        to,
-        additionalTrackCount: additionalTrackCount,
-      ),
-      if (validationResult != null)
-        ..._diagnosticsFromValidation(validationResult),
-    ];
-    return ActivityExportResult._(
-      activity: working,
-      targetFormat: to,
-      encoderOptions: options,
-      encoded: encoded,
-      binary: binary,
-      diagnostics: mergedDiagnostics,
-      validation: validationResult,
-      processingStats: ActivityProcessingStats(
-        normalization: normalizationStats,
-        validationDuration: validationDuration,
-      ),
-    );
-  }
-
-  /// Asynchronous variant of [export] with optional isolate offloading.
-  static Future<ActivityExportResult> exportAsync({
-    required RawActivity activity,
-    required ActivityFileFormat to,
-    EncoderOptions options = const EncoderOptions(),
-    bool normalize = true,
-    Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
-    bool runValidation = true,
-    ValidationResult? validation,
-    bool useIsolate = true,
-  }) async {
-    if (!useIsolate) {
-      return Future.value(
-        export(
-          activity: activity,
-          to: to,
-          options: options,
-          normalize: normalize,
-          diagnostics: diagnostics,
-          runValidation: runValidation,
-          validation: validation,
-        ),
-      );
-    }
-    final request = <String, Object?>{
-      'activity': ExportSerialization.activityToJson(activity),
-      'targetFormat': to.index,
-      'options': ExportSerialization.encoderOptionsToJson(options),
-      'normalize': normalize,
-      'diagnostics': diagnostics
-          .map(ExportSerialization.diagnosticToJson)
-          .toList(growable: false),
-      'runValidation': runValidation,
-      'validation': validation != null
-          ? ExportSerialization.validationToJson(validation)
-          : null,
-    };
-    final response = await isolate_runner.runWithIsolation(
-      () => _runExportIsolate(request),
-      useIsolate: useIsolate,
-    );
-    return _decodeExportResult(response);
-  }
-
-  static Map<String, Object?> _runExportIsolate(Map<String, Object?> request) {
-    final activity = ExportSerialization.activityFromJson(
-      (request['activity'] as Map).cast<String, Object?>(),
-    );
-    final format = ActivityFileFormat.values[request['targetFormat'] as int];
-    final options = ExportSerialization.encoderOptionsFromJson(
-      (request['options'] as Map).cast<String, Object?>(),
-    );
-    final diagnostics = (request['diagnostics'] as List<dynamic>)
-        .map<ParseDiagnostic>(
-          (entry) => ExportSerialization.diagnosticFromJson(
-            (entry as Map).cast<String, Object?>(),
-          ),
-        )
-        .toList(growable: false);
-    final validation = request['validation'] is Map
-        ? ExportSerialization.validationFromJson(
-            (request['validation'] as Map).cast<String, Object?>(),
-          )
-        : null;
-    final result = export(
-      activity: activity,
-      to: format,
-      options: options,
-      normalize: request['normalize'] as bool,
-      diagnostics: diagnostics,
-      runValidation: request['runValidation'] as bool,
-      validation: validation,
-    );
-    return _encodeExportResult(result);
-  }
-
-  /// Converts a [source] stream, normalizes, and exports to [to].
-  ///
-  /// Parsing occurs via [ActivityParser.parseStream]. Toggle [parseInIsolate]
-  /// and [exportInIsolate] to control isolate offloading for parse and export.
-  ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for buffered
-  /// streams. Pass `null` to disable the limit.
-  static Future<ActivityExportResult> convertStream({
-    required Stream<List<int>> source,
-    required ActivityFileFormat from,
-    required ActivityFileFormat to,
-    EncoderOptions options = const EncoderOptions(),
-    bool normalize = true,
-    bool parseInIsolate = true,
-    bool exportInIsolate = false,
-    Encoding encoding = utf8,
-    bool runValidation = true,
-    bool strictFitIntegrity = false,
-    FitCorruptionHandling fitCorruptionHandling =
-        FitCorruptionHandling.bestEffort,
-    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) => _runPipeline(
-    ActivityExportRequest.fromStream(
-      stream: source,
-      from: from,
-      to: to,
-      options: options,
-      normalize: normalize,
-      parseInIsolate: parseInIsolate,
-      exportInIsolate: exportInIsolate,
-      runValidation: runValidation,
-      encoding: encoding,
-      strictFitIntegrity: strictFitIntegrity,
-      fitCorruptionHandling: fitCorruptionHandling,
-      autoFix: autoFix,
-      maxPayloadBytes: maxPayloadBytes,
-    ),
-  );
-
-  /// Deprecated name for [convertStream]; forwards with identical behavior.
-  @Deprecated(
-    'Use ActivityFiles.convertStream instead. Will be removed in 0.9.0.',
-  )
-  static Future<ActivityExportResult> convertAndExportStream({
-    required Stream<List<int>> source,
-    required ActivityFileFormat from,
-    required ActivityFileFormat to,
-    EncoderOptions options = const EncoderOptions(),
-    bool normalize = true,
-    bool parseInIsolate = true,
-    bool exportInIsolate = false,
-    Encoding encoding = utf8,
-    bool runValidation = true,
-    bool strictFitIntegrity = false,
-    FitCorruptionHandling fitCorruptionHandling =
-        FitCorruptionHandling.bestEffort,
-    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) => convertStream(
-    source: source,
-    from: from,
-    to: to,
-    options: options,
-    normalize: normalize,
-    parseInIsolate: parseInIsolate,
-    exportInIsolate: exportInIsolate,
-    encoding: encoding,
-    runValidation: runValidation,
-    strictFitIntegrity: strictFitIntegrity,
-    fitCorruptionHandling: fitCorruptionHandling,
-    autoFix: autoFix,
-    maxPayloadBytes: maxPayloadBytes,
-  );
-
-  /// Converts directly to an encoded payload, returning the export result for
-  /// chaining.
-  ///
-  /// Provide [source] to convert file/byte-backed content, or supply
-  /// [location] (plus optional [channels]) to build from raw sensor streams.
-  /// The normalized activity is validated by default and findings are appended
-  /// to diagnostics; set [runValidation] to `false` to skip validation. Set
-  /// [exportInIsolate] to `true` to offload encoding work to an isolate,
-  /// matching [convert].
-  ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
-  static Future<ActivityExportResult> convertAndExport({
-    Object? source,
-    Iterable<LocationStreamSample>? location,
-    Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
-    Iterable<Lap> laps = const <Lap>[],
-    Sport? sport,
-    Object? sportSource,
-    String? label,
-    String? creator,
-    ActivityDeviceMetadata? device,
-    StreamTimestampDecoder? timestampConverter,
-    Iterable<GpxExtensionNode> metadataExtensions = const [],
-    Iterable<GpxExtensionNode> trackExtensions = const [],
-    String? gpxMetadataName,
-    String? gpxMetadataDescription,
-    bool includeCreatorInGpxMetadataDescription = true,
-    String? gpxTrackName,
-    String? gpxTrackDescription,
-    String? gpxTrackType,
-    ActivityFileFormat? from,
-    required ActivityFileFormat to,
-    EncoderOptions options = const EncoderOptions(),
-    bool normalize = true,
-    bool useIsolate = true,
-    Encoding encoding = utf8,
-    bool allowFilePaths = false,
-    bool runValidation = true,
-    bool exportInIsolate = false,
-    bool strictFitIntegrity = false,
-    FitCorruptionHandling fitCorruptionHandling =
-        FitCorruptionHandling.bestEffort,
-    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) {
-    final hasSource = source != null;
-    final hasStreams = location != null;
-    if (hasSource && hasStreams) {
-      throw ArgumentError(
-        'Cannot specify both source and location/channels inputs.\n'
-        '\n'
-        'Choose one input method:\n'
-        '\n'
-        'Option A: Convert from file/bytes\n'
-        '  convertAndExport(source: File("activity.gpx"), to: ActivityFileFormat.tcx)\n'
-        '\n'
-        'Option B: Build from location and channel data\n'
-        '  convertAndExport(\n'
-        '    location: [LocationStreamSample(...)],\n'
-        '    channels: {Channel.heartRate: [ChannelStreamSample(...)]},\n'
-        '    to: ActivityFileFormat.gpx,\n'
-        '  )\n'
-        '\n'
-        'You specified both source and location. Please use only one.',
-      );
-    }
-    if (!hasSource && !hasStreams) {
-      throw ArgumentError(
-        'No input provided to convertAndExport. You must specify either source or location/channels.\n'
-        '\n'
-        'Example 1: Convert a file\n'
-        '  final result = await convertAndExport(\n'
-        '    source: File("activity.gpx"),\n'
-        '    to: ActivityFileFormat.fit,\n'
-        '  );\n'
-        '\n'
-        'Example 2: Convert from raw sensor data\n'
-        '  final result = await convertAndExport(\n'
-        '    location: gpsPoints,\n'
-        '    channels: {\n'
-        '      Channel.heartRate: heartRateSamples,\n'
-        '      Channel.cadence: cadenceSamples,\n'
-        '    },\n'
-        '    to: ActivityFileFormat.gpx,\n'
-        '  );\n'
-        '\n'
-        'Please provide one of: source (File, bytes, Stream) or location + channels.',
-      );
-    }
-
-    if (source != null) {
-      return _runPipeline(
-        ActivityExportRequest.fromSource(
-          source: source,
-          from: from,
-          to: to,
-          options: options,
-          normalize: normalize,
-          parseInIsolate: useIsolate,
-          runValidation: runValidation,
-          encoding: encoding,
-          exportInIsolate: exportInIsolate,
-          allowFilePaths: allowFilePaths,
-          strictFitIntegrity: strictFitIntegrity,
-          fitCorruptionHandling: fitCorruptionHandling,
-          autoFix: autoFix,
-          maxPayloadBytes: maxPayloadBytes,
-        ),
-      );
-    }
-    final primarySport =
-        sport ??
-        (sportSource != null
-            ? inferSport(sportSource, fallback: Sport.unknown)
-            : Sport.unknown);
-    final derivedSport = (primarySport == Sport.unknown && label != null)
-        ? inferSport(label, fallback: Sport.unknown)
-        : primarySport;
-    final builder = builderFromStreams(
-      location: location!,
-      channels: channels,
-      laps: laps,
-      timestampConverter: timestampConverter,
-      sport: derivedSport,
-      creator: creator,
-      device: device,
-    );
-    builder.gpxIncludeCreatorMetadataDescription =
-        includeCreatorInGpxMetadataDescription;
-    if (gpxMetadataName != null) {
-      builder.gpxMetadataName = gpxMetadataName;
-    }
-    if (gpxMetadataDescription != null) {
-      builder.gpxMetadataDescription = gpxMetadataDescription;
-    }
-    final resolvedTrackName = gpxTrackName ?? label;
-    if (resolvedTrackName != null) {
-      builder.gpxTrackName = resolvedTrackName;
-    }
-    if (gpxTrackDescription != null) {
-      builder.gpxTrackDescription = gpxTrackDescription;
-    }
-    if (gpxTrackType != null) {
-      builder.gpxTrackType = gpxTrackType;
-    }
-    if (metadataExtensions.isNotEmpty) {
-      builder.addGpxMetadataExtensions(metadataExtensions);
-    }
-    if (trackExtensions.isNotEmpty) {
-      builder.addGpxTrackExtensions(trackExtensions);
-    }
-    final activity = builder.build(normalize: false);
-    return _runPipeline(
-      ActivityExportRequest.fromActivity(
-        activity: activity,
-        to: to,
-        options: options,
-        normalize: normalize,
-        runValidation: runValidation,
-        exportInIsolate: exportInIsolate,
-        autoFix: autoFix,
-      ),
-    );
-  }
-
-  /// Runs the export pipeline using a declarative [ActivityExportRequest].
-  static Future<ActivityExportResult> runPipeline(
-    ActivityExportRequest request,
-  ) => _runPipeline(request);
-
-  static Future<ActivityExportResult> _runPipeline(
-    ActivityExportRequest request,
-  ) async {
-    if (request.activity != null) {
-      var activity = request.activity!;
-      var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
-      if (request.autoFix.isEnabled) {
-        final fixed = _autoFixCommonIssues(activity, request.autoFix);
-        diagnostics = [...diagnostics, ..._autoFixDiagnostics(activity, fixed)];
-        activity = fixed;
-      }
-      if (request.exportInIsolate) {
-        return exportAsync(
-          activity: activity,
-          to: request.to,
-          options: request.options,
-          normalize: request.normalize,
-          diagnostics: diagnostics,
-          runValidation: request.runValidation,
-          validation: request.validation,
-          useIsolate: true,
-        );
-      }
-      return _exportFromActivity(
-        activity: activity,
-        to: request.to,
-        options: request.options,
-        normalize: request.normalize,
-        diagnostics: diagnostics,
-        runValidation: request.runValidation,
-        validation: request.validation,
-      );
-    }
-    if (request.stream != null) {
-      ActivityParseResult parseResult;
-      try {
-        parseResult = await ActivityParser.parseStream(
-          request.stream!,
-          request.from!,
-          useIsolate: request.parseInIsolate,
-          encoding: request.encoding,
-          maxBytes: request.maxPayloadBytes,
-        );
-      } on FormatException catch (error) {
-        parseResult = _failedParseResult(format: request.from!, error: error);
-      }
-      if (_shouldFailFitIntegrity(
-        request.from!,
-        parseResult.diagnostics,
-        _resolveStrictFitHandling(
-          strictFitIntegrity: request.strictFitIntegrity,
-          fitCorruptionHandling: request.fitCorruptionHandling,
-        ),
-      )) {
-        throw _fitIntegrityFailure(parseResult.diagnostics);
-      }
-      var parsedActivity = parseResult.activity;
-      var parseDiagnostics = List<ParseDiagnostic>.from(
-        parseResult.diagnostics,
-      );
-      if (request.autoFix.isEnabled) {
-        final fixed = _autoFixCommonIssues(parsedActivity, request.autoFix);
-        parseDiagnostics = [
-          ...parseDiagnostics,
-          ..._autoFixDiagnostics(parsedActivity, fixed),
-        ];
-        parsedActivity = fixed;
-      }
-      final downstreamDiagnostics = <ParseDiagnostic>[
-        ...parseDiagnostics,
-        ...request.diagnostics,
-      ];
-      final downstreamRequest = ActivityExportRequest.fromActivity(
-        activity: parsedActivity,
-        to: request.to,
-        options: request.options,
-        normalize: request.normalize,
-        runValidation: request.runValidation,
-        exportInIsolate: request.exportInIsolate,
-        diagnostics: downstreamDiagnostics,
-        validation: request.validation,
-      );
-      return _runPipeline(downstreamRequest);
-    }
-    if (request.source != null) {
-      final conversion = await convert(
-        source: request.source!,
-        to: request.to,
-        from: request.from,
-        options: request.options,
-        normalize: request.normalize,
-        useIsolate: request.parseInIsolate,
-        encoding: request.encoding,
-        allowFilePaths: request.allowFilePaths,
-        exportInIsolate: request.exportInIsolate,
-        runValidation: request.runValidation,
-        strictFitIntegrity: request.strictFitIntegrity,
-        fitCorruptionHandling: request.fitCorruptionHandling,
-        autoFix: request.autoFix,
-        maxPayloadBytes: request.maxPayloadBytes,
-      );
-      var mergedDiagnostics = <ParseDiagnostic>[
-        ...conversion.diagnostics,
-        ...request.diagnostics,
-      ];
-      var result = conversion.copyWith(diagnostics: mergedDiagnostics);
-      if (request.runValidation && conversion.validation == null) {
-        final stopwatch = Stopwatch()..start();
-        final validation = validateRawActivity(result.activity);
-        stopwatch.stop();
-        mergedDiagnostics = [
-          ...mergedDiagnostics,
-          ..._diagnosticsFromValidation(validation),
-        ];
-        result = result.copyWith(
-          diagnostics: mergedDiagnostics,
-          validation: validation,
-          processingStats: result.processingStats.copyWith(
-            validationDuration: stopwatch.elapsed,
-          ),
-        );
-      }
-      return result;
-    }
-    throw StateError(
-      'ActivityExportRequest must specify an activity, source, or stream.',
-    );
-  }
-
-  /// Attempts to detect the activity format without parsing.
-  ///
-  /// This helper is useful when you want to branch your own logic based on
-  /// format before calling [load] or [convert].
-  ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit; pass `null`
-  /// to disable the limit.
-  static ActivityFileFormat? detectFormat(
-    Object source, {
-    Encoding encoding = utf8,
-    bool allowFilePaths = false,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
-  }) => _detectFormatSync(
-    source,
-    encoding: encoding,
-    allowFilePaths: allowFilePaths,
-    maxPayloadBytes: maxPayloadBytes,
-  );
 
   static Future<_ResolvedSource> _resolveSource(
     Object source, {
@@ -2280,9 +783,6 @@ class ActivityFiles {
     return ActivityParser.parseBytes(bytes, format, encoding: encoding);
   }
 
-  static int _totalSamples(RawActivity activity) => activity.channels.values
-      .fold(0, (total, samples) => total + samples.length);
-
   static bool _shouldFailFitIntegrity(
     ActivityFileFormat format,
     Iterable<ParseDiagnostic> diagnostics,
@@ -2303,6 +803,892 @@ class ActivityFiles {
   }) =>
       strictFitIntegrity ||
       fitCorruptionHandling == FitCorruptionHandling.strict;
+
+  static FormatException _fitIntegrityFailure(
+    Iterable<ParseDiagnostic> diagnostics,
+  ) {
+    final diagnosticInfo = diagnostics.isEmpty
+        ? ''
+        : '\nDiagnostics: ${diagnostics.map((d) => "${d.code} (${d.severity.name})").join(", ")}\n';
+    return FormatException(
+      'FIT integrity check failed. The file may be corrupted or incomplete.$diagnosticInfo'
+      '\n'
+      'Troubleshooting steps:\n'
+      '  1. Verify the file is complete (not truncated during transfer)\n'
+      '  2. Check that header/trailer CRCs are valid using FIT tools\n'
+      '  3. Try loading with strictFitIntegrity: false to recover partial data\n'
+      '  4. If the file was downloaded/transferred, retry the transfer\n'
+      '\n'
+      'If you need to proceed despite errors, use strictFitIntegrity: false.',
+    );
+  }
+
+  // Export -- RawActivity => encoded output.
+  /// Encodes an in-memory [activity] to [to], returning encoded payloads and
+  /// aggregated diagnostics.
+  static ActivityExportResult export({
+    required RawActivity activity,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
+    bool runValidation = true,
+    ValidationResult? validation,
+  }) => _exportFromActivity(
+    activity: activity,
+    to: to,
+    options: options,
+    normalize: normalize,
+    diagnostics: diagnostics,
+    runValidation: runValidation,
+    validation: validation,
+  );
+
+  static ActivityExportResult _exportFromActivity({
+    required RawActivity activity,
+    required ActivityFileFormat to,
+    required EncoderOptions options,
+    required bool normalize,
+    required Iterable<ParseDiagnostic> diagnostics,
+    required bool runValidation,
+    ValidationResult? validation,
+  }) {
+    var working = activity;
+    // See convert()'s matching comment: flatten before normalizing/ordering
+    // so additionalTracks' points/laps/sets go through the same repairs as
+    // the primary track, not just the encoder's own last-minute flatten.
+    final additionalTrackCount = working.additionalTracks.length;
+    if (to != ActivityFileFormat.gpx) {
+      working = working.flattened();
+    }
+    NormalizationStats? normalizationStats;
+    var repairDiagnostics = const <ValidationDiagnostic>[];
+    if (!normalize) {
+      final ordered = _ensureOrderedForExport(working);
+      working = ordered.activity;
+      repairDiagnostics = ordered.diagnostics;
+    }
+    if (normalize) {
+      final normalized = _normalize(
+        working,
+        sortAndDedup: true,
+        trimInvalid: true,
+        captureStats: true,
+      );
+      working = normalized.activity;
+      normalizationStats = normalized.stats;
+      repairDiagnostics = normalized.repairDiagnostics;
+    }
+    if (to == ActivityFileFormat.gpx) {
+      final trackResult = _normalizeAdditionalTracksForExport(
+        working,
+        normalize: normalize,
+      );
+      working = trackResult.activity;
+      repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
+    }
+    final encoded = ActivityEncoder.encode(working, to, options: options);
+    final binary = to == ActivityFileFormat.fit
+        ? Uint8List.fromList(base64Decode(encoded))
+        : null;
+    Duration? validationDuration;
+    final validationResult =
+        validation ??
+        (runValidation
+            ? (() {
+                final stopwatch = Stopwatch()..start();
+                final result = validateRawActivity(working);
+                stopwatch.stop();
+                validationDuration = stopwatch.elapsed;
+                return result;
+              })()
+            : null);
+    if (validation != null && runValidation) {
+      validationDuration ??= Duration.zero;
+    }
+    final mergedDiagnostics = <ParseDiagnostic>[
+      ...diagnostics,
+      ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
+      ..._lossyDiagnostics(
+        working,
+        to,
+        additionalTrackCount: additionalTrackCount,
+      ),
+      if (validationResult != null)
+        ..._diagnosticsFromValidation(validationResult),
+    ];
+    return ActivityExportResult._(
+      activity: working,
+      targetFormat: to,
+      encoderOptions: options,
+      encoded: encoded,
+      binary: binary,
+      diagnostics: mergedDiagnostics,
+      validation: validationResult,
+      processingStats: ActivityProcessingStats(
+        normalization: normalizationStats,
+        validationDuration: validationDuration,
+      ),
+    );
+  }
+
+  /// Asynchronous variant of [export] with optional isolate offloading.
+  static Future<ActivityExportResult> exportAsync({
+    required RawActivity activity,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
+    bool runValidation = true,
+    ValidationResult? validation,
+    bool useIsolate = true,
+  }) async {
+    if (!useIsolate) {
+      return Future.value(
+        export(
+          activity: activity,
+          to: to,
+          options: options,
+          normalize: normalize,
+          diagnostics: diagnostics,
+          runValidation: runValidation,
+          validation: validation,
+        ),
+      );
+    }
+    final request = <String, Object?>{
+      'activity': ExportSerialization.activityToJson(activity),
+      'targetFormat': to.index,
+      'options': ExportSerialization.encoderOptionsToJson(options),
+      'normalize': normalize,
+      'diagnostics': diagnostics
+          .map(ExportSerialization.diagnosticToJson)
+          .toList(growable: false),
+      'runValidation': runValidation,
+      'validation': validation != null
+          ? ExportSerialization.validationToJson(validation)
+          : null,
+    };
+    final response = await isolate_runner.runWithIsolation(
+      () => _runExportIsolate(request),
+      useIsolate: useIsolate,
+    );
+    return _decodeExportResult(response);
+  }
+
+  static Map<String, Object?> _runExportIsolate(Map<String, Object?> request) {
+    final activity = ExportSerialization.activityFromJson(
+      (request['activity'] as Map).cast<String, Object?>(),
+    );
+    final format = ActivityFileFormat.values[request['targetFormat'] as int];
+    final options = ExportSerialization.encoderOptionsFromJson(
+      (request['options'] as Map).cast<String, Object?>(),
+    );
+    final diagnostics = (request['diagnostics'] as List<dynamic>)
+        .map<ParseDiagnostic>(
+          (entry) => ExportSerialization.diagnosticFromJson(
+            (entry as Map).cast<String, Object?>(),
+          ),
+        )
+        .toList(growable: false);
+    final validation = request['validation'] is Map
+        ? ExportSerialization.validationFromJson(
+            (request['validation'] as Map).cast<String, Object?>(),
+          )
+        : null;
+    final result = export(
+      activity: activity,
+      to: format,
+      options: options,
+      normalize: request['normalize'] as bool,
+      diagnostics: diagnostics,
+      runValidation: request['runValidation'] as bool,
+      validation: validation,
+    );
+    return _encodeExportResult(result);
+  }
+
+  /// Export an activity to GeoJSON Point FeatureCollection.
+  static String exportToGeojsonPoints(
+    RawActivity activity, {
+    bool includeChannels = false,
+  }) => includeChannels
+      ? GeojsonEncoder.encodeAsPointsWithChannels(activity)
+      : GeojsonEncoder.encodeAsPoints(activity);
+
+  /// Diagnostics for data an [activity] carries that the [to] format cannot
+  /// represent, so target-format loss is reported rather than silent.
+  ///
+  /// Only *full* drops are reported: features the target encoder writes in some
+  /// form (e.g. GPX channel extensions, GeoJSON lap aggregates) are not flagged.
+  static List<ParseDiagnostic> _lossyDiagnostics(
+    RawActivity activity,
+    ActivityFileFormat to, {
+    required int additionalTrackCount,
+  }) {
+    final diagnostics = <ParseDiagnostic>[];
+    final format = to.name;
+    void add(String code, String message, {String? fix}) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: '${DiagnosticCategory.lossy}.$code',
+          message: message,
+          suggestedFix: fix,
+          priority: 4,
+        ),
+      );
+    }
+
+    const toFit = 'Export to FIT to preserve it.';
+    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
+      add(
+        'multi_track_flattened',
+        'Source contains $additionalTrackCount additional '
+            'track(s); the $format format cannot represent multiple tracks, so '
+            'all tracks are merged into one during encoding.',
+        fix: 'Export to GPX to preserve the multi-track structure.',
+      );
+    }
+    // Sets, timer events, swim lengths, additional sessions, and the session
+    // summary are only representable in FIT.
+    if (to != ActivityFileFormat.fit) {
+      if (activity.sets.isNotEmpty) {
+        add(
+          'sets_dropped',
+          '${activity.sets.length} strength-training set(s) cannot be '
+              'represented in $format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.events.isNotEmpty) {
+        add(
+          'events_dropped',
+          '${activity.events.length} timer event(s) cannot be represented in '
+              '$format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.lengths.isNotEmpty) {
+        add(
+          'lengths_dropped',
+          '${activity.lengths.length} pool-swim length(s) cannot be '
+              'represented in $format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.additionalSessions.isNotEmpty) {
+        add(
+          'sessions_dropped',
+          '${activity.additionalSessions.length} additional session(s) cannot '
+              'be represented in $format and are dropped.',
+          fix: toFit,
+        );
+      }
+      if (activity.summary?.isNotEmpty ?? false) {
+        add(
+          'summary_dropped',
+          'The session summary statistics are not written to $format.',
+          fix: toFit,
+        );
+      }
+    }
+    // Laps survive in TCX (native) and GeoJSON (aggregate properties); GPX and
+    // CSV keep no lap information.
+    const noLapFormats = {ActivityFileFormat.gpx, ActivityFileFormat.csv};
+    if (noLapFormats.contains(to) && activity.laps.isNotEmpty) {
+      add(
+        'laps_dropped',
+        '${activity.laps.length} lap(s) cannot be represented in $format and '
+            'are dropped.',
+        fix: 'Export to TCX or FIT to preserve laps.',
+      );
+    }
+    // gpxWaypoints only has a writer in gpx_encoder.dart; every other format
+    // silently drops it. Ordinarily a supplementary field alongside real
+    // track points, but a GeoJSON source with only untimed marker features
+    // (no track-ordering signal) parses to an activity whose *entire*
+    // payload lives in gpxWaypoints -- exporting that to anything but GPX
+    // would otherwise produce a near-empty file with no diagnostic at all.
+    if (to != ActivityFileFormat.gpx && activity.gpxWaypoints.isNotEmpty) {
+      add(
+        'waypoints_dropped',
+        '${activity.gpxWaypoints.length} waypoint(s) cannot be represented '
+            'in $format and are dropped.',
+        fix: 'Export to GPX to preserve waypoints.',
+      );
+    }
+    // TCX's TPX extension only carries these five channels; there's no
+    // fallback slot for arbitrary custom channels (unlike GPX's
+    // TrackPointExtension, which round-trips unknown tags), so anything
+    // else is dropped rather than invented as a non-standard tag.
+    if (to == ActivityFileFormat.tcx) {
+      final tcxChannels = {
+        Channel.heartRate,
+        Channel.cadence,
+        Channel.speed,
+        Channel.power,
+        Channel.distance,
+      };
+      final droppedChannels =
+          activity.channels.keys
+              .where((channel) => !tcxChannels.contains(channel))
+              .map((channel) => channel.id)
+              .toList()
+            ..sort();
+      if (droppedChannels.isNotEmpty) {
+        add(
+          'channels_dropped',
+          'Channel(s) ${droppedChannels.join(', ')} cannot be represented '
+              'in TCX and are dropped.',
+          fix: 'Export to FIT, GPX, GeoJSON, or CSV to preserve them.',
+        );
+      }
+    }
+    // FIT timestamps are seconds (unsigned) since the FIT epoch
+    // (1989-12-31); anything earlier has no valid representation and is
+    // clamped to the epoch by the encoder.
+    if (to == ActivityFileFormat.fit && _hasPreFitEpochTimestamp(activity)) {
+      add(
+        'pre_fit_epoch_timestamps_clamped',
+        'Some timestamp(s) predate the FIT epoch (1989-12-31) and were '
+            'clamped to it; FIT cannot represent earlier dates.',
+      );
+    }
+    return diagnostics;
+  }
+
+  static bool _hasPreFitEpochTimestamp(RawActivity activity) =>
+      activity.points.any((p) => p.time.isBefore(fitEpoch)) ||
+      activity.channels.values.any(
+        (samples) => samples.any((s) => s.time.isBefore(fitEpoch)),
+      ) ||
+      activity.laps.any(
+        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
+      ) ||
+      activity.events.any((e) => e.time.isBefore(fitEpoch)) ||
+      activity.lengths.any(
+        (l) => l.startTime.isBefore(fitEpoch) || l.endTime.isBefore(fitEpoch),
+      ) ||
+      activity.sets.any(
+        (s) => s.startTime.isBefore(fitEpoch) || s.endTime.isBefore(fitEpoch),
+      );
+
+  // Transform -- source format => target format, end to end.
+  /// Converts [source] to [to], optionally inferring the source format.
+  ///
+  /// The returned [ActivityConversionResult] exposes the normalized activity,
+  /// encoder output, and parser diagnostics gathered while loading the source.
+  /// When [normalize] is `true` (default) the converter applies
+  /// `RawEditor.sortAndDedup()` and `RawEditor.trimInvalid()` prior to
+  /// encoding. When `false`, timestamps are still nudged into strict order
+  /// if needed (nothing is dropped); see `repaired.duplicate_timestamps_adjusted`.
+  /// Set [exportInIsolate] to `true` to offload encoding onto a background
+  /// isolate while keeping parsing control via [useIsolate]. Enable
+  /// [runValidation] to append structural validation diagnostics/results;
+  /// disable it when conversion throughput matters more than validation output.
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
+  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
+  static Future<ActivityConversionResult> convert({
+    required Object source,
+    required ActivityFileFormat to,
+    ActivityFileFormat? from,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+    bool allowFilePaths = false,
+    bool exportInIsolate = false,
+    bool runValidation = true,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) async {
+    final loadResult = await import(
+      source,
+      format: from,
+      useIsolate: useIsolate,
+      encoding: encoding,
+      allowFilePaths: allowFilePaths,
+      strictFitIntegrity: strictFitIntegrity,
+      fitCorruptionHandling: fitCorruptionHandling,
+      maxPayloadBytes: maxPayloadBytes,
+    );
+    var activity = loadResult.activity;
+    // Flatten before normalizing/ordering, not just before encoding: both of
+    // those steps (and the lossy-diagnostics checks below) otherwise only
+    // ever see the primary track, silently leaving additionalTracks' points,
+    // laps, sets, etc. unprocessed until the encoder's own internal flatten
+    // call right before writing bytes, by which point it's too late to fix
+    // them up. RawActivity.flattened() is a no-op when there's nothing to
+    // flatten, so this is free for single-track sources.
+    final additionalTrackCount = activity.additionalTracks.length;
+    if (to != ActivityFileFormat.gpx) {
+      activity = activity.flattened();
+    }
+    NormalizationStats? normalizationStats;
+    var repairDiagnostics = const <ValidationDiagnostic>[];
+    if (normalize) {
+      final normalized = _normalize(
+        activity,
+        sortAndDedup: true,
+        trimInvalid: true,
+        captureStats: true,
+      );
+      activity = normalized.activity;
+      normalizationStats = normalized.stats;
+      repairDiagnostics = normalized.repairDiagnostics;
+    }
+    var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
+    diagnostics.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
+    var exportActivity = activity;
+    if (!normalize) {
+      final ordered = _ensureOrderedForExport(activity);
+      exportActivity = ordered.activity;
+      diagnostics.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
+    }
+    if (to == ActivityFileFormat.gpx) {
+      final trackResult = _normalizeAdditionalTracksForExport(
+        exportActivity,
+        normalize: normalize,
+      );
+      exportActivity = trackResult.activity;
+      diagnostics.addAll(
+        trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
+      );
+    }
+    if (autoFix.isEnabled) {
+      final fixed = _autoFixCommonIssues(exportActivity, autoFix);
+      diagnostics = [
+        ...diagnostics,
+        ..._autoFixDiagnostics(exportActivity, fixed),
+      ];
+      exportActivity = fixed;
+    }
+    if (!exportInIsolate) {
+      diagnostics = [
+        ...diagnostics,
+        ..._lossyDiagnostics(
+          exportActivity,
+          to,
+          additionalTrackCount: additionalTrackCount,
+        ),
+      ];
+      final encoded = ActivityEncoder.encode(
+        exportActivity,
+        to,
+        options: options,
+      );
+      ValidationResult? validation;
+      Duration? validationDuration;
+      if (runValidation) {
+        final stopwatch = Stopwatch()..start();
+        validation = validateRawActivity(exportActivity);
+        stopwatch.stop();
+        validationDuration = stopwatch.elapsed;
+        diagnostics = [
+          ...diagnostics,
+          ..._diagnosticsFromValidation(validation),
+        ];
+      }
+      return ActivityConversionResult._(
+        activity: exportActivity,
+        sourceFormat: loadResult.format,
+        targetFormat: to,
+        diagnostics: diagnostics,
+        encoderOptions: options,
+        encoded: encoded,
+        validation: validation,
+        processingStats: ActivityProcessingStats(
+          normalization: normalizationStats,
+          validationDuration: validationDuration,
+        ),
+      );
+    }
+    // exportAsync's isolate path re-derives the rest of _lossyDiagnostics
+    // from exportActivity itself once it lands in _exportFromActivity, but
+    // exportActivity is already flattened by this point, so additionalTracks
+    // reads 0 there; only this one check needs the count captured above.
+    if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
+      diagnostics = [
+        ...diagnostics,
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: '${DiagnosticCategory.lossy}.multi_track_flattened',
+          message:
+              'Source contains $additionalTrackCount additional track(s); '
+              'the ${to.name} format cannot represent multiple tracks, so '
+              'all tracks are merged into one during encoding.',
+          suggestedFix: 'Export to GPX to preserve the multi-track structure.',
+          priority: 4,
+        ),
+      ];
+    }
+    final exportResult = await exportAsync(
+      activity: exportActivity,
+      to: to,
+      options: options,
+      normalize: false,
+      diagnostics: diagnostics,
+      runValidation: runValidation,
+      useIsolate: true,
+    );
+    return ActivityConversionResult._(
+      activity: exportResult.activity,
+      sourceFormat: loadResult.format,
+      targetFormat: to,
+      encoderOptions: options,
+      encoded: exportResult.encoded,
+      binary: exportResult.isBinary ? exportResult.asBytes() : null,
+      diagnostics: exportResult.diagnostics,
+      validation: exportResult.validation,
+      processingStats: exportResult.processingStats.copyWith(
+        normalization: normalizationStats,
+      ),
+    );
+  }
+
+  /// Converts a [source] stream, normalizes, and exports to [to].
+  ///
+  /// Parsing occurs via [ActivityParser.parseStream]. Toggle [parseInIsolate]
+  /// and [exportInIsolate] to control isolate offloading for parse and export.
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for buffered
+  /// streams. Pass `null` to disable the limit.
+  static Future<ActivityExportResult> convertStream({
+    required Stream<List<int>> source,
+    required ActivityFileFormat from,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    bool parseInIsolate = true,
+    bool exportInIsolate = false,
+    Encoding encoding = utf8,
+    bool runValidation = true,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => _runPipeline(
+    ActivityExportRequest.fromStream(
+      stream: source,
+      from: from,
+      to: to,
+      options: options,
+      normalize: normalize,
+      parseInIsolate: parseInIsolate,
+      exportInIsolate: exportInIsolate,
+      runValidation: runValidation,
+      encoding: encoding,
+      strictFitIntegrity: strictFitIntegrity,
+      fitCorruptionHandling: fitCorruptionHandling,
+      autoFix: autoFix,
+      maxPayloadBytes: maxPayloadBytes,
+    ),
+  );
+
+  /// Converts directly to an encoded payload, returning the export result for
+  /// chaining.
+  ///
+  /// Provide [source] to convert file/byte-backed content, or supply
+  /// [location] (plus optional [channels]) to build from raw sensor streams.
+  /// The normalized activity is validated by default and findings are appended
+  /// to diagnostics; set [runValidation] to `false` to skip validation. Set
+  /// [exportInIsolate] to `true` to offload encoding work to an isolate,
+  /// matching [convert].
+  ///
+  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
+  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
+  static Future<ActivityExportResult> convertAndExport({
+    Object? source,
+    Iterable<LocationStreamSample>? location,
+    Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
+    Iterable<Lap> laps = const <Lap>[],
+    Sport? sport,
+    Object? sportSource,
+    String? label,
+    String? creator,
+    ActivityDeviceMetadata? device,
+    StreamTimestampDecoder? timestampConverter,
+    Iterable<GpxExtensionNode> metadataExtensions = const [],
+    Iterable<GpxExtensionNode> trackExtensions = const [],
+    String? gpxMetadataName,
+    String? gpxMetadataDescription,
+    bool includeCreatorInGpxMetadataDescription = true,
+    String? gpxTrackName,
+    String? gpxTrackDescription,
+    String? gpxTrackType,
+    ActivityFileFormat? from,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+    bool allowFilePaths = false,
+    bool runValidation = true,
+    bool exportInIsolate = false,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) {
+    final hasSource = source != null;
+    final hasStreams = location != null;
+    if (hasSource && hasStreams) {
+      throw ArgumentError(
+        'Cannot specify both source and location/channels inputs.\n'
+        '\n'
+        'Choose one input method:\n'
+        '\n'
+        'Option A: Convert from file/bytes\n'
+        '  convertAndExport(source: File("activity.gpx"), to: ActivityFileFormat.tcx)\n'
+        '\n'
+        'Option B: Build from location and channel data\n'
+        '  convertAndExport(\n'
+        '    location: [LocationStreamSample(...)],\n'
+        '    channels: {Channel.heartRate: [ChannelStreamSample(...)]},\n'
+        '    to: ActivityFileFormat.gpx,\n'
+        '  )\n'
+        '\n'
+        'You specified both source and location. Please use only one.',
+      );
+    }
+    if (!hasSource && !hasStreams) {
+      throw ArgumentError(
+        'No input provided to convertAndExport. You must specify either source or location/channels.\n'
+        '\n'
+        'Example 1: Convert a file\n'
+        '  final result = await convertAndExport(\n'
+        '    source: File("activity.gpx"),\n'
+        '    to: ActivityFileFormat.fit,\n'
+        '  );\n'
+        '\n'
+        'Example 2: Convert from raw sensor data\n'
+        '  final result = await convertAndExport(\n'
+        '    location: gpsPoints,\n'
+        '    channels: {\n'
+        '      Channel.heartRate: heartRateSamples,\n'
+        '      Channel.cadence: cadenceSamples,\n'
+        '    },\n'
+        '    to: ActivityFileFormat.gpx,\n'
+        '  );\n'
+        '\n'
+        'Please provide one of: source (File, bytes, Stream) or location + channels.',
+      );
+    }
+
+    if (source != null) {
+      return _runPipeline(
+        ActivityExportRequest.fromSource(
+          source: source,
+          from: from,
+          to: to,
+          options: options,
+          normalize: normalize,
+          parseInIsolate: useIsolate,
+          runValidation: runValidation,
+          encoding: encoding,
+          exportInIsolate: exportInIsolate,
+          allowFilePaths: allowFilePaths,
+          strictFitIntegrity: strictFitIntegrity,
+          fitCorruptionHandling: fitCorruptionHandling,
+          autoFix: autoFix,
+          maxPayloadBytes: maxPayloadBytes,
+        ),
+      );
+    }
+    final primarySport =
+        sport ??
+        (sportSource != null
+            ? inferSport(sportSource, fallback: Sport.unknown)
+            : Sport.unknown);
+    final derivedSport = (primarySport == Sport.unknown && label != null)
+        ? inferSport(label, fallback: Sport.unknown)
+        : primarySport;
+    final builder = builderFromStreams(
+      location: location!,
+      channels: channels,
+      laps: laps,
+      timestampConverter: timestampConverter,
+      sport: derivedSport,
+      creator: creator,
+      device: device,
+    );
+    builder.gpxIncludeCreatorMetadataDescription =
+        includeCreatorInGpxMetadataDescription;
+    if (gpxMetadataName != null) {
+      builder.gpxMetadataName = gpxMetadataName;
+    }
+    if (gpxMetadataDescription != null) {
+      builder.gpxMetadataDescription = gpxMetadataDescription;
+    }
+    final resolvedTrackName = gpxTrackName ?? label;
+    if (resolvedTrackName != null) {
+      builder.gpxTrackName = resolvedTrackName;
+    }
+    if (gpxTrackDescription != null) {
+      builder.gpxTrackDescription = gpxTrackDescription;
+    }
+    if (gpxTrackType != null) {
+      builder.gpxTrackType = gpxTrackType;
+    }
+    if (metadataExtensions.isNotEmpty) {
+      builder.addGpxMetadataExtensions(metadataExtensions);
+    }
+    if (trackExtensions.isNotEmpty) {
+      builder.addGpxTrackExtensions(trackExtensions);
+    }
+    final activity = builder.build(normalize: false);
+    return _runPipeline(
+      ActivityExportRequest.fromActivity(
+        activity: activity,
+        to: to,
+        options: options,
+        normalize: normalize,
+        runValidation: runValidation,
+        exportInIsolate: exportInIsolate,
+      ),
+    );
+  }
+
+  /// Runs the export pipeline using a declarative [ActivityExportRequest].
+  static Future<ActivityExportResult> runPipeline(
+    ActivityExportRequest request,
+  ) => _runPipeline(request);
+
+  static Future<ActivityExportResult> _runPipeline(
+    ActivityExportRequest request,
+  ) async {
+    if (request.activity != null) {
+      var activity = request.activity!;
+      var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
+      if (request.autoFix.isEnabled) {
+        final fixed = _autoFixCommonIssues(activity, request.autoFix);
+        diagnostics = [...diagnostics, ..._autoFixDiagnostics(activity, fixed)];
+        activity = fixed;
+      }
+      if (request.exportInIsolate) {
+        return exportAsync(
+          activity: activity,
+          to: request.to,
+          options: request.options,
+          normalize: request.normalize,
+          diagnostics: diagnostics,
+          runValidation: request.runValidation,
+          validation: request.validation,
+          useIsolate: true,
+        );
+      }
+      return _exportFromActivity(
+        activity: activity,
+        to: request.to,
+        options: request.options,
+        normalize: request.normalize,
+        diagnostics: diagnostics,
+        runValidation: request.runValidation,
+        validation: request.validation,
+      );
+    }
+    if (request.stream != null) {
+      ActivityParseResult parseResult;
+      try {
+        parseResult = await ActivityParser.parseStream(
+          request.stream!,
+          request.from!,
+          useIsolate: request.parseInIsolate,
+          encoding: request.encoding,
+          maxBytes: request.maxPayloadBytes,
+        );
+      } on FormatException catch (error) {
+        parseResult = _failedParseResult(format: request.from!, error: error);
+      }
+      if (_shouldFailFitIntegrity(
+        request.from!,
+        parseResult.diagnostics,
+        _resolveStrictFitHandling(
+          strictFitIntegrity: request.strictFitIntegrity,
+          fitCorruptionHandling: request.fitCorruptionHandling,
+        ),
+      )) {
+        throw _fitIntegrityFailure(parseResult.diagnostics);
+      }
+      var parsedActivity = parseResult.activity;
+      var parseDiagnostics = List<ParseDiagnostic>.from(
+        parseResult.diagnostics,
+      );
+      if (request.autoFix.isEnabled) {
+        final fixed = _autoFixCommonIssues(parsedActivity, request.autoFix);
+        parseDiagnostics = [
+          ...parseDiagnostics,
+          ..._autoFixDiagnostics(parsedActivity, fixed),
+        ];
+        parsedActivity = fixed;
+      }
+      final downstreamDiagnostics = <ParseDiagnostic>[
+        ...parseDiagnostics,
+        ...request.diagnostics,
+      ];
+      final downstreamRequest = ActivityExportRequest.fromActivity(
+        activity: parsedActivity,
+        to: request.to,
+        options: request.options,
+        normalize: request.normalize,
+        runValidation: request.runValidation,
+        exportInIsolate: request.exportInIsolate,
+        diagnostics: downstreamDiagnostics,
+        validation: request.validation,
+      );
+      return _runPipeline(downstreamRequest);
+    }
+    if (request.source != null) {
+      final conversion = await convert(
+        source: request.source!,
+        to: request.to,
+        from: request.from,
+        options: request.options,
+        normalize: request.normalize,
+        useIsolate: request.parseInIsolate,
+        encoding: request.encoding,
+        allowFilePaths: request.allowFilePaths,
+        exportInIsolate: request.exportInIsolate,
+        runValidation: request.runValidation,
+        strictFitIntegrity: request.strictFitIntegrity,
+        fitCorruptionHandling: request.fitCorruptionHandling,
+        autoFix: request.autoFix,
+        maxPayloadBytes: request.maxPayloadBytes,
+      );
+      var mergedDiagnostics = <ParseDiagnostic>[
+        ...conversion.diagnostics,
+        ...request.diagnostics,
+      ];
+      var result = conversion.copyWith(diagnostics: mergedDiagnostics);
+      if (request.runValidation && conversion.validation == null) {
+        final stopwatch = Stopwatch()..start();
+        final validation = validateRawActivity(result.activity);
+        stopwatch.stop();
+        mergedDiagnostics = [
+          ...mergedDiagnostics,
+          ..._diagnosticsFromValidation(validation),
+        ];
+        result = result.copyWith(
+          diagnostics: mergedDiagnostics,
+          validation: validation,
+          processingStats: result.processingStats.copyWith(
+            validationDuration: stopwatch.elapsed,
+          ),
+        );
+      }
+      return result;
+    }
+    throw StateError(
+      'ActivityExportRequest must specify an activity, source, or stream.',
+    );
+  }
 
   static RawActivity _autoFixCommonIssues(
     RawActivity activity,
@@ -2489,24 +1875,650 @@ class ActivityFiles {
     return activity.copyWith(points: output);
   }
 
-  static FormatException _fitIntegrityFailure(
-    Iterable<ParseDiagnostic> diagnostics,
-  ) {
-    final diagnosticInfo = diagnostics.isEmpty
-        ? ''
-        : '\nDiagnostics: ${diagnostics.map((d) => "${d.code} (${d.severity.name})").join(", ")}\n';
-    return FormatException(
-      'FIT integrity check failed. The file may be corrupted or incomplete.$diagnosticInfo'
-      '\n'
-      'Troubleshooting steps:\n'
-      '  1. Verify the file is complete (not truncated during transfer)\n'
-      '  2. Check that header/trailer CRCs are valid using FIT tools\n'
-      '  3. Try loading with strictFitIntegrity: false to recover partial data\n'
-      '  4. If the file was downloaded/transferred, retry the transfer\n'
-      '\n'
-      'If you need to proceed despite errors, use strictFitIntegrity: false.',
+  // Edit -- mutating an existing RawActivity. RawEditor is the primary
+  // editing surface (see edit()); these are normalization internals
+  // shared by import/convert/export.
+  /// Returns a [RawEditor] for fluent editing pipelines.
+  static RawEditor edit(RawActivity activity) => RawEditor(activity);
+
+  static ({
+    RawActivity activity,
+    NormalizationStats? stats,
+    List<ValidationDiagnostic> repairDiagnostics,
+  })
+  _normalize(
+    RawActivity activity, {
+    required bool sortAndDedup,
+    required bool trimInvalid,
+    required bool captureStats,
+  }) {
+    final requested = sortAndDedup || trimInvalid;
+    // Short-circuit when data is already normalized to avoid redundant cloning
+    // in UI hot paths (performance optimization). Still counts as "applied"
+    // when normalization was requested, even though no changes were needed.
+    if (!requested ||
+        _isAlreadyNormalized(activity, sortAndDedup, trimInvalid)) {
+      final stats = captureStats
+          ? NormalizationStats(
+              applied: requested,
+              pointsBefore: activity.points.length,
+              pointsAfter: activity.points.length,
+              totalSamplesBefore: _totalSamples(activity),
+              totalSamplesAfter: _totalSamples(activity),
+              duration: Duration.zero,
+            )
+          : null;
+      return (activity: activity, stats: stats, repairDiagnostics: const []);
+    }
+    final beforePoints = activity.points.length;
+    final beforeSamples = captureStats ? _totalSamples(activity) : 0;
+    final stopwatch = Stopwatch()..start();
+    var editor = RawEditor(activity);
+    if (sortAndDedup) {
+      editor = editor.sortAndDedup();
+    }
+    if (trimInvalid) {
+      editor = editor.trimInvalid();
+    }
+    final normalized = editor.activity;
+    stopwatch.stop();
+    return (
+      activity: normalized,
+      stats: captureStats
+          ? NormalizationStats(
+              applied: true,
+              pointsBefore: beforePoints,
+              pointsAfter: normalized.points.length,
+              totalSamplesBefore: beforeSamples,
+              totalSamplesAfter: _totalSamples(normalized),
+              duration: stopwatch.elapsed,
+            )
+          : null,
+      repairDiagnostics: editor.repairDiagnostics,
     );
   }
+
+  /// Checks if the activity data is already normalized based on requested operations.
+  static bool _isAlreadyNormalized(
+    RawActivity activity,
+    bool checkSortAndDedup,
+    bool checkTrimInvalid,
+  ) {
+    if (checkSortAndDedup && !_isStrictlyOrderedActivity(activity)) {
+      return false;
+    }
+    if (checkTrimInvalid) {
+      final validCoordinates = activity.points.every(
+        (p) =>
+            p.latitude.isFinite &&
+            p.latitude >= -90 &&
+            p.latitude <= 90 &&
+            p.longitude.isFinite &&
+            p.longitude >= -180 &&
+            p.longitude <= 180 &&
+            !(p.latitude.abs() < 1e-6 && p.longitude.abs() < 1e-6) &&
+            (p.elevation == null || p.elevation! > -499.0),
+      );
+      if (!validCoordinates) return false;
+      if (activity.points.isNotEmpty) {
+        final start = activity.points.first.time;
+        final end = activity.points.last.time;
+        final channelsInRange = activity.channels.values.every(
+          (samples) => samples.every(
+            (s) => !s.time.isBefore(start) && !s.time.isAfter(end),
+          ),
+        );
+        if (!channelsInRange) return false;
+        final lapsInRange = activity.laps.every(
+          (lap) => !lap.startTime.isBefore(start) && !lap.endTime.isAfter(end),
+        );
+        if (!lapsInRange) return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _isStrictlyOrderedActivity(RawActivity activity) =>
+      _isStrictlyOrdered(activity.points, (p) => p.time) &&
+      activity.channels.values.every(
+        (samples) => _isStrictlyOrdered(samples, (s) => s.time),
+      ) &&
+      _isStrictlyOrdered(activity.laps, (l) => l.startTime);
+
+  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
+  _ensureOrderedForExport(RawActivity activity) {
+    if (_isStrictlyOrderedActivity(activity)) {
+      return (activity: activity, diagnostics: const []);
+    }
+    final editor = RawEditor(activity).ensureStrictTimeOrder();
+    return (activity: editor.activity, diagnostics: editor.repairDiagnostics);
+  }
+
+  /// Runs the same normalize-or-order-for-export step applied to the
+  /// primary track on each of [activity]'s `additionalTracks`.
+  ///
+  /// GPX is the only target that keeps `additionalTracks` instead of
+  /// flattening them into the primary track before export (see convert()'s
+  /// flatten comment), so it's the only path where secondary tracks would
+  /// otherwise skip sortAndDedup/trimInvalid/time-ordering entirely.
+  static ({RawActivity activity, List<ValidationDiagnostic> diagnostics})
+  _normalizeAdditionalTracksForExport(
+    RawActivity activity, {
+    required bool normalize,
+  }) {
+    if (activity.additionalTracks.isEmpty) {
+      return (activity: activity, diagnostics: const []);
+    }
+    final diagnostics = <ValidationDiagnostic>[];
+    final tracks = <RawActivity>[];
+    for (final track in activity.additionalTracks) {
+      if (normalize) {
+        final result = _normalize(
+          track,
+          sortAndDedup: true,
+          trimInvalid: true,
+          captureStats: false,
+        );
+        tracks.add(result.activity);
+        diagnostics.addAll(result.repairDiagnostics);
+      } else {
+        final result = _ensureOrderedForExport(track);
+        tracks.add(result.activity);
+        diagnostics.addAll(result.diagnostics);
+      }
+    }
+    return (
+      activity: activity.copyWith(additionalTracks: tracks),
+      diagnostics: diagnostics,
+    );
+  }
+
+  /// Checks if a list is sorted by time with no duplicate timestamps
+  /// (each entry strictly after its predecessor).
+  static bool _isStrictlyOrdered<T>(
+    List<T> items,
+    DateTime Function(T) timeOf,
+  ) {
+    for (var i = 1; i < items.length; i++) {
+      if (!timeOf(items[i]).toUtc().isAfter(timeOf(items[i - 1]).toUtc())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static int _totalSamples(RawActivity activity) => activity.channels.values
+      .fold(0, (total, samples) => total + samples.length);
+
+  // Construct -- building a RawActivity from raw structured data with no
+  // source format to parse.
+  /// Starts a builder for assembling a [RawActivity] incrementally.
+  ///
+  /// Use [seed] to pre-populate the builder from an existing activity.
+  static RawActivityBuilder builder([RawActivity? seed]) =>
+      RawActivityBuilder(seed: seed);
+
+  /// Creates a builder populated from raw location/channel streams.
+  static RawActivityBuilder builderFromStreams({
+    required Iterable<LocationStreamSample> location,
+    Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
+    Iterable<Lap> laps = const <Lap>[],
+    StreamTimestampDecoder? timestampConverter,
+    Sport? sport,
+    String? creator,
+    ActivityDeviceMetadata? device,
+  }) {
+    final decode = timestampConverter ?? _defaultTimestampDecoder;
+    final rawBuilder = ActivityFiles.builder();
+    if (sport != null) {
+      rawBuilder.sport = sport;
+    }
+    if (creator != null) {
+      rawBuilder.creator = creator;
+    }
+    if (device != null) {
+      rawBuilder.setDeviceMetadata(device);
+    }
+    for (final sample in location) {
+      rawBuilder.addPoint(
+        latitude: sample.latitude,
+        longitude: sample.longitude,
+        elevation: sample.elevation,
+        time: decode(sample.timestamp),
+      );
+    }
+    for (final entry in channels.entries) {
+      for (final sample in entry.value) {
+        rawBuilder.addSample(
+          channel: entry.key,
+          time: decode(sample.timestamp),
+          value: sample.value.toDouble(),
+        );
+      }
+    }
+    if (laps.isNotEmpty) {
+      rawBuilder.addLaps(laps);
+    }
+    return rawBuilder;
+  }
+
+  /// Returns all channels from [activity] as [ChannelStreamSample] lists,
+  /// ready to pass directly to [convertAndExport].
+  ///
+  /// This removes the per-channel reconstruction glue when re-exporting a
+  /// previously imported [RawActivity]. Timestamps are milliseconds since the
+  /// epoch, matching [LocationStreamSample]/[ChannelStreamSample]'s
+  /// [StreamTimestampDecoder] contract used by [builderFromStreams] and
+  /// [convertAndExport] — round-tripping through this method does not lose
+  /// sub-second precision.
+  ///
+  /// ```dart
+  /// final channels = ActivityFiles.channelSamplesFrom(stored);
+  /// await ActivityFiles.convertAndExport(
+  ///   location: locationSamples,
+  ///   channels: channels,
+  ///   to: ActivityFileFormat.gpx,
+  /// );
+  /// ```
+  static Map<Channel, List<ChannelStreamSample>> channelSamplesFrom(
+    RawActivity activity,
+  ) {
+    final result = <Channel, List<ChannelStreamSample>>{};
+    for (final entry in activity.channels.entries) {
+      if (entry.value.isEmpty) continue;
+      result[entry.key] = [
+        for (final sample in entry.value)
+          (timestamp: sample.time.millisecondsSinceEpoch, value: sample.value),
+      ];
+    }
+    return result;
+  }
+
+  static DateTime _defaultTimestampDecoder(int timestamp) =>
+      DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true);
+
+  // Helpers -- cross-cutting utilities (sport inference, validation,
+  // channel queries) that don't act on a RawActivity lifecycle stage.
+  static final List<SportMapper> _sportMappers = <SportMapper>[];
+
+  /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
+  /// last-in-first-out so callers can override earlier defaults.
+  static void registerSportMapper(SportMapper mapper) {
+    if (_sportMappers.contains(mapper)) {
+      return;
+    }
+    _sportMappers.add(mapper);
+  }
+
+  /// Removes a previously registered [mapper].
+  static bool unregisterSportMapper(SportMapper mapper) =>
+      _sportMappers.remove(mapper);
+
+  /// Clears all registered sport mappers.
+  static void clearSportMappers() => _sportMappers.clear();
+
+  /// Resolves [Sport] by applying registered mappers and built-in heuristics.
+  static Sport inferSport(dynamic source, {Sport fallback = Sport.unknown}) {
+    final resolved = _resolveSport(source);
+    return resolved ?? fallback;
+  }
+
+  /// Performs structural validation and returns detailed findings.
+  static ValidationResult validate(
+    RawActivity activity, {
+    Duration gapWarningThreshold = const Duration(minutes: 5),
+  }) => validateRawActivity(activity, gapWarningThreshold: gapWarningThreshold);
+
+  /// Maps channels close to [timestamp] for quick lookups and UI overlays.
+  static ChannelSnapshot channelSnapshot(
+    DateTime timestamp,
+    RawActivity activity, {
+    Duration maxDelta = const Duration(seconds: 5),
+  }) => ChannelMapper.mapAt(timestamp, activity.channels, maxDelta: maxDelta);
+
+  static Sport? _resolveSport(dynamic source) {
+    final custom = _applySportMappers(source);
+    if (custom != null) {
+      return custom;
+    }
+    final primitive = _inferSportPrimitive(source);
+    if (primitive != null) {
+      return primitive;
+    }
+    if (source is Map) {
+      for (final value in source.values) {
+        final nested = _resolveSport(value);
+        if (nested != null) {
+          return nested;
+        }
+      }
+    } else if (source is Iterable) {
+      for (final value in source) {
+        final nested = _resolveSport(value);
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+    return null;
+  }
+
+  static Sport? _applySportMappers(dynamic source) {
+    for (var i = _sportMappers.length - 1; i >= 0; i--) {
+      final result = _sportMappers[i](source);
+      if (result != null) {
+        return result;
+      }
+    }
+    return null;
+  }
+
+  static Sport? _inferSportPrimitive(dynamic source) => switch (source) {
+    null => null,
+    final Sport sport => sport,
+    final String text => _inferSportFromString(text),
+    final num value
+        when value.toInt() >= 0 && value.toInt() < _sportByNumericId.length =>
+      _sportByNumericId[value.toInt()],
+    _ => null,
+  };
+
+  static final RegExp _sportDelimiter = RegExp(r'[^a-z0-9]+');
+
+  /// Keyword matching order matters: earlier entries win on mixed labels.
+  static const Map<Sport, List<String>> _sportKeywords = {
+    Sport.running: ['run', 'running', 'jog', 'jogging'],
+    Sport.cycling: ['cycle', 'cycling', 'bike', 'biking', 'ride'],
+    Sport.swimming: ['swim', 'swimming'],
+    Sport.walking: ['walk', 'walking'],
+    Sport.hiking: ['hike', 'hiking'],
+    Sport.other: ['other'],
+  };
+
+  static const List<Sport> _sportByNumericId = [
+    Sport.other,
+    Sport.running,
+    Sport.cycling,
+    Sport.swimming,
+    Sport.walking,
+    Sport.hiking,
+  ];
+
+  static Sport? _inferSportFromString(String text) {
+    final tokens = text
+        .trim()
+        .toLowerCase()
+        .split(_sportDelimiter)
+        .where((token) => token.isNotEmpty)
+        .toSet();
+    for (final entry in _sportKeywords.entries) {
+      if (entry.value.any(tokens.contains)) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  // Deprecated -- kept as forwarders for compatibility; scheduled for
+  // removal in 0.9.0. See each method's @Deprecated message for its
+  // replacement.
+  /// Deprecated name for [import]; forwards with identical behavior.
+  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.9.0.')
+  static Future<ActivityLoadResult> load(
+    Object source, {
+    ActivityFileFormat? format,
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+    bool allowFilePaths = false,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => import(
+    source,
+    format: format,
+    useIsolate: useIsolate,
+    encoding: encoding,
+    allowFilePaths: allowFilePaths,
+    strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    maxPayloadBytes: maxPayloadBytes,
+  );
+
+  /// Deprecated name for [importBatch]; forwards with identical behavior.
+  @Deprecated(
+    'Use ActivityFiles.importBatch instead. Will be removed in 0.9.0.',
+  )
+  static Future<BatchImportResult> loadBatch(
+    Iterable<Object> sources, {
+    ActivityFileFormat? format,
+    bool useIsolate = true,
+    void Function(int completed, int total)? onProgress,
+    bool stopOnError = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => importBatch(
+    sources,
+    format: format,
+    useIsolate: useIsolate,
+    onProgress: onProgress,
+    stopOnError: stopOnError,
+    maxPayloadBytes: maxPayloadBytes,
+  );
+
+  /// Import a CSV payload into a [RawActivity].
+  @Deprecated(
+    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
+    '(async, with normalize/validate). For a bare sync parse, use '
+    'CsvParser().parse(input) directly. Will be removed in 0.9.0.',
+  )
+  static ActivityParseResult importFromCsv(String input) =>
+      const CsvParser().parse(input);
+
+  /// Import a GeoJSON payload into a [RawActivity].
+  @Deprecated(
+    'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
+    'instead (async, with normalize/validate). For a bare sync parse, use '
+    'GeojsonParser().parse(input) directly. Will be removed in 0.9.0.',
+  )
+  static ActivityParseResult importFromGeojson(String input) =>
+      const GeojsonParser().parse(input);
+
+  /// Export an activity to CSV format.
+  @Deprecated(
+    'Use ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv) '
+    'instead. Will be removed in 0.9.0.',
+  )
+  static String exportToCsv(RawActivity activity) =>
+      CsvEncoder.encode(activity);
+
+  /// Export multiple activities to CSV format.
+  @Deprecated(
+    'Unused and will be removed in 0.9.0 with no replacement. Use '
+    'RawEditor.merge() followed by ActivityFiles.export() instead.',
+  )
+  static String exportToCsvMultiple(List<RawActivity> activities) =>
+      CsvEncoder.encodeMultiple(activities);
+
+  /// Export an activity to GeoJSON FeatureCollection (LineString).
+  @Deprecated(
+    'Use ActivityFiles.export(activity: activity, to: '
+    'ActivityFileFormat.geojson) instead. Will be removed in 0.9.0.',
+  )
+  static String exportToGeojson(RawActivity activity) =>
+      GeojsonEncoder.encode(activity);
+
+  /// Deprecated name for [convertStream]; forwards with identical behavior.
+  @Deprecated(
+    'Use ActivityFiles.convertStream instead. Will be removed in 0.9.0.',
+  )
+  static Future<ActivityExportResult> convertAndExportStream({
+    required Stream<List<int>> source,
+    required ActivityFileFormat from,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    bool parseInIsolate = true,
+    bool exportInIsolate = false,
+    Encoding encoding = utf8,
+    bool runValidation = true,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => convertStream(
+    source: source,
+    from: from,
+    to: to,
+    options: options,
+    normalize: normalize,
+    parseInIsolate: parseInIsolate,
+    exportInIsolate: exportInIsolate,
+    encoding: encoding,
+    runValidation: runValidation,
+    strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    autoFix: autoFix,
+    maxPayloadBytes: maxPayloadBytes,
+  );
+
+  /// Returns a normalized copy applying common cleanup transforms.
+  ///
+  /// When [sortAndDedup] or [trimInvalid] are `false` the corresponding step is
+  /// skipped. Additional transforms can be chained post-call via
+  /// [ActivityFiles.edit].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).sortAndDedup().trimInvalid().activity '
+    'instead. Will be removed in 0.9.0.',
+  )
+  static RawActivity normalizeActivity(
+    RawActivity activity, {
+    bool sortAndDedup = true,
+    bool trimInvalid = true,
+  }) => _normalize(
+    activity,
+    sortAndDedup: sortAndDedup,
+    trimInvalid: trimInvalid,
+    captureStats: false,
+  ).activity;
+
+  /// Convenience wrapper for [RawEditor.sortAndDedup].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).sortAndDedup().activity instead. '
+    'Will be removed in 0.9.0.',
+  )
+  static RawActivity sortAndDedup(RawActivity activity) =>
+      RawEditor(activity).sortAndDedup().activity;
+
+  /// Convenience wrapper for [RawEditor.trimInvalid].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).trimInvalid().activity instead. '
+    'Will be removed in 0.9.0.',
+  )
+  static RawActivity trimInvalid(RawActivity activity) =>
+      RawEditor(activity).trimInvalid().activity;
+
+  /// Convenience wrapper for [RawEditor.crop].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).crop(start, end).activity instead. '
+    'Will be removed in 0.9.0.',
+  )
+  static RawActivity crop(
+    RawActivity activity, {
+    required DateTime start,
+    required DateTime end,
+  }) => RawEditor(activity).crop(start, end).activity;
+
+  /// Convenience wrapper for [RawEditor.smoothHR].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).smoothHR(window).activity instead. '
+    'Will be removed in 0.9.0.',
+  )
+  static RawActivity smoothHeartRate(RawActivity activity, {int window = 5}) =>
+      RawEditor(activity).smoothHR(window).activity;
+
+  /// Convenience wrapper for [RawEditor.recomputeDistanceAndSpeed].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed().activity '
+    'instead. Will be removed in 0.9.0.',
+  )
+  static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
+      RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+  /// Deprecated name for [RawEditor.merge]; forwards with identical behavior.
+  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.9.0.')
+  static RawActivity merge(
+    List<RawActivity> activities, {
+    bool preserveSportPerLap = false,
+    bool normalize = true,
+    String? creator,
+  }) => RawEditor.merge(
+    activities,
+    preserveSportPerLap: preserveSportPerLap,
+    normalize: normalize,
+    creator: creator,
+  );
+
+  /// Deprecated name for [RawEditor.splitBySport]; forwards with identical
+  /// behavior.
+  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.9.0.')
+  static Map<Sport, RawActivity> splitBySport(
+    RawActivity activity, {
+    bool normalize = true,
+  }) => RawEditor.splitBySport(activity, normalize: normalize);
+
+  /// Deprecated name for [RawActivityBuilder.activityLabelNode]; forwards
+  /// with identical behavior.
+  @Deprecated(
+    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.9.0.',
+  )
+  static GpxExtensionNode gpxActivityLabelNode(
+    String label, {
+    String prefix = gpxDefaultExtensionPrefix,
+    String? namespaceUri,
+    Map<String, String> attributes = const <String, String>{},
+  }) => RawActivityBuilder.activityLabelNode(
+    label,
+    prefix: prefix,
+    namespaceUri: namespaceUri,
+    attributes: attributes,
+  );
+
+  /// Deprecated name for [RawActivityBuilder.deviceNode]; forwards with
+  /// identical behavior.
+  @Deprecated(
+    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.9.0.',
+  )
+  static GpxExtensionNode gpxDeviceNode(
+    ActivityDeviceMetadata metadata, {
+    String prefix = gpxDefaultExtensionPrefix,
+    String? namespaceUri,
+    Map<String, String> attributes = const <String, String>{},
+    Map<String, Object?> extras = const <String, Object?>{},
+  }) => RawActivityBuilder.deviceNode(
+    metadata,
+    prefix: prefix,
+    namespaceUri: namespaceUri,
+    attributes: attributes,
+    extras: extras,
+  );
+
+  /// Deprecated name for [RawActivityBuilder.deviceSummaryNode]; forwards
+  /// with identical behavior.
+  @Deprecated(
+    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.9.0.',
+  )
+  static GpxExtensionNode gpxDeviceSummaryNode(
+    ActivityDeviceMetadata metadata, {
+    String prefix = gpxDefaultExtensionPrefix,
+    String? namespaceUri,
+    Map<String, Object?> extras = const <String, Object?>{},
+  }) => RawActivityBuilder.deviceSummaryNode(
+    metadata,
+    prefix: prefix,
+    namespaceUri: namespaceUri,
+    extras: extras,
+  );
 }
 
 Map<String, Object?> _encodeExportResult(ActivityExportResult result) => {
