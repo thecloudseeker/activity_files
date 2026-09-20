@@ -6,7 +6,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.7.8
+  activity_files: ^0.8.0
 ```
 
 Then install dependencies:
@@ -42,7 +42,7 @@ class ActivityRepository {
   Future<ActivityLoadResult> loadRideFromAssets() async {
     final asset = await rootBundle.load('assets/ride.gpx');
     final bytes = asset.buffer.asUint8List();
-    return ActivityFiles.load(
+    return ActivityFiles.import(
       bytes,
       format: ActivityFileFormat.gpx,
       useIsolate: !kIsWeb,
@@ -118,10 +118,10 @@ final export = await ActivityFiles.convertAndExport(
   gpxMetadataDescription: 'Withings export',
   includeCreatorInGpxMetadataDescription: false,
   metadataExtensions: [
-    ActivityFiles.gpxActivityLabelNode('Morning Run'),
+    RawActivityBuilder.activityLabelNode('Morning Run'),
   ],
   trackExtensions: [
-    ActivityFiles.gpxDeviceSummaryNode(
+    RawActivityBuilder.deviceSummaryNode(
       device,
       extras: {'battery': 95},
     ),
@@ -139,7 +139,7 @@ Each stream uses records (`({timestamp, latitude, longitude, elevation})` and `(
 When parsing FIT files, session summary values (distance, time, avg/max metrics) are surfaced on `RawActivity.summary`, and lap stats are populated on each `Lap` when available:
 
 ```dart
-final result = await ActivityFiles.load(fitBytes, format: ActivityFileFormat.fit);
+final result = await ActivityFiles.import(fitBytes, format: ActivityFileFormat.fit);
 final summary = result.activity.summary;
 print('Distance: ${summary?.totalDistanceMeters}');
 print('Avg HR: ${summary?.avgHeartRate}');
@@ -158,7 +158,7 @@ import 'dart:io';
 import 'package:activity_files/activity_files.dart';
 
 Future<void> bootstrap() async {
-  final ride = await ActivityFiles.load(
+  final ride = await ActivityFiles.import(
     File('assets/ride.gpx'),
     useIsolate: true,
   );
@@ -178,15 +178,17 @@ Future<void> bootstrap() async {
 
 ## Error handling
 
-`ActivityFiles.load`, `convert`, and export helpers surface parser/validation issues via diagnostics rather than throwing. Always gate on `hasErrors` (or inspect the diagnostics list) before trusting the returned activity:
+`ActivityFiles.import`, `convert`, and export helpers surface parser/validation issues via diagnostics rather than throwing. Always gate on `hasErrors` (or inspect the diagnostics list) before trusting the returned activity:
 
 ```dart
-final result = await ActivityFiles.load(sourceBytes, useIsolate: false);
+final result = await ActivityFiles.import(sourceBytes, useIsolate: false);
 if (result.hasErrors) {
-  log('Load failed:\n${result.diagnosticsSummary()}');
+  log('Import failed:\n${result.diagnosticsSummary()}');
   return;
 }
-final normalized = ActivityFiles.normalizeActivity(result.activity);
+final normalized = ActivityFiles.edit(
+  result.activity,
+).sortAndDedup().trimInvalid().activity;
 ```
 
 The same pattern applies to conversion/export results:
@@ -215,11 +217,11 @@ if (export.hasErrors) {
 `fit.trailer.truncated` diagnostics. The parser continues, filters clearly
 corrupt records (timestamps outside 1989–2050, invalid coordinates, points more
 than 24 hours or 100 km from their neighbors), and returns what it could
-extract. Set `strictFitIntegrity: true` on `load`/`convert`/streamed helpers to
+extract. Set `strictFitIntegrity: true` on `import`/`convert`/streamed helpers to
 throw `FormatException` instead of returning a partial result.
 
 ```dart
-final r = await ActivityFiles.load(fitBytes, format: ActivityFileFormat.fit);
+final r = await ActivityFiles.import(fitBytes, format: ActivityFileFormat.fit);
 final hasIntegrityIssue = r.diagnostics.any(
   (d) => d.code.contains('crc') || d.code.contains('truncated'),
 );
@@ -260,8 +262,8 @@ final crcErrors = r.diagnostics.where((d) => d.code == 'fit.trailer.crc_mismatch
 - Inline strings/byte arrays and buffered streams are capped at 64MB
   (`ActivityFiles.defaultMaxPayloadBytes`) by default. Larger inputs throw
   `FormatException` and the CLI rejects them to prevent unbounded buffering.
-- To override the limit, pass `maxPayloadBytes` to `load()`, `convert()`,
-  `convertAndExport()`, `convertAndExportStream()`, or `detectFormat()`. Pass
+- To override the limit, pass `maxPayloadBytes` to `import()`, `convert()`,
+  `convertAndExport()`, `convertStream()`, or `detectFormat()`. Pass
   `null` to disable the limit entirely.
 - For very large files, stream from disk/network in smaller chunks, split the
   source before parsing/exporting, or set `maxPayloadBytes: null` if you trust
@@ -432,14 +434,14 @@ value inherit from the activity's overall sport.
 
 ### Merging and splitting activities
 
-`ActivityFiles` provides convenience methods for combining separate activities or splitting multi-sport files:
+`RawEditor` provides static methods for combining separate activities or splitting multi-sport files:
 
 ```dart
-final swim = await ActivityFiles.load(File('swim.gpx'));
-final bike = await ActivityFiles.load(File('bike.fit'));
-final run = await ActivityFiles.load(File('run.tcx'));
+final swim = await ActivityFiles.import(File('swim.gpx'));
+final bike = await ActivityFiles.import(File('bike.fit'));
+final run = await ActivityFiles.import(File('run.tcx'));
 
-final triathlon = ActivityFiles.merge(
+final triathlon = RawEditor.merge(
   [swim.activity, bike.activity, run.activity],
   preserveSportPerLap: true,
 );
@@ -449,8 +451,8 @@ final combined = ActivityFiles.export(
   to: ActivityFileFormat.tcx,
 );
 
-final parsed = await ActivityFiles.load(File('triathlon.tcx'));
-final splits = ActivityFiles.splitBySport(parsed.activity);
+final parsed = await ActivityFiles.import(File('triathlon.tcx'));
+final splits = RawEditor.splitBySport(parsed.activity);
 
 final swimActivity = splits[Sport.swimming]!;
 final bikeActivity = splits[Sport.cycling]!;
@@ -652,13 +654,13 @@ editor.removePause(
 
 ## Batch import
 
-`ActivityFiles.loadBatch` loads a list of sources in sequence and collects
+`ActivityFiles.importBatch` loads a list of sources in sequence and collects
 results without stopping on individual failures:
 
 ```dart
 final files = [File('a.gpx'), File('b.fit'), File('c.tcx')];
 
-final batch = await ActivityFiles.loadBatch(
+final batch = await ActivityFiles.importBatch(
   files,
   onProgress: (done, total) => print('$done / $total'),
   stopOnError: false, // default: continue past failures
@@ -680,12 +682,12 @@ into the `Map<Channel, List<ChannelStreamSample>>` format expected by
 `convertAndExport`, removing per-channel reconstruction glue:
 
 ```dart
-final loaded = await ActivityFiles.load(File('ride.gpx'));
+final loaded = await ActivityFiles.import(File('ride.gpx'));
 final channels = ActivityFiles.channelSamplesFrom(loaded.activity);
 final location = [
   for (final p in loaded.activity.points)
     (
-      timestamp: p.time.millisecondsSinceEpoch ~/ 1000,
+      timestamp: p.time.millisecondsSinceEpoch,
       latitude: p.latitude,
       longitude: p.longitude,
       elevation: p.elevation,
@@ -710,7 +712,7 @@ stroke-level fields, also exposed through the typed `FitSessionView`/
 `FitLapView` via `activity.asFitView()`:
 
 ```dart
-final result = await ActivityFiles.load(fitBytes, format: ActivityFileFormat.fit);
+final result = await ActivityFiles.import(fitBytes, format: ActivityFileFormat.fit);
 final summary = result.activity.summary;
 
 print('Pool length: ${summary?.poolLengthMeters}m');
@@ -770,7 +772,7 @@ FIT set messages (message ID 225) parse into `RawActivity.sets` (also
 accessible via `activity.asFitView().sets`):
 
 ```dart
-final result = await ActivityFiles.load(fitBytes, format: ActivityFileFormat.fit);
+final result = await ActivityFiles.import(fitBytes, format: ActivityFileFormat.fit);
 
 for (final s in result.activity.sets) {
   if (s.isRest) {
@@ -810,7 +812,7 @@ Future<void> convertGpxToTcx() async {
 }
 
 Future<void> streamAndConvert(File input) async {
-  final streamed = await ActivityFiles.convertAndExportStream(
+  final streamed = await ActivityFiles.convertStream(
     source: input.openRead(),
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.tcx,
@@ -825,13 +827,13 @@ Future<void> streamAndConvert(File input) async {
 }
 ```
 
-- `convert`, `convertAndExport`, and `convertAndExportStream` all accept
+- `convert`, `convertAndExport`, and `convertStream` all accept
   `useIsolate`/`exportInIsolate` to offload parsing/encoding to a background
   isolate.
 - `export` and `convertAndExport` accept `runValidation: true` to populate
   `hasWarnings`/`warningCount`/`hasErrors` on the result.
 - To round-trip a FIT export, pass the exported `asBytes()` back into
-  `ActivityFiles.load(..., format: ActivityFileFormat.fit)`.
+  `ActivityFiles.import(..., format: ActivityFileFormat.fit)`.
 
 Looking for a complete, runnable example? `example/main.dart` demonstrates
 loading, normalization, validation, export, streaming conversions, and
@@ -911,8 +913,9 @@ fix is a clean copy: resync the device or repeat the upload.
 The data violates structural constraints: lap boundaries outside the track,
 duplicate timestamps, invalid coordinates. Each `ValidationDiagnostic` carries
 a `suggestedFix`; most issues are cleared by
-`ActivityFiles.normalizeActivity(activity)` or a targeted editor chain
-(`sortAndDedup`, `trimInvalid`, `crop`, `smoothHR`; see "Editing pipeline").
+`ActivityFiles.edit(activity).sortAndDedup().trimInvalid()` or a targeted
+editor chain (`sortAndDedup`, `trimInvalid`, `crop`, `smoothHR`; see "Editing
+pipeline").
 
 ### Conversion "succeeds" but the output is empty
 

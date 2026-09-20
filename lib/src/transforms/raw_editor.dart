@@ -929,6 +929,235 @@ class RawEditor {
       pointsEnd: _activity.points.last.time,
     );
   }
+
+  /// Merges multiple activities into a single unified activity.
+  ///
+  /// Combines GPS points, sensor channels, and laps from all activities.
+  /// The resulting activity will have:
+  /// - All points merged and sorted by timestamp (when [normalize] is true)
+  /// - All sensor channel samples combined
+  /// - All laps preserved with their original sport values
+  /// - Sport from the first activity as the overall sport
+  /// - Optional custom [creator] metadata
+  ///
+  /// Set [preserveSportPerLap] to true to retain each source activity's sport
+  /// on its laps, enabling multi-sport merges (e.g., combining separate swim/
+  /// bike/run files into a triathlon). When false, lap sports remain as defined
+  /// in the source activities.
+  ///
+  /// Enable [normalize] (default: true) to automatically sort and deduplicate
+  /// the merged data.
+  ///
+  /// Example:
+  /// ```dart
+  /// final swim = await ActivityFiles.import(File('swim.gpx'));
+  /// final bike = await ActivityFiles.import(File('bike.gpx'));
+  /// final run = await ActivityFiles.import(File('run.gpx'));
+  ///
+  /// final triathlon = RawEditor.merge(
+  ///   [swim.activity, bike.activity, run.activity],
+  ///   preserveSportPerLap: true,
+  ///   creator: 'my_triathlon_app',
+  /// );
+  /// ```
+  static RawActivity merge(
+    List<RawActivity> activities, {
+    bool preserveSportPerLap = false,
+    bool normalize = true,
+    String? creator,
+  }) {
+    if (activities.isEmpty) {
+      throw ArgumentError(
+        'Cannot merge activities: the input list is empty.\n'
+        '\n'
+        'You must provide at least one activity to merge:\n'
+        '  final merged = RawEditor.merge(activities);\n'
+        '\n'
+        'To combine multiple activities, ensure the list contains at least one element.\n'
+        'To split a multi-sport activity instead, use: RawEditor.splitBySport(activity)',
+      );
+    }
+    if (activities.length == 1) {
+      return normalize
+          ? RawEditor(activities.first).sortAndDedup().trimInvalid().activity
+          : activities.first;
+    }
+
+    // Flatten multi-track sources so additional-track data is not dropped.
+    final sources = [for (final activity in activities) activity.flattened()];
+    final mergedChannels = <Channel, List<Sample>>{};
+    for (final activity in sources) {
+      for (final entry in activity.channels.entries) {
+        mergedChannels
+            .putIfAbsent(entry.key, () => <Sample>[])
+            .addAll(entry.value);
+      }
+    }
+
+    final merged = RawActivity(
+      points: [for (final activity in sources) ...activity.points],
+      channels: mergedChannels,
+      laps: [
+        // Assign the source activity's sport to laps that lack one so the
+        // per-lap sport survives multi-sport merges.
+        for (final activity in sources)
+          for (final lap in activity.laps)
+            preserveSportPerLap && lap.sport == null
+                ? lap.copyWith(sport: activity.sport)
+                : lap,
+      ],
+      sets: [for (final activity in sources) ...activity.sets],
+      events: [for (final activity in sources) ...activity.events],
+      lengths: [for (final activity in sources) ...activity.lengths],
+      sport: sources.first.sport,
+      creator: creator ?? sources.first.creator,
+      device: sources.first.device,
+    );
+    return normalize
+        ? (RawEditor(merged).sortAndDedup().trimInvalid().activity)
+        : merged;
+  }
+
+  /// Splits a multi-sport activity into separate activities by sport type.
+  ///
+  /// Each returned activity contains only the points, channels, and laps
+  /// that fall within the time range of laps with that sport. Useful for
+  /// splitting triathlon files into individual swim/bike/run activities.
+  ///
+  /// Returns a map from [Sport] to [RawActivity]. Laps without an explicit
+  /// sport are grouped under the activity's overall sport.
+  ///
+  /// Enable [normalize] (default: true) to automatically sort and deduplicate
+  /// each split activity's data.
+  ///
+  /// Example:
+  /// ```dart
+  /// final triathlon = await ActivityFiles.import(File('triathlon.tcx'));
+  /// final splits = RawEditor.splitBySport(triathlon.activity);
+  ///
+  /// // Export each sport separately
+  /// for (final entry in splits.entries) {
+  ///   final filename = '${entry.key.name}.gpx';
+  ///   final export = await ActivityFiles.export(
+  ///     activity: entry.value,
+  ///     to: ActivityFileFormat.gpx,
+  ///   );
+  ///   await File(filename).writeAsString(export.asString());
+  /// }
+  /// ```
+  static Map<Sport, RawActivity> splitBySport(
+    RawActivity activity, {
+    bool normalize = true,
+  }) {
+    if (activity.laps.isEmpty) {
+      // No laps - return entire activity under its overall sport
+      return {activity.sport: activity};
+    }
+
+    // Group laps by sport
+    final lapsBySport = <Sport, List<Lap>>{};
+    for (final lap in activity.laps) {
+      final sport = lap.sport ?? activity.sport;
+      lapsBySport.putIfAbsent(sport, () => []).add(lap);
+    }
+
+    if (lapsBySport.length == 1) {
+      // Single sport - return as-is
+      return {lapsBySport.keys.first: activity};
+    }
+
+    // Create separate activities for each sport
+    final result = <Sport, RawActivity>{};
+
+    // A lap's end boundary is exclusive only when another lap (any sport)
+    // starts exactly there, so a point sitting on that instant is claimed by
+    // exactly one lap. Membership is checked per lap (union of that sport's
+    // own lap windows) rather than one aggregate min..max range per sport,
+    // so a sport whose laps bracket another sport's laps (a brick workout:
+    // run/bike/run) doesn't swallow the bracketed sport's window.
+    final lapStartTimes = activity.laps.map((lap) => lap.startTime).toSet();
+    bool withinLap(DateTime time, Lap lap) {
+      final endExclusive = lapStartTimes.contains(lap.endTime);
+      return !time.isBefore(lap.startTime) &&
+          (endExclusive
+              ? time.isBefore(lap.endTime)
+              : !time.isAfter(lap.endTime));
+    }
+
+    bool withinAnyLap(DateTime time, List<Lap> laps) =>
+        laps.any((lap) => withinLap(time, lap));
+
+    for (final entry in lapsBySport.entries) {
+      final sport = entry.key;
+      final laps = entry.value;
+      final otherLaps = [
+        for (final other in lapsBySport.entries)
+          if (other.key != sport) ...other.value,
+      ];
+      final sortedLaps = [...laps]
+        ..sort((a, b) => a.startTime.compareTo(b.startTime));
+
+      // A gap between two of this sport's own laps (e.g. an undeclared
+      // auto-pause between consecutive laps) belongs to this sport too,
+      // unless another sport's lap actually claims that time range (the
+      // bracketing case's per-lap membership above already handles).
+      bool withinOwnGap(DateTime time) {
+        for (var i = 0; i < sortedLaps.length - 1; i++) {
+          if (time.isAfter(sortedLaps[i].endTime) &&
+              time.isBefore(sortedLaps[i + 1].startTime)) {
+            return !withinAnyLap(time, otherLaps);
+          }
+        }
+        return false;
+      }
+
+      bool belongsToSport(DateTime time) =>
+          withinAnyLap(time, laps) || withinOwnGap(time);
+
+      // Filter points to this sport's lap windows
+      final sportPoints = activity.points
+          .where((p) => belongsToSport(p.time))
+          .toList();
+
+      // Filter channels to this sport's lap windows
+      final sportChannels = <Channel, List<Sample>>{};
+      for (final channelEntry in activity.channels.entries) {
+        final samples = channelEntry.value
+            .where((s) => belongsToSport(s.time))
+            .toList();
+        if (samples.isNotEmpty) {
+          sportChannels[channelEntry.key] = samples;
+        }
+      }
+
+      // Strip sport from laps while preserving all lap metadata.
+      final normalizedLaps = [for (final lap in laps) lap.copyWithoutSport()];
+
+      var sportActivity = RawActivity(
+        points: sportPoints,
+        channels: sportChannels,
+        laps: normalizedLaps,
+        sport: sport,
+        creator: activity.creator,
+        device: activity.device,
+        gpxMetadataName: activity.gpxMetadataName,
+        gpxMetadataDescription: activity.gpxMetadataDescription,
+        gpxTrackName: activity.gpxTrackName,
+        gpxTrackDescription: activity.gpxTrackDescription,
+        gpxTrackType: activity.gpxTrackType,
+      );
+
+      if (normalize) {
+        sportActivity = RawEditor(
+          sportActivity,
+        ).sortAndDedup().trimInvalid().activity;
+      }
+
+      result[sport] = sportActivity;
+    }
+
+    return result;
+  }
 }
 
 bool _isSortedBy<T>(List<T> items, DateTime Function(T item) timeOf) {

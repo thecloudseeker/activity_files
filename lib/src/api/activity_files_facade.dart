@@ -44,7 +44,7 @@ class ActivityFiles {
       'https://schemas.activityfiles.dev/extensions';
   static const String gpxDefaultExtensionPrefix = 'ext';
 
-  /// Loads [source] into a [RawActivity], attempting to infer the file format.
+  /// Imports [source] into a [RawActivity], attempting to infer the file format.
   ///
   /// Supported source types:
   /// * `String` containing inline text content. To read from disk pass a [File]
@@ -61,7 +61,7 @@ class ActivityFiles {
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
   /// strings/bytes and buffered streams. Pass `null` to disable the limit.
-  static Future<ActivityLoadResult> load(
+  static Future<ActivityLoadResult> import(
     Object source, {
     ActivityFileFormat? format,
     bool useIsolate = true,
@@ -95,13 +95,13 @@ class ActivityFiles {
         'Unable to infer activity format from source. The format must be specified explicitly.\n'
         '\n'
         'To fix this, try one of the following:\n'
-        '  1. Provide the format parameter: load(source, format: ActivityFileFormat.gpx)\n'
+        '  1. Provide the format parameter: import(source, format: ActivityFileFormat.gpx)\n'
         '  2. Use a file with a recognized extension (.gpx, .tcx, .fit, .csv, .geojson)\n'
-        '  3. If passing a filesystem path as a String, enable: load(source, allowFilePaths: true)\n'
+        '  3. If passing a filesystem path as a String, enable: import(source, allowFilePaths: true)\n'
         '\n'
         'Tips for common formats:\n'
         '  • GPX/TCX: Usually detected automatically from file extension\n'
-        '  • FIT (binary): For base64-encoded FIT data, use load(bytes, format: ActivityFileFormat.fit)\n'
+        '  • FIT (binary): For base64-encoded FIT data, use import(bytes, format: ActivityFileFormat.fit)\n'
         '  • CSV/GeoJSON: Detectable from extension or content sniffing\n'
         '  • Inline content: Always specify format for text passed as a String\n'
         '\n'
@@ -157,19 +157,59 @@ class ActivityFiles {
     );
   }
 
+  /// Deprecated name for [import]; forwards with identical behavior.
+  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.9.0.')
+  static Future<ActivityLoadResult> load(
+    Object source, {
+    ActivityFileFormat? format,
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+    bool allowFilePaths = false,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => import(
+    source,
+    format: format,
+    useIsolate: useIsolate,
+    encoding: encoding,
+    allowFilePaths: allowFilePaths,
+    strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    maxPayloadBytes: maxPayloadBytes,
+  );
+
   /// Export an activity to CSV format.
+  @Deprecated(
+    'Use ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv) '
+    'instead. Will be removed in 0.9.0.',
+  )
   static String exportToCsv(RawActivity activity) =>
       CsvEncoder.encode(activity);
 
   /// Export multiple activities to CSV format.
+  @Deprecated(
+    'Unused and will be removed in 0.9.0 with no replacement. Use '
+    'RawEditor.merge() followed by ActivityFiles.export() instead.',
+  )
   static String exportToCsvMultiple(List<RawActivity> activities) =>
       CsvEncoder.encodeMultiple(activities);
 
   /// Import a CSV payload into a [RawActivity].
+  @Deprecated(
+    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
+    '(async, with normalize/validate). For a bare sync parse, use '
+    'CsvParser().parse(input) directly. Will be removed in 0.9.0.',
+  )
   static ActivityParseResult importFromCsv(String input) =>
       const CsvParser().parse(input);
 
   /// Export an activity to GeoJSON FeatureCollection (LineString).
+  @Deprecated(
+    'Use ActivityFiles.export(activity: activity, to: '
+    'ActivityFileFormat.geojson) instead. Will be removed in 0.9.0.',
+  )
   static String exportToGeojson(RawActivity activity) =>
       GeojsonEncoder.encode(activity);
 
@@ -182,6 +222,11 @@ class ActivityFiles {
       : GeojsonEncoder.encodeAsPoints(activity);
 
   /// Import a GeoJSON payload into a [RawActivity].
+  @Deprecated(
+    'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
+    'instead (async, with normalize/validate). For a bare sync parse, use '
+    'GeojsonParser().parse(input) directly. Will be removed in 0.9.0.',
+  )
   static ActivityParseResult importFromGeojson(String input) =>
       const GeojsonParser().parse(input);
 
@@ -217,7 +262,7 @@ class ActivityFiles {
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) async {
-    final loadResult = await load(
+    final loadResult = await import(
       source,
       format: from,
       useIsolate: useIsolate,
@@ -599,6 +644,10 @@ class ActivityFiles {
   /// When [sortAndDedup] or [trimInvalid] are `false` the corresponding step is
   /// skipped. Additional transforms can be chained post-call via
   /// [ActivityFiles.edit].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).sortAndDedup().trimInvalid().activity '
+    'instead. Will be removed in 0.9.0.',
+  )
   static RawActivity normalizeActivity(
     RawActivity activity, {
     bool sortAndDedup = true,
@@ -611,14 +660,26 @@ class ActivityFiles {
   ).activity;
 
   /// Convenience wrapper for [RawEditor.sortAndDedup].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).sortAndDedup().activity instead. '
+    'Will be removed in 0.9.0.',
+  )
   static RawActivity sortAndDedup(RawActivity activity) =>
       RawEditor(activity).sortAndDedup().activity;
 
   /// Convenience wrapper for [RawEditor.trimInvalid].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).trimInvalid().activity instead. '
+    'Will be removed in 0.9.0.',
+  )
   static RawActivity trimInvalid(RawActivity activity) =>
       RawEditor(activity).trimInvalid().activity;
 
   /// Convenience wrapper for [RawEditor.crop].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).crop(start, end).activity instead. '
+    'Will be removed in 0.9.0.',
+  )
   static RawActivity crop(
     RawActivity activity, {
     required DateTime start,
@@ -626,10 +687,18 @@ class ActivityFiles {
   }) => RawEditor(activity).crop(start, end).activity;
 
   /// Convenience wrapper for [RawEditor.smoothHR].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).smoothHR(window).activity instead. '
+    'Will be removed in 0.9.0.',
+  )
   static RawActivity smoothHeartRate(RawActivity activity, {int window = 5}) =>
       RawEditor(activity).smoothHR(window).activity;
 
   /// Convenience wrapper for [RawEditor.recomputeDistanceAndSpeed].
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed().activity '
+    'instead. Will be removed in 0.9.0.',
+  )
   static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
       RawEditor(activity).recomputeDistanceAndSpeed().activity;
 
@@ -638,9 +707,10 @@ class ActivityFiles {
   ///
   /// This removes the per-channel reconstruction glue when re-exporting a
   /// previously imported [RawActivity]. Timestamps are milliseconds since the
-  /// epoch, matching [ChannelStreamSample]'s [StreamTimestampDecoder]
-  /// contract used by [convertAndExport] — round-tripping through this
-  /// method does not lose sub-second precision.
+  /// epoch, matching [LocationStreamSample]/[ChannelStreamSample]'s
+  /// [StreamTimestampDecoder] contract used by [builderFromStreams] and
+  /// [convertAndExport] — round-tripping through this method does not lose
+  /// sub-second precision.
   ///
   /// ```dart
   /// final channels = ActivityFiles.channelSamplesFrom(stored);
@@ -666,7 +736,7 @@ class ActivityFiles {
 
   /// Imports multiple sources in sequence and returns a [BatchImportResult].
   ///
-  /// Each [sources] element is forwarded to [ActivityFiles.load]. If a
+  /// Each [sources] element is forwarded to [ActivityFiles.import]. If a
   /// source fails, the error is captured in [BatchImportResult.failures] and
   /// processing continues unless [stopOnError] is `true`.
   ///
@@ -675,13 +745,13 @@ class ActivityFiles {
   ///
   /// Example:
   /// ```dart
-  /// final result = await ActivityFiles.loadBatch(
+  /// final result = await ActivityFiles.importBatch(
   ///   files,
   ///   onProgress: (done, total) => print('$done / $total'),
   /// );
   /// print('Imported ${result.successes.length}, failed ${result.failures.length}');
   /// ```
-  static Future<BatchImportResult> loadBatch(
+  static Future<BatchImportResult> importBatch(
     Iterable<Object> sources, {
     ActivityFileFormat? format,
     bool useIsolate = true,
@@ -697,7 +767,7 @@ class ActivityFiles {
     for (final source in sourceList) {
       try {
         successes.add(
-          await load(
+          await import(
             source,
             format: format,
             useIsolate: useIsolate,
@@ -725,6 +795,26 @@ class ActivityFiles {
       total: total,
     );
   }
+
+  /// Deprecated name for [importBatch]; forwards with identical behavior.
+  @Deprecated(
+    'Use ActivityFiles.importBatch instead. Will be removed in 0.9.0.',
+  )
+  static Future<BatchImportResult> loadBatch(
+    Iterable<Object> sources, {
+    ActivityFileFormat? format,
+    bool useIsolate = true,
+    void Function(int completed, int total)? onProgress,
+    bool stopOnError = false,
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => importBatch(
+    sources,
+    format: format,
+    useIsolate: useIsolate,
+    onProgress: onProgress,
+    stopOnError: stopOnError,
+    maxPayloadBytes: maxPayloadBytes,
+  );
 
   static ({
     RawActivity activity,
@@ -905,327 +995,83 @@ class ActivityFiles {
     Duration maxDelta = const Duration(seconds: 5),
   }) => ChannelMapper.mapAt(timestamp, activity.channels, maxDelta: maxDelta);
 
-  /// Merges multiple activities into a single unified activity.
-  ///
-  /// Combines GPS points, sensor channels, and laps from all activities.
-  /// The resulting activity will have:
-  /// - All points merged and sorted by timestamp (when [normalize] is true)
-  /// - All sensor channel samples combined
-  /// - All laps preserved with their original sport values
-  /// - Sport from the first activity as the overall sport
-  /// - Optional custom [creator] metadata
-  ///
-  /// Set [preserveSportPerLap] to true to retain each source activity's sport
-  /// on its laps, enabling multi-sport merges (e.g., combining separate swim/
-  /// bike/run files into a triathlon). When false, lap sports remain as defined
-  /// in the source activities.
-  ///
-  /// Enable [normalize] (default: true) to automatically sort and deduplicate
-  /// the merged data.
-  ///
-  /// Example:
-  /// ```dart
-  /// final swim = await ActivityFiles.load(File('swim.gpx'));
-  /// final bike = await ActivityFiles.load(File('bike.gpx'));
-  /// final run = await ActivityFiles.load(File('run.gpx'));
-  ///
-  /// final triathlon = ActivityFiles.merge(
-  ///   [swim.activity, bike.activity, run.activity],
-  ///   preserveSportPerLap: true,
-  ///   creator: 'my_triathlon_app',
-  /// );
-  /// ```
+  /// Deprecated name for [RawEditor.merge]; forwards with identical behavior.
+  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.9.0.')
   static RawActivity merge(
     List<RawActivity> activities, {
     bool preserveSportPerLap = false,
     bool normalize = true,
     String? creator,
-  }) {
-    if (activities.isEmpty) {
-      throw ArgumentError(
-        'Cannot merge activities: the input list is empty.\n'
-        '\n'
-        'You must provide at least one activity to merge:\n'
-        '  final merged = ActivityFiles.merge(activities);\n'
-        '\n'
-        'To combine multiple activities, ensure the list contains at least one element.\n'
-        'To split a multi-sport activity instead, use: ActivityFiles.splitBySport(activity)',
-      );
-    }
-    if (activities.length == 1) {
-      return normalize ? normalizeActivity(activities.first) : activities.first;
-    }
+  }) => RawEditor.merge(
+    activities,
+    preserveSportPerLap: preserveSportPerLap,
+    normalize: normalize,
+    creator: creator,
+  );
 
-    // Flatten multi-track sources so additional-track data is not dropped.
-    final sources = [for (final activity in activities) activity.flattened()];
-    final mergedChannels = <Channel, List<Sample>>{};
-    for (final activity in sources) {
-      for (final entry in activity.channels.entries) {
-        mergedChannels
-            .putIfAbsent(entry.key, () => <Sample>[])
-            .addAll(entry.value);
-      }
-    }
-
-    final merged = RawActivity(
-      points: [for (final activity in sources) ...activity.points],
-      channels: mergedChannels,
-      laps: [
-        // Assign the source activity's sport to laps that lack one so the
-        // per-lap sport survives multi-sport merges.
-        for (final activity in sources)
-          for (final lap in activity.laps)
-            preserveSportPerLap && lap.sport == null
-                ? lap.copyWith(sport: activity.sport)
-                : lap,
-      ],
-      sets: [for (final activity in sources) ...activity.sets],
-      events: [for (final activity in sources) ...activity.events],
-      lengths: [for (final activity in sources) ...activity.lengths],
-      sport: sources.first.sport,
-      creator: creator ?? sources.first.creator,
-      device: sources.first.device,
-    );
-    return normalize ? normalizeActivity(merged) : merged;
-  }
-
-  /// Splits a multi-sport activity into separate activities by sport type.
-  ///
-  /// Each returned activity contains only the points, channels, and laps
-  /// that fall within the time range of laps with that sport. Useful for
-  /// splitting triathlon files into individual swim/bike/run activities.
-  ///
-  /// Returns a map from [Sport] to [RawActivity]. Laps without an explicit
-  /// sport are grouped under the activity's overall sport.
-  ///
-  /// Enable [normalize] (default: true) to automatically sort and deduplicate
-  /// each split activity's data.
-  ///
-  /// Example:
-  /// ```dart
-  /// final triathlon = await ActivityFiles.load(File('triathlon.tcx'));
-  /// final splits = ActivityFiles.splitBySport(triathlon.activity);
-  ///
-  /// // Export each sport separately
-  /// for (final entry in splits.entries) {
-  ///   final filename = '${entry.key.name}.gpx';
-  ///   final export = await ActivityFiles.export(
-  ///     activity: entry.value,
-  ///     to: ActivityFileFormat.gpx,
-  ///   );
-  ///   await File(filename).writeAsString(export.asString());
-  /// }
-  /// ```
+  /// Deprecated name for [RawEditor.splitBySport]; forwards with identical
+  /// behavior.
+  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.9.0.')
   static Map<Sport, RawActivity> splitBySport(
     RawActivity activity, {
     bool normalize = true,
-  }) {
-    if (activity.laps.isEmpty) {
-      // No laps - return entire activity under its overall sport
-      return {activity.sport: activity};
-    }
+  }) => RawEditor.splitBySport(activity, normalize: normalize);
 
-    // Group laps by sport
-    final lapsBySport = <Sport, List<Lap>>{};
-    for (final lap in activity.laps) {
-      final sport = lap.sport ?? activity.sport;
-      lapsBySport.putIfAbsent(sport, () => []).add(lap);
-    }
-
-    if (lapsBySport.length == 1) {
-      // Single sport - return as-is
-      return {lapsBySport.keys.first: activity};
-    }
-
-    // Create separate activities for each sport
-    final result = <Sport, RawActivity>{};
-
-    // A lap's end boundary is exclusive only when another lap (any sport)
-    // starts exactly there, so a point sitting on that instant is claimed by
-    // exactly one lap. Membership is checked per lap (union of that sport's
-    // own lap windows) rather than one aggregate min..max range per sport,
-    // so a sport whose laps bracket another sport's laps (a brick workout:
-    // run/bike/run) doesn't swallow the bracketed sport's window.
-    final lapStartTimes = activity.laps.map((lap) => lap.startTime).toSet();
-    bool withinLap(DateTime time, Lap lap) {
-      final endExclusive = lapStartTimes.contains(lap.endTime);
-      return !time.isBefore(lap.startTime) &&
-          (endExclusive
-              ? time.isBefore(lap.endTime)
-              : !time.isAfter(lap.endTime));
-    }
-
-    bool withinAnyLap(DateTime time, List<Lap> laps) =>
-        laps.any((lap) => withinLap(time, lap));
-
-    for (final entry in lapsBySport.entries) {
-      final sport = entry.key;
-      final laps = entry.value;
-      final otherLaps = [
-        for (final other in lapsBySport.entries)
-          if (other.key != sport) ...other.value,
-      ];
-      final sortedLaps = [...laps]
-        ..sort((a, b) => a.startTime.compareTo(b.startTime));
-
-      // A gap between two of this sport's own laps (e.g. an undeclared
-      // auto-pause between consecutive laps) belongs to this sport too,
-      // unless another sport's lap actually claims that time range (the
-      // bracketing case #33's per-lap membership above already handles).
-      bool withinOwnGap(DateTime time) {
-        for (var i = 0; i < sortedLaps.length - 1; i++) {
-          if (time.isAfter(sortedLaps[i].endTime) &&
-              time.isBefore(sortedLaps[i + 1].startTime)) {
-            return !withinAnyLap(time, otherLaps);
-          }
-        }
-        return false;
-      }
-
-      bool belongsToSport(DateTime time) =>
-          withinAnyLap(time, laps) || withinOwnGap(time);
-
-      // Filter points to this sport's lap windows
-      final sportPoints = activity.points
-          .where((p) => belongsToSport(p.time))
-          .toList();
-
-      // Filter channels to this sport's lap windows
-      final sportChannels = <Channel, List<Sample>>{};
-      for (final channelEntry in activity.channels.entries) {
-        final samples = channelEntry.value
-            .where((s) => belongsToSport(s.time))
-            .toList();
-        if (samples.isNotEmpty) {
-          sportChannels[channelEntry.key] = samples;
-        }
-      }
-
-      // Strip sport from laps while preserving all lap metadata.
-      final normalizedLaps = [for (final lap in laps) lap.copyWithoutSport()];
-
-      var sportActivity = RawActivity(
-        points: sportPoints,
-        channels: sportChannels,
-        laps: normalizedLaps,
-        sport: sport,
-        creator: activity.creator,
-        device: activity.device,
-        gpxMetadataName: activity.gpxMetadataName,
-        gpxMetadataDescription: activity.gpxMetadataDescription,
-        gpxTrackName: activity.gpxTrackName,
-        gpxTrackDescription: activity.gpxTrackDescription,
-        gpxTrackType: activity.gpxTrackType,
-      );
-
-      if (normalize) {
-        sportActivity = normalizeActivity(sportActivity);
-      }
-
-      result[sport] = sportActivity;
-    }
-
-    return result;
-  }
-
-  /// Creates a GPX extension node representing an activity label.
+  /// Deprecated name for [RawActivityBuilder.activityLabelNode]; forwards
+  /// with identical behavior.
+  @Deprecated(
+    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.9.0.',
+  )
   static GpxExtensionNode gpxActivityLabelNode(
     String label, {
     String prefix = gpxDefaultExtensionPrefix,
     String? namespaceUri,
     Map<String, String> attributes = const <String, String>{},
-  }) => GpxExtensionNode(
-    name: 'activity',
-    namespacePrefix: prefix,
-    namespaceUri: namespaceUri ?? gpxDefaultExtensionNamespace,
-    value: label,
+  }) => RawActivityBuilder.activityLabelNode(
+    label,
+    prefix: prefix,
+    namespaceUri: namespaceUri,
     attributes: attributes,
   );
 
-  /// Creates a GPX extension node describing a device payload.
+  /// Deprecated name for [RawActivityBuilder.deviceNode]; forwards with
+  /// identical behavior.
+  @Deprecated(
+    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.9.0.',
+  )
   static GpxExtensionNode gpxDeviceNode(
     ActivityDeviceMetadata metadata, {
     String prefix = gpxDefaultExtensionPrefix,
     String? namespaceUri,
     Map<String, String> attributes = const <String, String>{},
     Map<String, Object?> extras = const <String, Object?>{},
-  }) {
-    final uri = namespaceUri ?? gpxDefaultExtensionNamespace;
-    return GpxExtensionNode(
-      name: 'device',
-      namespacePrefix: prefix,
-      namespaceUri: uri,
-      attributes: attributes,
-      children: _deviceMetadataChildren(
-        metadata,
-        prefix: prefix,
-        namespaceUri: uri,
-        extras: extras,
-      ),
-    );
-  }
+  }) => RawActivityBuilder.deviceNode(
+    metadata,
+    prefix: prefix,
+    namespaceUri: namespaceUri,
+    attributes: attributes,
+    extras: extras,
+  );
 
-  /// Creates a GPX extension node summarizing device metadata plus [extras].
+  /// Deprecated name for [RawActivityBuilder.deviceSummaryNode]; forwards
+  /// with identical behavior.
+  @Deprecated(
+    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.9.0.',
+  )
   static GpxExtensionNode gpxDeviceSummaryNode(
     ActivityDeviceMetadata metadata, {
     String prefix = gpxDefaultExtensionPrefix,
     String? namespaceUri,
     Map<String, Object?> extras = const <String, Object?>{},
-  }) {
-    final uri = namespaceUri ?? gpxDefaultExtensionNamespace;
-    return GpxExtensionNode(
-      name: 'deviceSummary',
-      namespacePrefix: prefix,
-      namespaceUri: uri,
-      children: _deviceMetadataChildren(
-        metadata,
-        prefix: prefix,
-        namespaceUri: uri,
-        extras: extras,
-      ),
-    );
-  }
+  }) => RawActivityBuilder.deviceSummaryNode(
+    metadata,
+    prefix: prefix,
+    namespaceUri: namespaceUri,
+    extras: extras,
+  );
 
   static DateTime _defaultTimestampDecoder(int timestamp) =>
       DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true);
-
-  static List<GpxExtensionNode> _deviceMetadataChildren(
-    ActivityDeviceMetadata metadata, {
-    required String? prefix,
-    required String namespaceUri,
-    Map<String, Object?> extras = const <String, Object?>{},
-  }) {
-    final children = <GpxExtensionNode>[];
-    void addChild(String name, Object? value) {
-      if (value == null) {
-        return;
-      }
-      final text = value is DateTime
-          ? value.toUtc().toIso8601String()
-          : value.toString();
-      if (text.trim().isEmpty) {
-        return;
-      }
-      children.add(
-        GpxExtensionNode(
-          name: name,
-          namespacePrefix: prefix,
-          namespaceUri: namespaceUri,
-          value: text,
-        ),
-      );
-    }
-
-    addChild('manufacturer', metadata.manufacturer);
-    addChild('model', metadata.model);
-    addChild('product', metadata.product);
-    addChild('serialNumber', metadata.serialNumber);
-    addChild('softwareVersion', metadata.softwareVersion);
-    addChild('fitManufacturerId', metadata.fitManufacturerId);
-    addChild('fitProductId', metadata.fitProductId);
-    extras.forEach(addChild);
-    return children;
-  }
 
   static Sport? _resolveSport(dynamic source) {
     final custom = _applySportMappers(source);
@@ -1501,7 +1347,7 @@ class ActivityFiles {
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for buffered
   /// streams. Pass `null` to disable the limit.
-  static Future<ActivityExportResult> convertAndExportStream({
+  static Future<ActivityExportResult> convertStream({
     required Stream<List<int>> source,
     required ActivityFileFormat from,
     required ActivityFileFormat to,
@@ -1532,6 +1378,41 @@ class ActivityFiles {
       autoFix: autoFix,
       maxPayloadBytes: maxPayloadBytes,
     ),
+  );
+
+  /// Deprecated name for [convertStream]; forwards with identical behavior.
+  @Deprecated(
+    'Use ActivityFiles.convertStream instead. Will be removed in 0.9.0.',
+  )
+  static Future<ActivityExportResult> convertAndExportStream({
+    required Stream<List<int>> source,
+    required ActivityFileFormat from,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    bool parseInIsolate = true,
+    bool exportInIsolate = false,
+    Encoding encoding = utf8,
+    bool runValidation = true,
+    bool strictFitIntegrity = false,
+    FitCorruptionHandling fitCorruptionHandling =
+        FitCorruptionHandling.bestEffort,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => convertStream(
+    source: source,
+    from: from,
+    to: to,
+    options: options,
+    normalize: normalize,
+    parseInIsolate: parseInIsolate,
+    exportInIsolate: exportInIsolate,
+    encoding: encoding,
+    runValidation: runValidation,
+    strictFitIntegrity: strictFitIntegrity,
+    fitCorruptionHandling: fitCorruptionHandling,
+    autoFix: autoFix,
+    maxPayloadBytes: maxPayloadBytes,
   );
 
   /// Converts directly to an encoded payload, returning the export result for
@@ -1937,7 +1818,7 @@ class ActivityFiles {
       '  • List<int> or Uint8List: raw binary data\n'
       '  • Stream<List<int>>: chunked/streaming data\n'
       '\n'
-      'For filesystem paths passed as String, enable: load(source, allowFilePaths: true)\n'
+      'For filesystem paths passed as String, enable: import(source, allowFilePaths: true)\n'
       '\n'
       'Received: ${source.runtimeType}',
     );
@@ -2055,7 +1936,7 @@ class ActivityFiles {
           severity: ParseSeverity.error,
           code: 'parser.format_exception',
           message:
-              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`load(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
+              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`import(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
           node: ParseNodeReference(path: '${format.name}.document'),
         ),
       ],
@@ -2748,7 +2629,7 @@ mixin _DiagnosticSummaryMixin {
   );
 }
 
-/// Result of [ActivityFiles.load].
+/// Result of [ActivityFiles.import].
 class ActivityLoadResult with _DiagnosticSummaryMixin {
   ActivityLoadResult._({
     required this.activity,
@@ -3162,6 +3043,102 @@ class RawActivityBuilder {
     _metadataExtensions.clear();
     _trackExtensions.clear();
   }
+
+  /// Creates a GPX extension node representing an activity label.
+  static GpxExtensionNode activityLabelNode(
+    String label, {
+    String prefix = ActivityFiles.gpxDefaultExtensionPrefix,
+    String? namespaceUri,
+    Map<String, String> attributes = const <String, String>{},
+  }) => GpxExtensionNode(
+    name: 'activity',
+    namespacePrefix: prefix,
+    namespaceUri: namespaceUri ?? ActivityFiles.gpxDefaultExtensionNamespace,
+    value: label,
+    attributes: attributes,
+  );
+
+  /// Creates a GPX extension node describing a device payload.
+  static GpxExtensionNode deviceNode(
+    ActivityDeviceMetadata metadata, {
+    String prefix = ActivityFiles.gpxDefaultExtensionPrefix,
+    String? namespaceUri,
+    Map<String, String> attributes = const <String, String>{},
+    Map<String, Object?> extras = const <String, Object?>{},
+  }) {
+    final uri = namespaceUri ?? ActivityFiles.gpxDefaultExtensionNamespace;
+    return GpxExtensionNode(
+      name: 'device',
+      namespacePrefix: prefix,
+      namespaceUri: uri,
+      attributes: attributes,
+      children: _deviceMetadataChildren(
+        metadata,
+        prefix: prefix,
+        namespaceUri: uri,
+        extras: extras,
+      ),
+    );
+  }
+
+  /// Creates a GPX extension node summarizing device metadata plus [extras].
+  static GpxExtensionNode deviceSummaryNode(
+    ActivityDeviceMetadata metadata, {
+    String prefix = ActivityFiles.gpxDefaultExtensionPrefix,
+    String? namespaceUri,
+    Map<String, Object?> extras = const <String, Object?>{},
+  }) {
+    final uri = namespaceUri ?? ActivityFiles.gpxDefaultExtensionNamespace;
+    return GpxExtensionNode(
+      name: 'deviceSummary',
+      namespacePrefix: prefix,
+      namespaceUri: uri,
+      children: _deviceMetadataChildren(
+        metadata,
+        prefix: prefix,
+        namespaceUri: uri,
+        extras: extras,
+      ),
+    );
+  }
+
+  static List<GpxExtensionNode> _deviceMetadataChildren(
+    ActivityDeviceMetadata metadata, {
+    required String? prefix,
+    required String namespaceUri,
+    Map<String, Object?> extras = const <String, Object?>{},
+  }) {
+    final children = <GpxExtensionNode>[];
+    void addChild(String name, Object? value) {
+      if (value == null) {
+        return;
+      }
+      final text = value is DateTime
+          ? value.toUtc().toIso8601String()
+          : value.toString();
+      if (text.trim().isEmpty) {
+        return;
+      }
+      children.add(
+        GpxExtensionNode(
+          name: name,
+          namespacePrefix: prefix,
+          namespaceUri: namespaceUri,
+          value: text,
+        ),
+      );
+    }
+
+    addChild('manufacturer', metadata.manufacturer);
+    addChild('model', metadata.model);
+    addChild('product', metadata.product);
+    addChild('serialNumber', metadata.serialNumber);
+    addChild('softwareVersion', metadata.softwareVersion);
+    addChild('fitManufacturerId', metadata.fitManufacturerId);
+    addChild('fitProductId', metadata.fitProductId);
+    extras.forEach(addChild);
+    return children;
+  }
 }
 
 class _ResolvedSource {
@@ -3263,7 +3240,7 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
     final bytes = _bytes ?? _buffer.takeBytes();
     if (maxBytes != null && bytes.length > maxBytes) {
       throw FormatException(
-        'Stream payload exceeds $maxBytes bytes. Hint: prefer streamed workflows (`ActivityParser.parseStream`, `convertAndExportStream`) or raise `maxPayloadBytes` for `load`/`convert`/`export`.',
+        'Stream payload exceeds $maxBytes bytes. Hint: prefer streamed workflows (`ActivityParser.parseStream`, `convertStream`) or raise `maxPayloadBytes` for `import`/`convert`/`export`.',
       );
     }
     return bytes;
@@ -3312,12 +3289,12 @@ void _enforcePayloadLimit(
   }
   if (sizeBytes > limit) {
     throw FormatException(
-      'Payload exceeds $limit bytes. Hint: use streaming APIs (`ActivityParser.parseStream`, `convertAndExportStream`) or increase `maxPayloadBytes` on `load`/`convert`/`export`. Pass `null` to disable the limit if you fully trust the input size.',
+      'Payload exceeds $limit bytes. Hint: use streaming APIs (`ActivityParser.parseStream`, `convertStream`) or increase `maxPayloadBytes` on `import`/`convert`/`export`. Pass `null` to disable the limit if you fully trust the input size.',
     );
   }
 }
 
-/// Result of [ActivityFiles.loadBatch].
+/// Result of [ActivityFiles.importBatch].
 class BatchImportResult {
   BatchImportResult({
     required this.successes,
@@ -3344,7 +3321,7 @@ class BatchImportResult {
   bool get allSucceeded => failures.isEmpty;
 }
 
-/// A single failure entry from [ActivityFiles.loadBatch].
+/// A single failure entry from [ActivityFiles.importBatch].
 class BatchImportFailure {
   BatchImportFailure({
     required this.source,

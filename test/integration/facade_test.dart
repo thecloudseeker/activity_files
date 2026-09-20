@@ -3269,11 +3269,12 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // ActivityFiles.loadBatch + BatchImportResult / BatchImportFailure
+  // ActivityFiles.importBatch + BatchImportResult / BatchImportFailure
+  // (loadBatch is kept as a deprecated forwarder — see below.)
   // ---------------------------------------------------------------------------
-  group('ActivityFiles.loadBatch', () {
+  group('ActivityFiles.importBatch', () {
     test('loads multiple valid sources and all succeed', () async {
-      final result = await ActivityFiles.loadBatch([
+      final result = await ActivityFiles.importBatch([
         sampleGpx,
         sampleGpx,
       ], useIsolate: false);
@@ -3287,7 +3288,7 @@ void main() {
 
     test('captures failures without stopping by default', () async {
       const bad = 'this is not a valid activity file';
-      final result = await ActivityFiles.loadBatch([
+      final result = await ActivityFiles.importBatch([
         sampleGpx,
         bad,
         sampleGpx,
@@ -3301,7 +3302,7 @@ void main() {
 
     test('BatchImportFailure exposes source and error', () async {
       const bad = 'not a valid file';
-      final result = await ActivityFiles.loadBatch([bad], useIsolate: false);
+      final result = await ActivityFiles.importBatch([bad], useIsolate: false);
 
       expect(result.failures, hasLength(1));
       final failure = result.failures.first;
@@ -3311,7 +3312,7 @@ void main() {
 
     test('stopOnError halts after first failure', () async {
       const bad = 'not a valid file';
-      final result = await ActivityFiles.loadBatch(
+      final result = await ActivityFiles.importBatch(
         [bad, sampleGpx, sampleGpx],
         useIsolate: false,
         stopOnError: true,
@@ -3325,7 +3326,7 @@ void main() {
 
     test('onProgress callback fires for each item', () async {
       final progressLog = <(int, int)>[];
-      await ActivityFiles.loadBatch(
+      await ActivityFiles.importBatch(
         [sampleGpx, sampleGpx, sampleGpx],
         useIsolate: false,
         onProgress: (done, total) => progressLog.add((done, total)),
@@ -3340,7 +3341,7 @@ void main() {
     test('onProgress fires even when a source fails', () async {
       const bad = 'not valid';
       final progressLog = <int>[];
-      await ActivityFiles.loadBatch(
+      await ActivityFiles.importBatch(
         [sampleGpx, bad, sampleGpx],
         useIsolate: false,
         onProgress: (done, _) => progressLog.add(done),
@@ -3350,7 +3351,7 @@ void main() {
     });
 
     test('empty source list returns empty result', () async {
-      final result = await ActivityFiles.loadBatch([], useIsolate: false);
+      final result = await ActivityFiles.importBatch([], useIsolate: false);
 
       expect(result.total, equals(0));
       expect(result.successCount, equals(0));
@@ -3360,11 +3361,22 @@ void main() {
 
     test('BatchImportFailure.toString includes source and error', () async {
       const bad = 'bad source';
-      final result = await ActivityFiles.loadBatch([bad], useIsolate: false);
+      final result = await ActivityFiles.importBatch([bad], useIsolate: false);
 
       final str = result.failures.first.toString();
       expect(str, contains('BatchImportFailure'));
       expect(str, contains('bad source'));
+    });
+
+    test('deprecated loadBatch matches importBatch (0.8.0 rename)', () async {
+      final viaNewName = await ActivityFiles.importBatch([
+        sampleGpx,
+      ], useIsolate: false);
+      final viaOldName =
+          // ignore: deprecated_member_use_from_same_package
+          await ActivityFiles.loadBatch([sampleGpx], useIsolate: false);
+
+      expect(viaNewName.successCount, equals(viaOldName.successCount));
     });
   });
 
@@ -3413,4 +3425,225 @@ void main() {
       },
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Facade API redesign (0.8.0): new names/homes added, old ones kept
+  // as deprecated forwarders with identical behavior. See
+  // dev/docs/FACADE_API_REDESIGN.md for the full staged rollout plan.
+  // ---------------------------------------------------------------------------
+  group(
+    'ActivityFiles.import matches deprecated ActivityFiles.load (0.8.0)',
+    () {
+      test('identical activity/format for the same source', () async {
+        final imported = await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        );
+        // ignore: deprecated_member_use_from_same_package
+        final loaded = await ActivityFiles.load(sampleGpx, useIsolate: false);
+
+        expect(imported.hasErrors, isFalse);
+        expect(imported.format, equals(loaded.format));
+        expect(
+          imported.activity.points.length,
+          equals(loaded.activity.points.length),
+        );
+      });
+    },
+  );
+
+  group(
+    'ActivityFiles.convertStream matches deprecated convertAndExportStream (0.8.0)',
+    () {
+      test('identical encoded output', () async {
+        final bytes = sampleGpx.codeUnits;
+
+        final viaNewName = await ActivityFiles.convertStream(
+          source: Stream<List<int>>.fromIterable([bytes]),
+          from: ActivityFileFormat.gpx,
+          to: ActivityFileFormat.tcx,
+          parseInIsolate: false,
+        );
+        final viaOldName =
+            // ignore: deprecated_member_use_from_same_package
+            await ActivityFiles.convertAndExportStream(
+              source: Stream<List<int>>.fromIterable([bytes]),
+              from: ActivityFileFormat.gpx,
+              to: ActivityFileFormat.tcx,
+              parseInIsolate: false,
+            );
+
+        expect(viaNewName.hasErrors, isFalse);
+        expect(viaNewName.encoded, equals(viaOldName.encoded));
+      });
+    },
+  );
+
+  group(
+    'RawEditor.merge/splitBySport match deprecated ActivityFiles equivalents (0.8.0)',
+    () {
+      test('RawEditor.merge matches ActivityFiles.merge', () async {
+        final a = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+        final b = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+
+        final viaEditor = RawEditor.merge([a, b], normalize: false);
+        // ignore: deprecated_member_use_from_same_package
+        final viaFacade = ActivityFiles.merge([a, b], normalize: false);
+
+        expect(viaEditor.points.length, equals(viaFacade.points.length));
+        expect(viaEditor.sport, equals(viaFacade.sport));
+      });
+
+      test('RawEditor.merge throws ArgumentError for an empty list', () {
+        expect(() => RawEditor.merge(const []), throwsArgumentError);
+      });
+
+      test(
+        'RawEditor.splitBySport matches ActivityFiles.splitBySport',
+        () async {
+          final activity = (await ActivityFiles.import(
+            sampleGpx,
+            useIsolate: false,
+          )).activity;
+
+          final viaEditor = RawEditor.splitBySport(activity);
+          // ignore: deprecated_member_use_from_same_package
+          final viaFacade = ActivityFiles.splitBySport(activity);
+
+          expect(viaEditor.keys, equals(viaFacade.keys));
+        },
+      );
+    },
+  );
+
+  group(
+    'RawActivityBuilder GPX node builders match deprecated ActivityFiles.gpx*Node (0.8.0)',
+    () {
+      test('activityLabelNode matches gpxActivityLabelNode', () {
+        final viaBuilder = RawActivityBuilder.activityLabelNode('Morning Run');
+        // ignore: deprecated_member_use_from_same_package
+        final viaFacade = ActivityFiles.gpxActivityLabelNode('Morning Run');
+
+        expect(viaBuilder.name, equals(viaFacade.name));
+        expect(viaBuilder.value, equals(viaFacade.value));
+        expect(viaBuilder.namespaceUri, equals(viaFacade.namespaceUri));
+      });
+
+      test('deviceNode matches gpxDeviceNode', () {
+        const device = ActivityDeviceMetadata(
+          manufacturer: 'Withings',
+          model: 'ScanWatch',
+        );
+
+        final viaBuilder = RawActivityBuilder.deviceNode(device);
+        // ignore: deprecated_member_use_from_same_package
+        final viaFacade = ActivityFiles.gpxDeviceNode(device);
+
+        expect(viaBuilder.name, equals(viaFacade.name));
+        expect(viaBuilder.children.length, equals(viaFacade.children.length));
+      });
+
+      test('deviceSummaryNode matches gpxDeviceSummaryNode', () {
+        const device = ActivityDeviceMetadata(manufacturer: 'Garmin');
+
+        final viaBuilder = RawActivityBuilder.deviceSummaryNode(
+          device,
+          extras: {'battery': 95},
+        );
+        final viaFacade =
+            // ignore: deprecated_member_use_from_same_package
+            ActivityFiles.gpxDeviceSummaryNode(device, extras: {'battery': 95});
+
+        expect(viaBuilder.name, equals(viaFacade.name));
+        expect(viaBuilder.children.length, equals(viaFacade.children.length));
+      });
+    },
+  );
+
+  group(
+    'Deprecated ActivityFiles shortcuts still work identically (0.8.0)',
+    () {
+      test(
+        'sortAndDedup/trimInvalid/recomputeDistanceAndSpeed match edit() chain',
+        () async {
+          final activity = (await ActivityFiles.import(
+            sampleGpx,
+            useIsolate: false,
+          )).activity;
+
+          expect(
+            // ignore: deprecated_member_use_from_same_package
+            ActivityFiles.sortAndDedup(activity).points.length,
+            equals(
+              ActivityFiles.edit(
+                activity,
+              ).sortAndDedup().activity.points.length,
+            ),
+          );
+          expect(
+            // ignore: deprecated_member_use_from_same_package
+            ActivityFiles.trimInvalid(activity).points.length,
+            equals(
+              ActivityFiles.edit(activity).trimInvalid().activity.points.length,
+            ),
+          );
+          expect(
+            // ignore: deprecated_member_use_from_same_package
+            ActivityFiles.recomputeDistanceAndSpeed(activity).channels.keys,
+            equals(
+              ActivityFiles.edit(
+                activity,
+              ).recomputeDistanceAndSpeed().activity.channels.keys,
+            ),
+          );
+        },
+      );
+
+      test('exportToCsv/importFromCsv round-trip', () async {
+        final activity = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+
+        // ignore: deprecated_member_use_from_same_package
+        final csv = ActivityFiles.exportToCsv(activity);
+        // ignore: deprecated_member_use_from_same_package
+        final reparsed = ActivityFiles.importFromCsv(csv);
+
+        expect(reparsed.activity.points.length, equals(activity.points.length));
+      });
+
+      test('exportToGeojson/importFromGeojson round-trip', () async {
+        final activity = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+
+        // ignore: deprecated_member_use_from_same_package
+        final geojson = ActivityFiles.exportToGeojson(activity);
+        // ignore: deprecated_member_use_from_same_package
+        final reparsed = ActivityFiles.importFromGeojson(geojson);
+
+        expect(reparsed.activity.points.length, equals(activity.points.length));
+      });
+
+      test('exportToCsvMultiple still encodes multiple activities', () async {
+        final activity = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+
+        // ignore: deprecated_member_use_from_same_package
+        final csv = ActivityFiles.exportToCsvMultiple([activity, activity]);
+
+        expect(csv, isNotEmpty);
+      });
+    },
+  );
 }

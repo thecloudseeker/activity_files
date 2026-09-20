@@ -24,10 +24,10 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
   metrics (pool length, stroke, lengths) and strength sets (`WorkoutSet`).
 - Point-level editing on `RawEditor`: `insertPoint`, `deletePointAt`,
   `updatePoint`, `deleteRange`, `insertPause`, `removePause`.
-- Multi-sport workflows: `ActivityFiles.merge(preserveSportPerLap: true)`
-  combines swim/bike/run files into one triathlon; `splitBySport()` breaks a
-  multi-sport file back into single-sport activities.
-- Batch import (`ActivityFiles.loadBatch`) with per-file error capture and
+- Multi-sport workflows: `RawEditor.merge(preserveSportPerLap: true)`
+  combines swim/bike/run files into one triathlon; `RawEditor.splitBySport()`
+  breaks a multi-sport file back into single-sport activities.
+- Batch import (`ActivityFiles.importBatch`) with per-file error capture and
   progress reporting.
 - Multi-track GPX round-trips: extra `<trk>` elements survive GPX export;
   single-track targets (TCX/FIT/CSV/GeoJSON) merge them so no points are lost.
@@ -55,7 +55,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.7.8
+  activity_files: ^0.8.0
 ```
 
 Then install dependencies:
@@ -70,17 +70,19 @@ Then jump straight into the facade:
 import 'package:activity_files/activity_files.dart';
 
 Future<void> convertGpxToFit(Uint8List bytes) async {
-  // 1) Load + auto-detect format.
-  final load = await ActivityFiles.load(
+  // 1) Import + auto-detect format.
+  final imported = await ActivityFiles.import(
     bytes,
     useIsolate: true,
   );
-  if (load.hasErrors) {
-    throw StateError('Load failed:\n${load.diagnosticsSummary()}');
+  if (imported.hasErrors) {
+    throw StateError('Import failed:\n${imported.diagnosticsSummary()}');
   }
 
   // 2) Normalize (sort/dedup + trim invalid points) before exporting.
-  final normalized = ActivityFiles.normalizeActivity(load.activity);
+  final normalized = ActivityFiles.edit(
+    imported.activity,
+  ).sortAndDedup().trimInvalid().activity;
 
   // 3) Export with validation so warnings/errors surface alongside the payload.
   final export = ActivityFiles.export(

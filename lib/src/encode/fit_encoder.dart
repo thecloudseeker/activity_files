@@ -44,7 +44,7 @@ class FitEncoder implements ActivityFormatEncoder {
         'To fix this:\n'
         '  1. Add GPS trackpoints: builder.addPoint(lat, lon, elevation, time)\n'
         '  2. Or add sensor data: builder.addSample(Channel.heartRate, time, value)\n'
-        '  3. Or load data from a file: await ActivityFiles.load(File("activity.gpx"))\n'
+        '  3. Or import data from a file: await ActivityFiles.import(File("activity.gpx"))\n'
         '\n'
         'FIT requires at least one data point to be valid.',
       );
