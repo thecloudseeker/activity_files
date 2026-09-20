@@ -22,7 +22,7 @@ import '../validation.dart';
 import 'activity_export_request.dart';
 import 'export_serialization.dart';
 import 'export_stats.dart';
-import 'pipeline_options.dart';
+import '../pipeline_options.dart';
 
 /// Callback used to translate arbitrary identifiers into [Sport] values.
 typedef SportMapper = Sport? Function(dynamic source);
@@ -1008,14 +1008,6 @@ class ActivityFiles {
     return _encodeExportResult(result);
   }
 
-  /// Export an activity to GeoJSON Point FeatureCollection.
-  static String exportToGeojsonPoints(
-    RawActivity activity, {
-    bool includeChannels = false,
-  }) => includeChannels
-      ? GeojsonEncoder.encodeAsPointsWithChannels(activity)
-      : GeojsonEncoder.encodeAsPoints(activity);
-
   /// Diagnostics for data an [activity] carries that the [to] format cannot
   /// represent, so target-format loss is reported rather than silent.
   ///
@@ -1260,14 +1252,11 @@ class ActivityFiles {
         trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
       );
     }
-    if (autoFix.isEnabled) {
-      final fixed = _autoFixCommonIssues(exportActivity, autoFix);
-      diagnostics = [
-        ...diagnostics,
-        ..._autoFixDiagnostics(exportActivity, fixed),
-      ];
-      exportActivity = fixed;
-    }
+    (exportActivity, diagnostics) = _applyAutoFix(
+      exportActivity,
+      autoFix,
+      diagnostics,
+    );
     if (!exportInIsolate) {
       diagnostics = [
         ...diagnostics,
@@ -1403,6 +1392,11 @@ class ActivityFiles {
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
   /// strings/bytes and buffered streams. Pass `null` to disable the limit.
+  ///
+  /// This method dispatches to one of two unrelated code paths depending on
+  /// which argument is given — for new code, prefer calling the specific one
+  /// directly: [convert] for [source]-based calls (identical behavior, no
+  /// dispatch), or [buildAndExport] for [location]/[channels]-based calls.
   static Future<ActivityExportResult> convertAndExport({
     Object? source,
     Iterable<LocationStreamSample>? location,
@@ -1483,78 +1477,87 @@ class ActivityFiles {
     }
 
     if (source != null) {
-      return _runPipeline(
-        ActivityExportRequest.fromSource(
-          source: source,
-          from: from,
-          to: to,
-          options: options,
-          normalize: normalize,
-          parseInIsolate: useIsolate,
-          runValidation: runValidation,
-          encoding: encoding,
-          exportInIsolate: exportInIsolate,
-          allowFilePaths: allowFilePaths,
-          strictFitIntegrity: strictFitIntegrity,
-          fitCorruptionHandling: fitCorruptionHandling,
-          autoFix: autoFix,
-          maxPayloadBytes: maxPayloadBytes,
-        ),
-      );
-    }
-    final primarySport =
-        sport ??
-        (sportSource != null
-            ? inferSport(sportSource, fallback: Sport.unknown)
-            : Sport.unknown);
-    final derivedSport = (primarySport == Sport.unknown && label != null)
-        ? inferSport(label, fallback: Sport.unknown)
-        : primarySport;
-    final builder = builderFromStreams(
-      location: location!,
-      channels: channels,
-      laps: laps,
-      timestampConverter: timestampConverter,
-      sport: derivedSport,
-      creator: creator,
-      device: device,
-    );
-    builder.gpxIncludeCreatorMetadataDescription =
-        includeCreatorInGpxMetadataDescription;
-    if (gpxMetadataName != null) {
-      builder.gpxMetadataName = gpxMetadataName;
-    }
-    if (gpxMetadataDescription != null) {
-      builder.gpxMetadataDescription = gpxMetadataDescription;
-    }
-    final resolvedTrackName = gpxTrackName ?? label;
-    if (resolvedTrackName != null) {
-      builder.gpxTrackName = resolvedTrackName;
-    }
-    if (gpxTrackDescription != null) {
-      builder.gpxTrackDescription = gpxTrackDescription;
-    }
-    if (gpxTrackType != null) {
-      builder.gpxTrackType = gpxTrackType;
-    }
-    if (metadataExtensions.isNotEmpty) {
-      builder.addGpxMetadataExtensions(metadataExtensions);
-    }
-    if (trackExtensions.isNotEmpty) {
-      builder.addGpxTrackExtensions(trackExtensions);
-    }
-    final activity = builder.build(normalize: false);
-    return _runPipeline(
-      ActivityExportRequest.fromActivity(
-        activity: activity,
+      return _convertAndExportFromSource(
+        source: source,
+        from: from,
         to: to,
         options: options,
         normalize: normalize,
+        useIsolate: useIsolate,
+        encoding: encoding,
+        allowFilePaths: allowFilePaths,
         runValidation: runValidation,
         exportInIsolate: exportInIsolate,
-      ),
+        strictFitIntegrity: strictFitIntegrity,
+        fitCorruptionHandling: fitCorruptionHandling,
+        autoFix: autoFix,
+        maxPayloadBytes: maxPayloadBytes,
+      );
+    }
+    return buildAndExport(
+      location: location!,
+      channels: channels,
+      laps: laps,
+      sport: sport,
+      sportSource: sportSource,
+      label: label,
+      creator: creator,
+      device: device,
+      timestampConverter: timestampConverter,
+      metadataExtensions: metadataExtensions,
+      trackExtensions: trackExtensions,
+      gpxMetadataName: gpxMetadataName,
+      gpxMetadataDescription: gpxMetadataDescription,
+      includeCreatorInGpxMetadataDescription:
+          includeCreatorInGpxMetadataDescription,
+      gpxTrackName: gpxTrackName,
+      gpxTrackDescription: gpxTrackDescription,
+      gpxTrackType: gpxTrackType,
+      to: to,
+      options: options,
+      normalize: normalize,
+      runValidation: runValidation,
+      exportInIsolate: exportInIsolate,
+      autoFix: autoFix,
     );
   }
+
+  // The convertAndExport(source: ...) branch, split out so it's callable
+  // (via convert(), which does the same thing) independently of the
+  // location/channels branch. See buildAndExport for that branch.
+  static Future<ActivityExportResult> _convertAndExportFromSource({
+    required Object source,
+    required ActivityFileFormat? from,
+    required ActivityFileFormat to,
+    required EncoderOptions options,
+    required bool normalize,
+    required bool useIsolate,
+    required Encoding encoding,
+    required bool allowFilePaths,
+    required bool runValidation,
+    required bool exportInIsolate,
+    required bool strictFitIntegrity,
+    required FitCorruptionHandling fitCorruptionHandling,
+    required ActivityAutoFixOptions autoFix,
+    required int? maxPayloadBytes,
+  }) => _runPipeline(
+    ActivityExportRequest.fromSource(
+      source: source,
+      from: from,
+      to: to,
+      options: options,
+      normalize: normalize,
+      parseInIsolate: useIsolate,
+      runValidation: runValidation,
+      encoding: encoding,
+      exportInIsolate: exportInIsolate,
+      allowFilePaths: allowFilePaths,
+      strictFitIntegrity: strictFitIntegrity,
+      fitCorruptionHandling: fitCorruptionHandling,
+      autoFix: autoFix,
+      maxPayloadBytes: maxPayloadBytes,
+    ),
+  );
 
   /// Runs the export pipeline using a declarative [ActivityExportRequest].
   static Future<ActivityExportResult> runPipeline(
@@ -1567,11 +1570,11 @@ class ActivityFiles {
     if (request.activity != null) {
       var activity = request.activity!;
       var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
-      if (request.autoFix.isEnabled) {
-        final fixed = _autoFixCommonIssues(activity, request.autoFix);
-        diagnostics = [...diagnostics, ..._autoFixDiagnostics(activity, fixed)];
-        activity = fixed;
-      }
+      (activity, diagnostics) = _applyAutoFix(
+        activity,
+        request.autoFix,
+        diagnostics,
+      );
       if (request.exportInIsolate) {
         return exportAsync(
           activity: activity,
@@ -1621,14 +1624,11 @@ class ActivityFiles {
       var parseDiagnostics = List<ParseDiagnostic>.from(
         parseResult.diagnostics,
       );
-      if (request.autoFix.isEnabled) {
-        final fixed = _autoFixCommonIssues(parsedActivity, request.autoFix);
-        parseDiagnostics = [
-          ...parseDiagnostics,
-          ..._autoFixDiagnostics(parsedActivity, fixed),
-        ];
-        parsedActivity = fixed;
-      }
+      (parsedActivity, parseDiagnostics) = _applyAutoFix(
+        parsedActivity,
+        request.autoFix,
+        parseDiagnostics,
+      );
       final downstreamDiagnostics = <ParseDiagnostic>[
         ...parseDiagnostics,
         ...request.diagnostics,
@@ -1690,74 +1690,20 @@ class ActivityFiles {
     );
   }
 
-  static RawActivity _autoFixCommonIssues(
+  // Applies RawEditor.autoFix() when enabled and appends the resulting
+  // diagnostics; a no-op passthrough otherwise. Shared by convert() and both
+  // _runPipeline() branches so the isEnabled-check-and-diagnose sequence
+  // exists exactly once.
+  static (RawActivity, List<ParseDiagnostic>) _applyAutoFix(
     RawActivity activity,
     ActivityAutoFixOptions options,
+    List<ParseDiagnostic> diagnostics,
   ) {
-    var editor = RawEditor(activity).sortAndDedup();
-    if (options.fixInvalidGps || options.fixChannelDrift) {
-      editor = editor.trimInvalid();
+    if (!options.isEnabled) {
+      return (activity, diagnostics);
     }
-    if (options.fixDistanceDrift) {
-      editor = editor.recomputeDistanceAndSpeed();
-    }
-    var fixed = editor.activity;
-    if (options.fixTimestampGaps && options.maxInsertedGapPoints > 0) {
-      fixed = _fillTimestampGaps(
-        fixed,
-        options.gapThreshold,
-        maxInsertedPoints: options.maxInsertedGapPoints,
-      );
-    }
-    if (options.autoLapByDistance) {
-      // Generate auto-laps if:
-      // 1. autoLapOnlyWhenMissing is false (always generate), OR
-      // 2. autoLapOnlyWhenMissing is true AND laps are missing/placeholder
-
-      final hasPlaceholderLaps =
-          fixed.laps.isNotEmpty &&
-          fixed.laps.every(
-            (lap) =>
-                (lap.name?.startsWith('Segment') ?? false) ||
-                (lap.name?.startsWith('Split') ?? false),
-          );
-
-      final shouldGenerateLaps =
-          !options.autoLapOnlyWhenMissing ||
-          fixed.laps.isEmpty ||
-          hasPlaceholderLaps;
-
-      if (shouldGenerateLaps && fixed.points.length >= 2) {
-        // Always recompute distance for auto-lap to ensure accuracy
-        // (distance may be lost during format conversions like GPX->TCX roundtrip)
-        var lapSource = RawEditor(fixed).recomputeDistanceAndSpeed().activity;
-        final splitMeters = _autoLapDistanceForSport(lapSource.sport, options);
-        if (splitMeters > 0) {
-          fixed = RawEditor(lapSource).markLapsByDistance(splitMeters).activity;
-        }
-      }
-    }
-    return fixed;
-  }
-
-  static double _autoLapDistanceForSport(
-    Sport sport,
-    ActivityAutoFixOptions options,
-  ) {
-    final override = options.autoLapDistanceMeters;
-    if (override != null && override > 0) {
-      return override;
-    }
-    switch (sport) {
-      case Sport.running:
-      case Sport.walking:
-      case Sport.hiking:
-        return options.runningLapDistanceMeters;
-      case Sport.cycling:
-        return options.cyclingLapDistanceMeters;
-      default:
-        return options.defaultLapDistanceMeters;
-    }
+    final fixed = RawEditor(activity).autoFix(options).activity;
+    return (fixed, [...diagnostics, ..._autoFixDiagnostics(activity, fixed)]);
   }
 
   static List<ParseDiagnostic> _autoFixDiagnostics(
@@ -1811,68 +1757,6 @@ class ActivityFiles {
       );
     }
     return diagnostics;
-  }
-
-  // Fills large timestamp gaps by linearly interpolating position and elevation.
-  // Channel samples (HR, power, cadence, etc.) are intentionally not interpolated;
-  // inserted points carry no sensor data and will appear as gaps in channel coverage.
-  static RawActivity _fillTimestampGaps(
-    RawActivity activity,
-    Duration threshold, {
-    required int maxInsertedPoints,
-  }) {
-    if (activity.points.length < 2 || threshold <= Duration.zero) {
-      return activity;
-    }
-    final output = <GeoPoint>[];
-    var inserted = 0;
-    for (var i = 0; i < activity.points.length - 1; i++) {
-      final current = activity.points[i];
-      final next = activity.points[i + 1];
-      output.add(current);
-      final gap = next.time.difference(current.time);
-      if (gap <= threshold || inserted >= maxInsertedPoints) {
-        continue;
-      }
-      final thresholdMicros = threshold.inMicroseconds;
-      if (thresholdMicros <= 0) {
-        continue;
-      }
-      final steps = gap.inMicroseconds ~/ thresholdMicros;
-      if (steps <= 1) {
-        continue;
-      }
-      for (var j = 1; j < steps; j++) {
-        if (inserted >= maxInsertedPoints) {
-          break;
-        }
-        final ratio = j / steps;
-        final time = current.time.add(
-          Duration(microseconds: (gap.inMicroseconds * ratio).round()),
-        );
-        final elevation = current.elevation != null && next.elevation != null
-            ? current.elevation! +
-                  (next.elevation! - current.elevation!) * ratio
-            : null;
-        output.add(
-          GeoPoint(
-            latitude:
-                current.latitude + (next.latitude - current.latitude) * ratio,
-            longitude:
-                current.longitude +
-                (next.longitude - current.longitude) * ratio,
-            elevation: elevation,
-            time: time,
-          ),
-        );
-        inserted++;
-      }
-    }
-    output.add(activity.points.last);
-    if (output.length == activity.points.length) {
-      return activity;
-    }
-    return activity.copyWith(points: output);
   }
 
   // Edit -- mutating an existing RawActivity. RawEditor is the primary
@@ -2102,6 +1986,93 @@ class ActivityFiles {
     return rawBuilder;
   }
 
+  /// Builds a [RawActivity] from raw location/channel streams and exports it
+  /// directly to [to], returning the export result for chaining.
+  ///
+  /// Equivalent to configuring [builderFromStreams] by hand and passing the
+  /// result to [export], with GPX metadata/track fields and [autoFix] wired
+  /// through. Use this instead of [convertAndExport] when there's no
+  /// file/byte `source` to parse — only raw samples.
+  static Future<ActivityExportResult> buildAndExport({
+    required Iterable<LocationStreamSample> location,
+    Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
+    Iterable<Lap> laps = const <Lap>[],
+    Sport? sport,
+    Object? sportSource,
+    String? label,
+    String? creator,
+    ActivityDeviceMetadata? device,
+    StreamTimestampDecoder? timestampConverter,
+    Iterable<GpxExtensionNode> metadataExtensions = const [],
+    Iterable<GpxExtensionNode> trackExtensions = const [],
+    String? gpxMetadataName,
+    String? gpxMetadataDescription,
+    bool includeCreatorInGpxMetadataDescription = true,
+    String? gpxTrackName,
+    String? gpxTrackDescription,
+    String? gpxTrackType,
+    required ActivityFileFormat to,
+    EncoderOptions options = const EncoderOptions(),
+    bool normalize = true,
+    bool runValidation = true,
+    bool exportInIsolate = false,
+    ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
+  }) {
+    final primarySport =
+        sport ??
+        (sportSource != null
+            ? inferSport(sportSource, fallback: Sport.unknown)
+            : Sport.unknown);
+    final derivedSport = (primarySport == Sport.unknown && label != null)
+        ? inferSport(label, fallback: Sport.unknown)
+        : primarySport;
+    final builder = builderFromStreams(
+      location: location,
+      channels: channels,
+      laps: laps,
+      timestampConverter: timestampConverter,
+      sport: derivedSport,
+      creator: creator,
+      device: device,
+    );
+    builder.gpxIncludeCreatorMetadataDescription =
+        includeCreatorInGpxMetadataDescription;
+    if (gpxMetadataName != null) {
+      builder.gpxMetadataName = gpxMetadataName;
+    }
+    if (gpxMetadataDescription != null) {
+      builder.gpxMetadataDescription = gpxMetadataDescription;
+    }
+    final resolvedTrackName = gpxTrackName ?? label;
+    if (resolvedTrackName != null) {
+      builder.gpxTrackName = resolvedTrackName;
+    }
+    if (gpxTrackDescription != null) {
+      builder.gpxTrackDescription = gpxTrackDescription;
+    }
+    if (gpxTrackType != null) {
+      builder.gpxTrackType = gpxTrackType;
+    }
+    if (metadataExtensions.isNotEmpty) {
+      builder.addGpxMetadataExtensions(metadataExtensions);
+    }
+    if (trackExtensions.isNotEmpty) {
+      builder.addGpxTrackExtensions(trackExtensions);
+    }
+    final activity = builder.build(normalize: false);
+    return _runPipeline(
+      ActivityExportRequest.fromActivity(
+        activity: activity,
+        to: to,
+        options: options,
+        normalize: normalize,
+        runValidation: runValidation,
+        exportInIsolate: exportInIsolate,
+        autoFix: autoFix,
+      ),
+    );
+  }
+
   /// Returns all channels from [activity] as [ChannelStreamSample] lists,
   /// ready to pass directly to [convertAndExport].
   ///
@@ -2260,10 +2231,10 @@ class ActivityFiles {
   }
 
   // Deprecated -- kept as forwarders for compatibility; scheduled for
-  // removal in 0.9.0. See each method's @Deprecated message for its
+  // removal in 0.10.0. See each method's @Deprecated message for its
   // replacement.
   /// Deprecated name for [import]; forwards with identical behavior.
-  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.9.0.')
+  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.10.0.')
   static Future<ActivityLoadResult> load(
     Object source, {
     ActivityFileFormat? format,
@@ -2287,7 +2258,7 @@ class ActivityFiles {
 
   /// Deprecated name for [importBatch]; forwards with identical behavior.
   @Deprecated(
-    'Use ActivityFiles.importBatch instead. Will be removed in 0.9.0.',
+    'Use ActivityFiles.importBatch instead. Will be removed in 0.10.0.',
   )
   static Future<BatchImportResult> loadBatch(
     Iterable<Object> sources, {
@@ -2309,7 +2280,7 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
     '(async, with normalize/validate). For a bare sync parse, use '
-    'CsvParser().parse(input) directly. Will be removed in 0.9.0.',
+    'CsvParser().parse(input) directly. Will be removed in 0.10.0.',
   )
   static ActivityParseResult importFromCsv(String input) =>
       const CsvParser().parse(input);
@@ -2318,7 +2289,7 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
     'instead (async, with normalize/validate). For a bare sync parse, use '
-    'GeojsonParser().parse(input) directly. Will be removed in 0.9.0.',
+    'GeojsonParser().parse(input) directly. Will be removed in 0.10.0.',
   )
   static ActivityParseResult importFromGeojson(String input) =>
       const GeojsonParser().parse(input);
@@ -2326,14 +2297,14 @@ class ActivityFiles {
   /// Export an activity to CSV format.
   @Deprecated(
     'Use ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv) '
-    'instead. Will be removed in 0.9.0.',
+    'instead. Will be removed in 0.10.0.',
   )
   static String exportToCsv(RawActivity activity) =>
       CsvEncoder.encode(activity);
 
   /// Export multiple activities to CSV format.
   @Deprecated(
-    'Unused and will be removed in 0.9.0 with no replacement. Use '
+    'Unused and will be removed in 0.10.0 with no replacement. Use '
     'RawEditor.merge() followed by ActivityFiles.export() instead.',
   )
   static String exportToCsvMultiple(List<RawActivity> activities) =>
@@ -2342,14 +2313,28 @@ class ActivityFiles {
   /// Export an activity to GeoJSON FeatureCollection (LineString).
   @Deprecated(
     'Use ActivityFiles.export(activity: activity, to: '
-    'ActivityFileFormat.geojson) instead. Will be removed in 0.9.0.',
+    'ActivityFileFormat.geojson) instead. Will be removed in 0.10.0.',
   )
   static String exportToGeojson(RawActivity activity) =>
       GeojsonEncoder.encode(activity);
 
+  /// Export an activity to GeoJSON Point FeatureCollection.
+  @Deprecated(
+    'Use ActivityFiles.export(activity: activity, to: '
+    'ActivityFileFormat.geojson, options: EncoderOptions(geojsonGeometry: '
+    'GeojsonGeometry.points, geojsonIncludeChannels: includeChannels)) '
+    'instead. Will be removed in 0.10.0.',
+  )
+  static String exportToGeojsonPoints(
+    RawActivity activity, {
+    bool includeChannels = false,
+  }) => includeChannels
+      ? GeojsonEncoder.encodeAsPointsWithChannels(activity)
+      : GeojsonEncoder.encodeAsPoints(activity);
+
   /// Deprecated name for [convertStream]; forwards with identical behavior.
   @Deprecated(
-    'Use ActivityFiles.convertStream instead. Will be removed in 0.9.0.',
+    'Use ActivityFiles.convertStream instead. Will be removed in 0.10.0.',
   )
   static Future<ActivityExportResult> convertAndExportStream({
     required Stream<List<int>> source,
@@ -2389,7 +2374,7 @@ class ActivityFiles {
   /// [ActivityFiles.edit].
   @Deprecated(
     'Use ActivityFiles.edit(activity).sortAndDedup().trimInvalid().activity '
-    'instead. Will be removed in 0.9.0.',
+    'instead. Will be removed in 0.10.0.',
   )
   static RawActivity normalizeActivity(
     RawActivity activity, {
@@ -2405,7 +2390,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.sortAndDedup].
   @Deprecated(
     'Use ActivityFiles.edit(activity).sortAndDedup().activity instead. '
-    'Will be removed in 0.9.0.',
+    'Will be removed in 0.10.0.',
   )
   static RawActivity sortAndDedup(RawActivity activity) =>
       RawEditor(activity).sortAndDedup().activity;
@@ -2413,7 +2398,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.trimInvalid].
   @Deprecated(
     'Use ActivityFiles.edit(activity).trimInvalid().activity instead. '
-    'Will be removed in 0.9.0.',
+    'Will be removed in 0.10.0.',
   )
   static RawActivity trimInvalid(RawActivity activity) =>
       RawEditor(activity).trimInvalid().activity;
@@ -2421,7 +2406,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.crop].
   @Deprecated(
     'Use ActivityFiles.edit(activity).crop(start, end).activity instead. '
-    'Will be removed in 0.9.0.',
+    'Will be removed in 0.10.0.',
   )
   static RawActivity crop(
     RawActivity activity, {
@@ -2432,7 +2417,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.smoothHR].
   @Deprecated(
     'Use ActivityFiles.edit(activity).smoothHR(window).activity instead. '
-    'Will be removed in 0.9.0.',
+    'Will be removed in 0.10.0.',
   )
   static RawActivity smoothHeartRate(RawActivity activity, {int window = 5}) =>
       RawEditor(activity).smoothHR(window).activity;
@@ -2440,13 +2425,13 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.recomputeDistanceAndSpeed].
   @Deprecated(
     'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed().activity '
-    'instead. Will be removed in 0.9.0.',
+    'instead. Will be removed in 0.10.0.',
   )
   static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
       RawEditor(activity).recomputeDistanceAndSpeed().activity;
 
   /// Deprecated name for [RawEditor.merge]; forwards with identical behavior.
-  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.9.0.')
+  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.10.0.')
   static RawActivity merge(
     List<RawActivity> activities, {
     bool preserveSportPerLap = false,
@@ -2461,7 +2446,7 @@ class ActivityFiles {
 
   /// Deprecated name for [RawEditor.splitBySport]; forwards with identical
   /// behavior.
-  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.9.0.')
+  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.10.0.')
   static Map<Sport, RawActivity> splitBySport(
     RawActivity activity, {
     bool normalize = true,
@@ -2470,7 +2455,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.activityLabelNode]; forwards
   /// with identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.9.0.',
+    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.10.0.',
   )
   static GpxExtensionNode gpxActivityLabelNode(
     String label, {
@@ -2487,7 +2472,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.deviceNode]; forwards with
   /// identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.9.0.',
+    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.10.0.',
   )
   static GpxExtensionNode gpxDeviceNode(
     ActivityDeviceMetadata metadata, {
@@ -2506,7 +2491,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.deviceSummaryNode]; forwards
   /// with identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.9.0.',
+    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.10.0.',
   )
   static GpxExtensionNode gpxDeviceSummaryNode(
     ActivityDeviceMetadata metadata, {

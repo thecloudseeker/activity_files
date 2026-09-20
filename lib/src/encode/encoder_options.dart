@@ -7,6 +7,15 @@ enum GpxVersion { v1_1, v1_0 }
 /// TCX schema versions supported by the encoder.
 enum TcxVersion { v2, v1 }
 
+/// GeoJSON geometry shape to emit when encoding to GeoJSON.
+enum GeojsonGeometry {
+  /// A single `LineString` feature tracing the route (the default).
+  lineString,
+
+  /// One `Point` feature per sample.
+  points,
+}
+
 /// Controls encoder behaviour such as matching tolerance and numeric precision.
 class EncoderOptions {
   const EncoderOptions({
@@ -16,6 +25,8 @@ class EncoderOptions {
     this.precisionEle = 2,
     this.gpxVersion = GpxVersion.v1_1,
     this.tcxVersion = TcxVersion.v2,
+    this.geojsonGeometry = GeojsonGeometry.lineString,
+    this.geojsonIncludeChannels = false,
   }) : assert(precisionLatLon >= 0),
        assert(precisionEle >= 0);
 
@@ -37,6 +48,13 @@ class EncoderOptions {
   /// TCX schema version to emit when encoding TCX.
   final TcxVersion tcxVersion;
 
+  /// GeoJSON geometry shape to emit when encoding to GeoJSON.
+  final GeojsonGeometry geojsonGeometry;
+
+  /// Whether to attach channel-sample properties to each point feature.
+  /// Only meaningful when [geojsonGeometry] is [GeojsonGeometry.points].
+  final bool geojsonIncludeChannels;
+
   /// Returns the tolerance for [channel].
   Duration maxDeltaFor(Channel channel) =>
       maxDeltaPerChannel[channel] ?? defaultMaxDelta;
@@ -47,6 +65,8 @@ class EncoderOptions {
     int? precisionEle,
     GpxVersion? gpxVersion,
     TcxVersion? tcxVersion,
+    GeojsonGeometry? geojsonGeometry,
+    bool? geojsonIncludeChannels,
   }) {
     return EncoderOptions(
       defaultMaxDelta: defaultMaxDelta ?? this.defaultMaxDelta,
@@ -57,6 +77,9 @@ class EncoderOptions {
       precisionEle: precisionEle ?? this.precisionEle,
       gpxVersion: gpxVersion ?? this.gpxVersion,
       tcxVersion: tcxVersion ?? this.tcxVersion,
+      geojsonGeometry: geojsonGeometry ?? this.geojsonGeometry,
+      geojsonIncludeChannels:
+          geojsonIncludeChannels ?? this.geojsonIncludeChannels,
     );
   }
 }

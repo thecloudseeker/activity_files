@@ -907,6 +907,135 @@ class RawEditor {
     return this;
   }
 
+  /// Applies the auto-fix pipeline described by [options]: sort/dedup, trim
+  /// invalid points, recompute distance/speed, fill timestamp gaps, and
+  /// (optionally) generate laps by distance. See [ActivityAutoFixOptions] for
+  /// what each flag controls.
+  RawEditor autoFix(ActivityAutoFixOptions options) {
+    sortAndDedup();
+    if (options.fixInvalidGps || options.fixChannelDrift) {
+      trimInvalid();
+    }
+    if (options.fixDistanceDrift) {
+      recomputeDistanceAndSpeed();
+    }
+    if (options.fixTimestampGaps && options.maxInsertedGapPoints > 0) {
+      _fillTimestampGaps(
+        options.gapThreshold,
+        maxInsertedPoints: options.maxInsertedGapPoints,
+      );
+    }
+    if (options.autoLapByDistance) {
+      // Generate auto-laps if:
+      // 1. autoLapOnlyWhenMissing is false (always generate), OR
+      // 2. autoLapOnlyWhenMissing is true AND laps are missing/placeholder
+      final hasPlaceholderLaps =
+          _activity.laps.isNotEmpty &&
+          _activity.laps.every(
+            (lap) =>
+                (lap.name?.startsWith('Segment') ?? false) ||
+                (lap.name?.startsWith('Split') ?? false),
+          );
+      final shouldGenerateLaps =
+          !options.autoLapOnlyWhenMissing ||
+          _activity.laps.isEmpty ||
+          hasPlaceholderLaps;
+      if (shouldGenerateLaps && _activity.points.length >= 2) {
+        // Always recompute distance for auto-lap to ensure accuracy
+        // (distance may be lost during format conversions like GPX->TCX
+        // roundtrip).
+        recomputeDistanceAndSpeed();
+        final splitMeters = _autoLapDistanceForSport(_activity.sport, options);
+        if (splitMeters > 0) {
+          markLapsByDistance(splitMeters);
+        }
+      }
+    }
+    return this;
+  }
+
+  // Fills large timestamp gaps by linearly interpolating position and
+  // elevation. Channel samples (HR, power, cadence, etc.) are intentionally
+  // not interpolated; inserted points carry no sensor data and will appear
+  // as gaps in channel coverage.
+  void _fillTimestampGaps(
+    Duration threshold, {
+    required int maxInsertedPoints,
+  }) {
+    if (_activity.points.length < 2 || threshold <= Duration.zero) {
+      return;
+    }
+    final output = <GeoPoint>[];
+    var inserted = 0;
+    for (var i = 0; i < _activity.points.length - 1; i++) {
+      final current = _activity.points[i];
+      final next = _activity.points[i + 1];
+      output.add(current);
+      final gap = next.time.difference(current.time);
+      if (gap <= threshold || inserted >= maxInsertedPoints) {
+        continue;
+      }
+      final thresholdMicros = threshold.inMicroseconds;
+      if (thresholdMicros <= 0) {
+        continue;
+      }
+      final steps = gap.inMicroseconds ~/ thresholdMicros;
+      if (steps <= 1) {
+        continue;
+      }
+      for (var j = 1; j < steps; j++) {
+        if (inserted >= maxInsertedPoints) {
+          break;
+        }
+        final ratio = j / steps;
+        final time = current.time.add(
+          Duration(microseconds: (gap.inMicroseconds * ratio).round()),
+        );
+        final elevation = current.elevation != null && next.elevation != null
+            ? current.elevation! +
+                  (next.elevation! - current.elevation!) * ratio
+            : null;
+        output.add(
+          GeoPoint(
+            latitude:
+                current.latitude + (next.latitude - current.latitude) * ratio,
+            longitude:
+                current.longitude +
+                (next.longitude - current.longitude) * ratio,
+            elevation: elevation,
+            time: time,
+          ),
+        );
+        inserted++;
+      }
+    }
+    output.add(_activity.points.last);
+    if (output.length == _activity.points.length) {
+      return;
+    }
+    _activity = _activity.copyWith(points: output);
+  }
+
+  static double _autoLapDistanceForSport(
+    Sport sport,
+    ActivityAutoFixOptions options,
+  ) {
+    final override = options.autoLapDistanceMeters;
+    if (override != null && override > 0) {
+      return override;
+    }
+    switch (sport) {
+      case Sport.running:
+      case Sport.walking:
+      case Sport.hiking:
+        return options.runningLapDistanceMeters;
+      case Sport.cycling:
+        return options.cyclingLapDistanceMeters;
+      default:
+        return options.defaultLapDistanceMeters;
+    }
+  }
+
   /// Validates that lap boundaries align with the current activity timeframe.
   ///
   /// This helper is useful after compound edits (crop, trim, downsample, etc.)
@@ -978,9 +1107,11 @@ class RawEditor {
       );
     }
     if (activities.length == 1) {
-      return normalize
-          ? RawEditor(activities.first).sortAndDedup().trimInvalid().activity
-          : activities.first;
+      final single = activities.first;
+      if (!normalize || _isAlreadyNormalized(single)) {
+        return single;
+      }
+      return RawEditor(single).sortAndDedup().trimInvalid().activity;
     }
 
     // Flatten multi-track sources so additional-track data is not dropped.
@@ -1179,6 +1310,53 @@ bool _isSortedSamples(List<Sample> samples) =>
 
 bool _isSortedByStart(List<Lap> laps) =>
     _isSortedBy(laps, (lap) => lap.startTime);
+
+bool _isStrictlyOrderedBy<T>(List<T> items, DateTime Function(T item) timeOf) {
+  for (var i = 1; i < items.length; i++) {
+    if (!timeOf(items[i]).toUtc().isAfter(timeOf(items[i - 1]).toUtc())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Whether [activity] already satisfies what `sortAndDedup()`/`trimInvalid()`
+/// would produce, so a caller (e.g. [RawEditor.merge]'s single-activity
+/// case) can skip the chain and keep the identical instance instead of
+/// rebuilding an equal one. Mirrors the facade's own `_isAlreadyNormalized`
+/// fast path; kept here too since `transforms/` can't depend on `api/`.
+bool _isAlreadyNormalized(RawActivity activity) {
+  if (!_isStrictlyOrderedBy(activity.points, (p) => p.time) ||
+      !activity.channels.values.every(
+        (samples) => _isStrictlyOrderedBy(samples, (s) => s.time),
+      ) ||
+      !_isStrictlyOrderedBy(activity.laps, (l) => l.startTime)) {
+    return false;
+  }
+  final validCoordinates = activity.points.every(
+    (p) =>
+        p.latitude.isFinite &&
+        p.latitude >= -90 &&
+        p.latitude <= 90 &&
+        p.longitude.isFinite &&
+        p.longitude >= -180 &&
+        p.longitude <= 180 &&
+        !(p.latitude.abs() < 1e-6 && p.longitude.abs() < 1e-6) &&
+        (p.elevation == null || p.elevation! > -499.0),
+  );
+  if (!validCoordinates) return false;
+  if (activity.points.isEmpty) return true;
+  final start = activity.points.first.time;
+  final end = activity.points.last.time;
+  final channelsInRange = activity.channels.values.every(
+    (samples) =>
+        samples.every((s) => !s.time.isBefore(start) && !s.time.isAfter(end)),
+  );
+  if (!channelsInRange) return false;
+  return activity.laps.every(
+    (lap) => !lap.startTime.isBefore(start) && !lap.endTime.isAfter(end),
+  );
+}
 
 /// Sorts a copy of [items] by [timeOf] with a stable sort, so equal
 /// timestamps keep their original relative order instead of `List.sort`'s

@@ -6,7 +6,7 @@ import '../encode/encoder_options.dart';
 import '../models.dart';
 import '../parse/parse_result.dart';
 import '../validation.dart';
-import 'pipeline_options.dart';
+import '../pipeline_options.dart';
 
 /// Declarative description of an export pipeline for [ActivityFiles].
 class ActivityExportRequest {

@@ -7,6 +7,7 @@ import 'package:collection/collection.dart';
 import 'geo_math.dart';
 import 'models.dart';
 import 'parse/parse_result.dart' show DiagnosticCategory;
+import 'pipeline_options.dart' show ActivityAutoFixOptions;
 import 'validation.dart';
 
 part 'transforms/transform_utils.dart';

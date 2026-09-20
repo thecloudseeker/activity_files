@@ -1,22 +1,24 @@
 # Changelog
 ## 0.8.0
+
+Facade cleanup: clearer, more consistent names across `ActivityFiles`,
+`RawEditor`, and `RawActivityBuilder`. Old names keep working (see
+Deprecated). This release is safe to adopt as a drop-in upgrade.
+
 ### Added
-- New homes for facade operations, as part of an ongoing facade API redesign (see Deprecated below): `RawEditor.merge()`, `RawEditor.splitBySport()`, `RawActivityBuilder.activityLabelNode()`/`.deviceNode()`/`.deviceSummaryNode()`, `ActivityFiles.import()` (replaces `load`), `ActivityFiles.importBatch()` (replaces `loadBatch`), `ActivityFiles.convertStream()` (replaces `convertAndExportStream`).
+- `ActivityFiles.import()`/`.importBatch()`/`.convertStream()` replace `load`/`loadBatch`/`convertAndExportStream` with names that match `export`/`convert`. Multi-activity and GPX-extension helpers move off `ActivityFiles` to live next to the type they work with: `RawEditor.merge()`/`.splitBySport()` and `RawActivityBuilder.activityLabelNode()`/`.deviceNode()`/`.deviceSummaryNode()`.
+- `RawEditor.autoFix()`: the auto-fix pipeline (sort/dedup, trim invalid points, recompute distance/speed, fill timestamp gaps, auto-lap-by-distance) is now a public, chainable `RawEditor` method you can call directly, instead of only being reachable through `convert(autoFix: ...)`.
+- GeoJSON Point export via encoder options: `export(..., to: ActivityFileFormat.geojson, options: EncoderOptions(geojsonGeometry: GeojsonGeometry.points))` produces a Point FeatureCollection; add `geojsonIncludeChannels: true` to attach channel values to each point.
+- `ActivityFiles.buildAndExport()`: builds a `RawActivity` straight from raw location/channel streams and exports it in one call — the streaming counterpart to `convert()`, for when you have sensor data but no source file to parse.
 
 ### Deprecated
-
-Part of a staged, non-breaking facade API redesign — full rationale and the complete rollout plan in `dev/docs/FACADE_API_REDESIGN.md` (gitignored, maintainer-only). Every deprecated method keeps working identically in 0.8.0; removal is planned for 0.9.0 with a `### Breaking` migration entry at that time.
-
-- `ActivityFiles.load` → use `ActivityFiles.import` (same signature).
-- `ActivityFiles.loadBatch` → use `ActivityFiles.importBatch` (same signature).
-- `ActivityFiles.convertAndExportStream` → use `ActivityFiles.convertStream` (same signature).
-- `ActivityFiles.merge` → use `RawEditor.merge` (same signature).
-- `ActivityFiles.splitBySport` → use `RawEditor.splitBySport` (same signature).
-- `ActivityFiles.gpxActivityLabelNode`/`.gpxDeviceNode`/`.gpxDeviceSummaryNode` → use `RawActivityBuilder.activityLabelNode`/`.deviceNode`/`.deviceSummaryNode` (same signatures).
-- `ActivityFiles.normalizeActivity`/`.sortAndDedup`/`.trimInvalid`/`.crop`/`.smoothHeartRate`/`.recomputeDistanceAndSpeed` → use `ActivityFiles.edit(activity)...activity` (the `RawEditor` chain these already wrapped).
-- `ActivityFiles.exportToCsv`/`.exportToGeojson` → use `ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv/.geojson)`.
-- `ActivityFiles.importFromCsv`/`.importFromGeojson` → use `ActivityFiles.import(input, format: ActivityFileFormat.csv/.geojson)` (async, with normalize/validate), or `CsvParser().parse()`/`GeojsonParser().parse()` directly for a bare sync parse.
-- `ActivityFiles.exportToCsvMultiple` → no replacement planned (unused, format-specific); use `RawEditor.merge()` followed by `ActivityFiles.export()`.
+Everything below still works exactly as before; each is planned for removal in 0.10.0 with a full migration entry at that time.
+- `ActivityFiles.load`/`.loadBatch`/`.convertAndExportStream` → `.import`/`.importBatch`/`.convertStream`.
+- `ActivityFiles.merge`/`.splitBySport` → `RawEditor.merge`/`.splitBySport`.
+- `ActivityFiles.gpxActivityLabelNode`/`.gpxDeviceNode`/`.gpxDeviceSummaryNode` → `RawActivityBuilder.activityLabelNode`/`.deviceNode`/`.deviceSummaryNode`.
+- `ActivityFiles.normalizeActivity`/`.sortAndDedup`/`.trimInvalid`/`.crop`/`.smoothHeartRate`/`.recomputeDistanceAndSpeed` → the equivalent `ActivityFiles.edit(activity)` chain.
+- `ActivityFiles.exportToCsv`/`.exportToGeojson`/`.exportToGeojsonPoints`/`.importFromCsv`/`.importFromGeojson` → `ActivityFiles.export`/`.import` with an explicit format.
+- `ActivityFiles.exportToCsvMultiple` → no direct replacement; use `RawEditor.merge()` followed by `export()`.
 
 ## 0.7.8
 ### Fixed

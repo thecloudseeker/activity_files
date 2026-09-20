@@ -3646,4 +3646,222 @@ void main() {
       });
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // Facade API redesign Tier 0/1.5 (0.8.0): RawEditor.autoFix(), the
+  // EncoderOptions geojson geometry flag, and buildAndExport().
+  // ---------------------------------------------------------------------------
+  group('RawEditor.autoFix (Tier 0)', () {
+    test(
+      'matches the diagnostics-producing autoFix pipeline exercised via convert',
+      () async {
+        final base = DateTime.utc(2025, 1, 1, 10);
+        final activity = RawActivity(
+          points: [
+            GeoPoint(latitude: 52.52, longitude: 13.405, time: base),
+            GeoPoint(
+              latitude: 200,
+              longitude: 13.406,
+              time: base.add(const Duration(minutes: 5)),
+            ),
+            GeoPoint(
+              latitude: 52.53,
+              longitude: 13.41,
+              time: base.add(const Duration(minutes: 10)),
+            ),
+          ],
+        );
+        const options = ActivityAutoFixOptions(
+          fixInvalidGps: true,
+          fixChannelDrift: true,
+          fixDistanceDrift: true,
+          fixTimestampGaps: true,
+          gapThreshold: Duration(minutes: 3),
+          maxInsertedGapPoints: 20,
+        );
+
+        final fixed = RawEditor(activity).autoFix(options).activity;
+
+        expect(fixed.points.any((p) => p.latitude.abs() > 90), isFalse);
+        expect(fixed.channel(Channel.distance), isNotEmpty);
+        expect(fixed.points.length, greaterThan(activity.points.length));
+      },
+    );
+
+    test('is chainable with other RawEditor operations', () {
+      final base = DateTime.utc(2025, 1, 2, 8);
+      final activity = RawActivity(
+        points: [
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
+          GeoPoint(
+            latitude: 40.009,
+            longitude: -105.0,
+            time: base.add(const Duration(minutes: 5)),
+          ),
+        ],
+      );
+
+      final result = RawEditor(activity)
+          .autoFix(
+            const ActivityAutoFixOptions(
+              fixInvalidGps: false,
+              fixChannelDrift: false,
+              fixDistanceDrift: false,
+              fixTimestampGaps: false,
+              autoLapByDistance: true,
+              autoLapDistanceMeters: 100,
+            ),
+          )
+          .smoothHR(3)
+          .activity;
+
+      expect(result.laps, isNotEmpty);
+    });
+  });
+
+  group('EncoderOptions.geojsonGeometry (Tier 1.5)', () {
+    test('export(to: .geojson) defaults to a LineString feature', () async {
+      final activity = (await ActivityFiles.import(
+        sampleGpx,
+        useIsolate: false,
+      )).activity;
+
+      final result = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+      );
+
+      expect(result.encoded, contains('"LineString"'));
+    });
+
+    test(
+      'export(to: .geojson, options: points) matches GeojsonEncoder.encodeAsPoints',
+      () async {
+        final activity = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+
+        final result = ActivityFiles.export(
+          activity: activity,
+          to: ActivityFileFormat.geojson,
+          options: const EncoderOptions(
+            geojsonGeometry: GeojsonGeometry.points,
+          ),
+        );
+
+        expect(result.encoded, contains('"Point"'));
+        expect(result.encoded, isNot(contains('"LineString"')));
+      },
+    );
+
+    test(
+      'export(to: .geojson, options: points+channels) matches deprecated exportToGeojsonPoints',
+      () async {
+        final activity = (await ActivityFiles.import(
+          sampleGpx,
+          useIsolate: false,
+        )).activity;
+
+        final viaExport = ActivityFiles.export(
+          activity: activity,
+          to: ActivityFileFormat.geojson,
+          options: const EncoderOptions(
+            geojsonGeometry: GeojsonGeometry.points,
+            geojsonIncludeChannels: true,
+          ),
+        );
+        final viaDeprecated =
+            // ignore: deprecated_member_use_from_same_package
+            ActivityFiles.exportToGeojsonPoints(
+              activity,
+              includeChannels: true,
+            );
+
+        expect(viaExport.encoded, equals(viaDeprecated));
+      },
+    );
+  });
+
+  group('ActivityFiles.buildAndExport (Tier 1.5)', () {
+    test(
+      'matches convertAndExport(location: ...) for the same input',
+      () async {
+        final base = DateTime.utc(2024, 5, 3, 7);
+        final ts0 = base.millisecondsSinceEpoch;
+        final List<LocationStreamSample> location = [
+          (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
+          (
+            timestamp: ts0 + 1000,
+            latitude: 40.0002,
+            longitude: -105.0002,
+            elevation: 1602,
+          ),
+        ];
+        final channels = {
+          Channel.heartRate: [
+            (timestamp: ts0, value: 135),
+            (timestamp: ts0 + 1000, value: 148),
+          ],
+        };
+
+        final viaBuildAndExport = await ActivityFiles.buildAndExport(
+          location: location,
+          channels: channels,
+          label: 'Tier 1.5 build',
+          sportSource: 'running',
+          to: ActivityFileFormat.gpx,
+        );
+        final viaConvertAndExport = await ActivityFiles.convertAndExport(
+          location: location,
+          channels: channels,
+          label: 'Tier 1.5 build',
+          sportSource: 'running',
+          to: ActivityFileFormat.gpx,
+        );
+
+        expect(viaBuildAndExport.hasErrors, isFalse);
+        expect(viaBuildAndExport.encoded, equals(viaConvertAndExport.encoded));
+      },
+    );
+
+    test(
+      'threads autoFix through (previously silently ignored for streams)',
+      () async {
+        final base = DateTime.utc(2024, 5, 4, 6);
+        final ts0 = base.millisecondsSinceEpoch;
+        final List<LocationStreamSample> location = [
+          (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
+          (
+            timestamp: ts0 + 300000,
+            latitude: 40.009,
+            longitude: -105.0,
+            elevation: 1600,
+          ),
+        ];
+
+        final result = await ActivityFiles.buildAndExport(
+          location: location,
+          sport: Sport.running,
+          to: ActivityFileFormat.gpx,
+          autoFix: const ActivityAutoFixOptions(
+            fixInvalidGps: false,
+            fixChannelDrift: false,
+            fixDistanceDrift: false,
+            fixTimestampGaps: false,
+            autoLapByDistance: true,
+            autoLapDistanceMeters: 100,
+          ),
+        );
+
+        expect(result.activity.laps, isNotEmpty);
+        expect(
+          result.diagnostics.any(
+            (d) => d.code == 'autofix.laps.auto_generated',
+          ),
+          isTrue,
+        );
+      },
+    );
+  });
 }
