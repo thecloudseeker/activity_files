@@ -56,7 +56,7 @@ void main() {
         expect(samples[1].value, equals(145));
 
         // Round-trips through the default StreamTimestampDecoder without
-        // losing sub-second precision (this used to silently divide by 1000).
+        // losing sub-second precision.
         final builder = ActivityFiles.builderFromStreams(
           location: [
             (
@@ -81,7 +81,7 @@ void main() {
       final activity = RawActivity(
         channels: {
           Channel.heartRate: [Sample(time: t0, value: 140)],
-          Channel.cadence: [], // empty — should be skipped
+          Channel.cadence: [], // empty, should be skipped
         },
       );
 
@@ -126,8 +126,7 @@ void main() {
 
   // ---------------------------------------------------------------------------
   // ActivityFiles.importBatch + BatchImportResult / BatchImportFailure
-  // (`importBatch` was originally named `loadBatch`, kept as a deprecated
-  // forwarder — see below.)
+  // (`loadBatch` is a deprecated forwarder for `importBatch`, see below.)
   // ---------------------------------------------------------------------------
   group('ActivityFiles.importBatch', () {
     test('loads multiple valid sources and all succeed', () async {
@@ -447,11 +446,7 @@ void main() {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Facade API redesign Tier 0/1.5: RawEditor.autoFix(), the EncoderOptions
-  // geojson geometry flag, and buildAndExport().
-  // ---------------------------------------------------------------------------
-  group('RawEditor.autoFix (Tier 0)', () {
+  group('RawEditor.autoFix', () {
     test(
       'matches the diagnostics-producing autoFix pipeline exercised via convert',
       () async {
@@ -519,7 +514,7 @@ void main() {
     });
   });
 
-  group('EncoderOptions.geojsonGeometry (Tier 1.5)', () {
+  group('EncoderOptions.geojsonGeometry', () {
     test('export(to: .geojson) defaults to a LineString feature', () async {
       final activity = (await ActivityFiles.import(
         sampleGpx,
@@ -583,7 +578,7 @@ void main() {
     );
   });
 
-  group('ActivityFiles.buildAndExport (Tier 1.5)', () {
+  group('ActivityFiles.buildAndExport', () {
     test(
       'matches convertAndExport(location: ...) for the same input',
       () async {
@@ -608,14 +603,14 @@ void main() {
         final viaBuildAndExport = await ActivityFiles.buildAndExport(
           location: location,
           channels: channels,
-          label: 'Tier 1.5 build',
+          label: 'build and export test',
           sportSource: 'running',
           to: ActivityFileFormat.gpx,
         );
         final viaConvertAndExport = await ActivityFiles.convertAndExport(
           location: location,
           channels: channels,
-          label: 'Tier 1.5 build',
+          label: 'build and export test',
           sportSource: 'running',
           to: ActivityFileFormat.gpx,
         );
@@ -625,43 +620,38 @@ void main() {
       },
     );
 
-    test(
-      'threads autoFix through (previously silently ignored for streams)',
-      () async {
-        final base = DateTime.utc(2024, 5, 4, 6);
-        final ts0 = base.millisecondsSinceEpoch;
-        final List<LocationStreamSample> location = [
-          (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
-          (
-            timestamp: ts0 + 300000,
-            latitude: 40.009,
-            longitude: -105.0,
-            elevation: 1600,
-          ),
-        ];
+    test('threads autoFix through for stream input', () async {
+      final base = DateTime.utc(2024, 5, 4, 6);
+      final ts0 = base.millisecondsSinceEpoch;
+      final List<LocationStreamSample> location = [
+        (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
+        (
+          timestamp: ts0 + 300000,
+          latitude: 40.009,
+          longitude: -105.0,
+          elevation: 1600,
+        ),
+      ];
 
-        final result = await ActivityFiles.buildAndExport(
-          location: location,
-          sport: Sport.running,
-          to: ActivityFileFormat.gpx,
-          autoFix: const ActivityAutoFixOptions(
-            fixInvalidGps: false,
-            fixChannelDrift: false,
-            fixDistanceDrift: false,
-            fixTimestampGaps: false,
-            autoLapByDistance: true,
-            autoLapDistanceMeters: 100,
-          ),
-        );
+      final result = await ActivityFiles.buildAndExport(
+        location: location,
+        sport: Sport.running,
+        to: ActivityFileFormat.gpx,
+        autoFix: const ActivityAutoFixOptions(
+          fixInvalidGps: false,
+          fixChannelDrift: false,
+          fixDistanceDrift: false,
+          fixTimestampGaps: false,
+          autoLapByDistance: true,
+          autoLapDistanceMeters: 100,
+        ),
+      );
 
-        expect(result.activity.laps, isNotEmpty);
-        expect(
-          result.diagnostics.any(
-            (d) => d.code == 'autofix.laps.auto_generated',
-          ),
-          isTrue,
-        );
-      },
-    );
+      expect(result.activity.laps, isNotEmpty);
+      expect(
+        result.diagnostics.any((d) => d.code == 'autofix.laps.auto_generated'),
+        isTrue,
+      );
+    });
   });
 }

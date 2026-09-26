@@ -1,18 +1,18 @@
 # Changelog
 ## 0.8.0
 
-Facade cleanup: clearer, more consistent names across `ActivityFiles`,
-`RawEditor`, and `RawActivityBuilder`. Old names keep working (see
-Deprecated). This release is safe to adopt as a drop-in upgrade.
+Facade cleanup: clearer, consistent names across `ActivityFiles`, `RawEditor`,
+and `RawActivityBuilder`. Old names still work (see Deprecated), safe to
+adopt as a drop-in upgrade.
 
 ### Added
-- `ActivityFiles.import()`/`.importBatch()`/`.convertStream()` replace `load`/`loadBatch`/`convertAndExportStream` with names that match `export`/`convert`. Multi-activity and GPX-extension helpers move off `ActivityFiles` to live next to the type they work with: `RawEditor.merge()`/`.splitBySport()` and `RawActivityBuilder.activityLabelNode()`/`.deviceNode()`/`.deviceSummaryNode()`.
-- `RawEditor.autoFix()`: the auto-fix pipeline (sort/dedup, trim invalid points, recompute distance/speed, fill timestamp gaps, auto-lap-by-distance) is now a public, chainable `RawEditor` method you can call directly, instead of only being reachable through `convert(autoFix: ...)`.
-- GeoJSON Point export via encoder options: `export(..., to: ActivityFileFormat.geojson, options: EncoderOptions(geojsonGeometry: GeojsonGeometry.points))` produces a Point FeatureCollection; add `geojsonIncludeChannels: true` to attach channel values to each point.
-- `ActivityFiles.buildAndExport()`: builds a `RawActivity` straight from raw location/channel streams and exports it in one call — the streaming counterpart to `convert()`, for when you have sensor data but no source file to parse.
+- `ActivityFiles.import()`/`.importBatch()`/`.convertStream()` replace `load`/`loadBatch`/`convertAndExportStream`. `RawEditor.merge()`/`.splitBySport()` and `RawActivityBuilder.activityLabelNode()`/`.deviceNode()`/`.deviceSummaryNode()` replace their `ActivityFiles` equivalents.
+- `RawEditor.autoFix()`: the auto-fix pipeline (sort/dedup, trim invalid points, recompute distance/speed, fill timestamp gaps, auto-lap-by-distance) is now a public, chainable method, not just reachable via `convert(autoFix: ...)`.
+- GeoJSON Point export: `EncoderOptions(geojsonGeometry: GeojsonGeometry.points)` emits a Point FeatureCollection; add `geojsonIncludeChannels: true` to attach channel values per point.
+- `ActivityFiles.buildAndExport()`: builds and exports a `RawActivity` from raw location/channel streams in one call, the streaming counterpart to `convert()`.
 
 ### Deprecated
-Everything below still works exactly as before; each is planned for removal in 0.10.0 with a full migration entry at that time.
+Everything below still works as before; removal planned for 0.10.0 with a migration entry then.
 - `ActivityFiles.load`/`.loadBatch`/`.convertAndExportStream` → `.import`/`.importBatch`/`.convertStream`.
 - `ActivityFiles.merge`/`.splitBySport` → `RawEditor.merge`/`.splitBySport`.
 - `ActivityFiles.gpxActivityLabelNode`/`.gpxDeviceNode`/`.gpxDeviceSummaryNode` → `RawActivityBuilder.activityLabelNode`/`.deviceNode`/`.deviceSummaryNode`.

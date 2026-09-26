@@ -538,7 +538,7 @@ class ActivityFiles {
   /// strings/bytes and buffered streams. Pass `null` to disable the limit.
   ///
   /// This method dispatches to one of two unrelated code paths depending on
-  /// which argument is given — for new code, prefer calling the specific one
+  /// which argument is given: for new code, prefer calling the specific one
   /// directly: [convert] for [source]-based calls (identical behavior, no
   /// dispatch), or [buildAndExport] for [location]/[channels]-based calls.
   static Future<ActivityExportResult> convertAndExport({
@@ -735,7 +735,7 @@ class ActivityFiles {
   /// Equivalent to configuring [builderFromStreams] by hand and passing the
   /// result to [export], with GPX metadata/track fields and [autoFix] wired
   /// through. Use this instead of [convertAndExport] when there's no
-  /// file/byte `source` to parse — only raw samples.
+  /// file/byte `source` to parse, only raw samples.
   static Future<ActivityExportResult> buildAndExport({
     required Iterable<LocationStreamSample> location,
     Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
@@ -823,7 +823,7 @@ class ActivityFiles {
   /// previously imported [RawActivity]. Timestamps are milliseconds since the
   /// epoch, matching [LocationStreamSample]/[ChannelStreamSample]'s
   /// [StreamTimestampDecoder] contract used by [builderFromStreams] and
-  /// [convertAndExport] — round-tripping through this method does not lose
+  /// [convertAndExport]; round-tripping through this method does not lose
   /// sub-second precision.
   ///
   /// ```dart

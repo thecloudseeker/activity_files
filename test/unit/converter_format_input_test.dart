@@ -504,7 +504,7 @@ void main() {
       });
 
       test(
-        'normalization is idempotent — running it twice yields same result',
+        'normalization is idempotent: running it twice yields same result',
         () {
           final first = ActivityConverter.convert(
             sampleGpx,
