@@ -126,8 +126,8 @@ void main() {
 
   // ---------------------------------------------------------------------------
   // ActivityFiles.importBatch + BatchImportResult / BatchImportFailure
-  // (batch import added 0.7.0 as `loadBatch`; renamed to `importBatch` in
-  // 0.8.0, `loadBatch` kept as a deprecated forwarder — see below.)
+  // (`importBatch` was originally named `loadBatch`, kept as a deprecated
+  // forwarder — see below.)
   // ---------------------------------------------------------------------------
   group('ActivityFiles.importBatch', () {
     test('loads multiple valid sources and all succeed', () async {
@@ -225,7 +225,7 @@ void main() {
       expect(str, contains('bad source'));
     });
 
-    test('deprecated loadBatch matches importBatch (0.8.0 rename)', () async {
+    test('deprecated loadBatch matches importBatch', () async {
       final viaNewName = await ActivityFiles.importBatch([
         sampleGpx,
       ], useIsolate: false);
@@ -238,33 +238,27 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // Facade API redesign (0.8.0): new names/homes added, old ones kept
-  // as deprecated forwarders with identical behavior. See
-  // dev/docs/FACADE_API_REDESIGN.md for the full staged rollout plan.
+  // Facade API redesign: new names/homes added, old ones kept as deprecated
+  // forwarders with identical behavior. See dev/docs/FACADE_API_REDESIGN.md
+  // for the full staged rollout plan.
   // ---------------------------------------------------------------------------
-  group(
-    'ActivityFiles.import matches deprecated ActivityFiles.load (0.8.0)',
-    () {
-      test('identical activity/format for the same source', () async {
-        final imported = await ActivityFiles.import(
-          sampleGpx,
-          useIsolate: false,
-        );
-        // ignore: deprecated_member_use_from_same_package
-        final loaded = await ActivityFiles.load(sampleGpx, useIsolate: false);
+  group('ActivityFiles.import matches deprecated ActivityFiles.load', () {
+    test('identical activity/format for the same source', () async {
+      final imported = await ActivityFiles.import(sampleGpx, useIsolate: false);
+      // ignore: deprecated_member_use_from_same_package
+      final loaded = await ActivityFiles.load(sampleGpx, useIsolate: false);
 
-        expect(imported.hasErrors, isFalse);
-        expect(imported.format, equals(loaded.format));
-        expect(
-          imported.activity.points.length,
-          equals(loaded.activity.points.length),
-        );
-      });
-    },
-  );
+      expect(imported.hasErrors, isFalse);
+      expect(imported.format, equals(loaded.format));
+      expect(
+        imported.activity.points.length,
+        equals(loaded.activity.points.length),
+      );
+    });
+  });
 
   group(
-    'ActivityFiles.convertStream matches deprecated convertAndExportStream (0.8.0)',
+    'ActivityFiles.convertStream matches deprecated convertAndExportStream',
     () {
       test('identical encoded output', () async {
         final bytes = sampleGpx.codeUnits;
@@ -291,7 +285,7 @@ void main() {
   );
 
   group(
-    'RawEditor.merge/splitBySport match deprecated ActivityFiles equivalents (0.8.0)',
+    'RawEditor.merge/splitBySport match deprecated ActivityFiles equivalents',
     () {
       test('RawEditor.merge matches ActivityFiles.merge', () async {
         final a = (await ActivityFiles.import(
@@ -334,7 +328,7 @@ void main() {
   );
 
   group(
-    'RawActivityBuilder GPX node builders match deprecated ActivityFiles.gpx*Node (0.8.0)',
+    'RawActivityBuilder GPX node builders match deprecated ActivityFiles.gpx*Node',
     () {
       test('activityLabelNode matches gpxActivityLabelNode', () {
         final viaBuilder = RawActivityBuilder.activityLabelNode('Morning Run');
@@ -377,90 +371,85 @@ void main() {
     },
   );
 
-  group(
-    'Deprecated ActivityFiles shortcuts still work identically (0.8.0)',
-    () {
-      test(
-        'sortAndDedup/trimInvalid/recomputeDistanceAndSpeed match edit() chain',
-        () async {
-          final activity = (await ActivityFiles.import(
-            sampleGpx,
-            useIsolate: false,
-          )).activity;
-
-          expect(
-            // ignore: deprecated_member_use_from_same_package
-            ActivityFiles.sortAndDedup(activity).points.length,
-            equals(
-              ActivityFiles.edit(
-                activity,
-              ).sortAndDedup().activity.points.length,
-            ),
-          );
-          expect(
-            // ignore: deprecated_member_use_from_same_package
-            ActivityFiles.trimInvalid(activity).points.length,
-            equals(
-              ActivityFiles.edit(activity).trimInvalid().activity.points.length,
-            ),
-          );
-          expect(
-            // ignore: deprecated_member_use_from_same_package
-            ActivityFiles.recomputeDistanceAndSpeed(activity).channels.keys,
-            equals(
-              ActivityFiles.edit(
-                activity,
-              ).recomputeDistanceAndSpeed().activity.channels.keys,
-            ),
-          );
-        },
-      );
-
-      test('exportToCsv/importFromCsv round-trip', () async {
+  group('Deprecated ActivityFiles shortcuts still work identically', () {
+    test(
+      'sortAndDedup/trimInvalid/recomputeDistanceAndSpeed match edit() chain',
+      () async {
         final activity = (await ActivityFiles.import(
           sampleGpx,
           useIsolate: false,
         )).activity;
 
-        // ignore: deprecated_member_use_from_same_package
-        final csv = ActivityFiles.exportToCsv(activity);
-        // ignore: deprecated_member_use_from_same_package
-        final reparsed = ActivityFiles.importFromCsv(csv);
+        expect(
+          // ignore: deprecated_member_use_from_same_package
+          ActivityFiles.sortAndDedup(activity).points.length,
+          equals(
+            ActivityFiles.edit(activity).sortAndDedup().activity.points.length,
+          ),
+        );
+        expect(
+          // ignore: deprecated_member_use_from_same_package
+          ActivityFiles.trimInvalid(activity).points.length,
+          equals(
+            ActivityFiles.edit(activity).trimInvalid().activity.points.length,
+          ),
+        );
+        expect(
+          // ignore: deprecated_member_use_from_same_package
+          ActivityFiles.recomputeDistanceAndSpeed(activity).channels.keys,
+          equals(
+            ActivityFiles.edit(
+              activity,
+            ).recomputeDistanceAndSpeed().activity.channels.keys,
+          ),
+        );
+      },
+    );
 
-        expect(reparsed.activity.points.length, equals(activity.points.length));
-      });
+    test('exportToCsv/importFromCsv round-trip', () async {
+      final activity = (await ActivityFiles.import(
+        sampleGpx,
+        useIsolate: false,
+      )).activity;
 
-      test('exportToGeojson/importFromGeojson round-trip', () async {
-        final activity = (await ActivityFiles.import(
-          sampleGpx,
-          useIsolate: false,
-        )).activity;
+      // ignore: deprecated_member_use_from_same_package
+      final csv = ActivityFiles.exportToCsv(activity);
+      // ignore: deprecated_member_use_from_same_package
+      final reparsed = ActivityFiles.importFromCsv(csv);
 
-        // ignore: deprecated_member_use_from_same_package
-        final geojson = ActivityFiles.exportToGeojson(activity);
-        // ignore: deprecated_member_use_from_same_package
-        final reparsed = ActivityFiles.importFromGeojson(geojson);
+      expect(reparsed.activity.points.length, equals(activity.points.length));
+    });
 
-        expect(reparsed.activity.points.length, equals(activity.points.length));
-      });
+    test('exportToGeojson/importFromGeojson round-trip', () async {
+      final activity = (await ActivityFiles.import(
+        sampleGpx,
+        useIsolate: false,
+      )).activity;
 
-      test('exportToCsvMultiple still encodes multiple activities', () async {
-        final activity = (await ActivityFiles.import(
-          sampleGpx,
-          useIsolate: false,
-        )).activity;
+      // ignore: deprecated_member_use_from_same_package
+      final geojson = ActivityFiles.exportToGeojson(activity);
+      // ignore: deprecated_member_use_from_same_package
+      final reparsed = ActivityFiles.importFromGeojson(geojson);
 
-        // ignore: deprecated_member_use_from_same_package
-        final csv = ActivityFiles.exportToCsvMultiple([activity, activity]);
+      expect(reparsed.activity.points.length, equals(activity.points.length));
+    });
 
-        expect(csv, isNotEmpty);
-      });
-    },
-  );
+    test('exportToCsvMultiple still encodes multiple activities', () async {
+      final activity = (await ActivityFiles.import(
+        sampleGpx,
+        useIsolate: false,
+      )).activity;
+
+      // ignore: deprecated_member_use_from_same_package
+      final csv = ActivityFiles.exportToCsvMultiple([activity, activity]);
+
+      expect(csv, isNotEmpty);
+    });
+  });
 
   // ---------------------------------------------------------------------------
-  // Facade API redesign Tier 0/1.5 (0.8.0): RawEditor.autoFix(), the
-  // EncoderOptions geojson geometry flag, and buildAndExport().
+  // Facade API redesign Tier 0/1.5: RawEditor.autoFix(), the EncoderOptions
+  // geojson geometry flag, and buildAndExport().
   // ---------------------------------------------------------------------------
   group('RawEditor.autoFix (Tier 0)', () {
     test(

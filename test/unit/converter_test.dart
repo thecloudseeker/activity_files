@@ -282,7 +282,7 @@ void main() {
       });
     });
 
-    group('Diagnostics (0.7.0)', () {
+    group('Diagnostics', () {
       test('diagnostics list is populated on malformed GPX', () {
         const malformed = '<not>valid<xml>';
         final diagnostics = <ParseDiagnostic>[];
@@ -330,7 +330,6 @@ void main() {
       });
 
       test('diagnostics can carry suggestedFix and priority', () {
-        // ParseDiagnostic gained suggestedFix and priority in 0.7.0.
         // Verify the fields are accessible on the type.
         const d = ParseDiagnostic(
           severity: ParseSeverity.warning,
@@ -385,7 +384,7 @@ void main() {
       });
     });
 
-    group('Multi-track GPX (0.7.0)', () {
+    group('Multi-track GPX', () {
       const multiTrackGpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
@@ -448,8 +447,7 @@ void main() {
 
       test('multi-track GPX to CSV includes points from ALL tracks', () {
         // Single-track formats flatten additionalTracks on encode so that no
-        // track data is silently dropped (0.6.0 merged at parse time; 0.7.0
-        // preserves structure and merges at encode time instead).
+        // track data is silently dropped.
         final csv = ActivityConverter.convert(
           multiTrackGpx,
           from: ActivityFileFormat.gpx,
@@ -477,7 +475,7 @@ void main() {
       });
     });
 
-    group('Sentinel value removal via normalization (0.7.0)', () {
+    group('Sentinel value removal via normalization', () {
       test('removes null-island sentinel coordinates when normalize is true', () {
         // Points at (0,0) within 1e-6° are GPS "no fix yet" sentinels.
         const gpxWithSentinel = '''<?xml version="1.0"?>

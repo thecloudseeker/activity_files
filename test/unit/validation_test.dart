@@ -510,7 +510,7 @@ void main() {
     );
   });
 
-  group('ParseFidelityMode (0.7.0)', () {
+  group('ParseFidelityMode', () {
     test('enum has both expected values', () {
       expect(ParseFidelityMode.values, hasLength(2));
       expect(

@@ -2,12 +2,13 @@
 
 /// Controls the normalization trade-off for load and convert operations.
 ///
-/// Declared in 0.7.0 for API stability. Pipeline wiring (the `fidelityMode`
-/// parameter on facade helpers) is planned for 0.8.0; until then the active
-/// mode is always [pragmaticNormalize] regardless of which value is passed.
+/// Declared ahead of time for API stability. Pipeline wiring (the
+/// `fidelityMode` parameter on facade helpers) is not yet implemented; until
+/// then the active mode is always [pragmaticNormalize] regardless of which
+/// value is passed.
 ///
-/// Note that multi-track handling is independent of this enum: as of 0.7.0
-/// the GPX parser always preserves additional `<trk>` elements in
+/// Note that multi-track handling is independent of this enum: the GPX
+/// parser always preserves additional `<trk>` elements in
 /// `RawActivity.additionalTracks`, the GPX encoder re-emits them, and
 /// encoders for single-track formats (TCX, FIT, CSV, GeoJSON) merge them via
 /// `RawActivity.flattened()` so no data is lost.

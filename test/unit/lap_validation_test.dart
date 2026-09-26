@@ -252,7 +252,7 @@ void main() {
     });
   });
 
-  group('LapValidationResult.diagnostics (0.7.0)', () {
+  group('LapValidationResult.diagnostics', () {
     test('diagnostics is empty for valid laps', () {
       final activity = RawActivity(
         points: [
