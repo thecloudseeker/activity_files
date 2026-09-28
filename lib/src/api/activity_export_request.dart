@@ -9,6 +9,18 @@ import '../validation.dart';
 import '../pipeline_options.dart';
 
 /// Declarative description of an export pipeline for [ActivityFiles].
+///
+/// Its three factories map one-to-one onto named-argument methods:
+/// `fromSource` onto `ActivityFiles.convert`, `fromStream` onto
+/// `ActivityFiles.convert` with a `Stream<List<int>>` source, and
+/// `fromActivity` onto
+/// `ActivityFiles.export`. Every field has an equivalent there, so migrating
+/// loses nothing.
+@Deprecated(
+  'Use ActivityFiles.convert or ActivityFiles.export instead; convert '
+  'accepts a Stream<List<int>> source for the stream case. '
+  'Will be removed in 0.10.0.',
+)
 class ActivityExportRequest {
   ActivityExportRequest._({
     this.activity,

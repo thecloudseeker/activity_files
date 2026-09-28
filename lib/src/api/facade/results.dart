@@ -120,9 +120,15 @@ mixin _DiagnosticSummaryMixin {
   );
 }
 
+/// Deprecated name for [ActivityImportResult], kept as an alias so existing
+/// variable declarations and signatures keep compiling. Renamed alongside
+/// `load` -> `import` so the result type matches the verb that returns it.
+@Deprecated('Use ActivityImportResult instead. Will be removed in 0.10.0.')
+typedef ActivityLoadResult = ActivityImportResult;
+
 /// Result of [ActivityFiles.import].
-class ActivityLoadResult with _DiagnosticSummaryMixin {
-  ActivityLoadResult._({
+class ActivityImportResult with _DiagnosticSummaryMixin {
+  ActivityImportResult._({
     required this.activity,
     required Iterable<ParseDiagnostic> diagnostics,
     required this.format,
@@ -308,7 +314,7 @@ class BatchImportResult {
   });
 
   /// Successfully loaded activities, in input order (skipping failed items).
-  final List<ActivityLoadResult> successes;
+  final List<ActivityImportResult> successes;
 
   /// Sources that could not be loaded, in the order failures occurred.
   final List<BatchImportFailure> failures;

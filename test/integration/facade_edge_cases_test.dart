@@ -391,7 +391,19 @@ void main() {
       },
     );
 
-    test('ActivityLoadResult provides payload', () async {
+    test('the deprecated ActivityLoadResult alias resolves to '
+        'ActivityImportResult', () async {
+      // ignore: deprecated_member_use_from_same_package
+      final ActivityLoadResult aliased = await ActivityFiles.import(
+        sampleGpx,
+        useIsolate: false,
+      );
+      final ActivityImportResult current = aliased;
+      expect(current, same(aliased));
+      expect(aliased.activity.points, isNotEmpty);
+    });
+
+    test('ActivityImportResult provides payload', () async {
       final result = await ActivityFiles.load(sampleGpx, useIsolate: false);
       expect(result.payload, isNotNull);
       expect(result.stringPayload, isNotNull);

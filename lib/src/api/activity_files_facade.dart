@@ -68,7 +68,7 @@ class ActivityFiles {
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
   /// strings/bytes and buffered streams. Pass `null` to disable the limit.
-  static Future<ActivityLoadResult> import(
+  static Future<ActivityImportResult> import(
     Object source, {
     ActivityFileFormat? format,
     bool useIsolate = true,
@@ -155,7 +155,7 @@ class ActivityFiles {
         ),
       ];
     }
-    return ActivityLoadResult._(
+    return ActivityImportResult._(
       activity: parseResult.activity,
       diagnostics: diagnostics,
       format: detected,
@@ -167,7 +167,7 @@ class ActivityFiles {
   /// Attempts to detect the activity format without parsing.
   ///
   /// This helper is useful when you want to branch your own logic based on
-  /// format before calling [load] or [convert].
+  /// format before calling [import] or [convert].
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit; pass `null`
   /// to disable the limit.
@@ -210,7 +210,7 @@ class ActivityFiles {
   }) async {
     final sourceList = sources.toList();
     final total = sourceList.length;
-    final successes = <ActivityLoadResult>[];
+    final successes = <ActivityImportResult>[];
     final failures = <BatchImportFailure>[];
     var completed = 0;
     for (final source in sourceList) {
@@ -342,6 +342,7 @@ class ActivityFiles {
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
   }) async {
     final loadResult = await import(
       source,
@@ -378,13 +379,13 @@ class ActivityFiles {
       normalizationStats = normalized.stats;
       repairDiagnostics = normalized.repairDiagnostics;
     }
-    var diagnostics = List<ParseDiagnostic>.from(loadResult.diagnostics);
-    diagnostics.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
+    var collected = List<ParseDiagnostic>.from(loadResult.diagnostics);
+    collected.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
     var exportActivity = activity;
     if (!normalize) {
       final ordered = _ensureOrderedForExport(activity);
       exportActivity = ordered.activity;
-      diagnostics.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
+      collected.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
     }
     if (to == ActivityFileFormat.gpx) {
       final trackResult = _normalizeAdditionalTracksForExport(
@@ -392,18 +393,18 @@ class ActivityFiles {
         normalize: normalize,
       );
       exportActivity = trackResult.activity;
-      diagnostics.addAll(
+      collected.addAll(
         trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
       );
     }
-    (exportActivity, diagnostics) = _applyAutoFix(
+    (exportActivity, collected) = _applyAutoFix(
       exportActivity,
       autoFix,
-      diagnostics,
+      collected,
     );
     if (!exportInIsolate) {
-      diagnostics = [
-        ...diagnostics,
+      collected = [
+        ...collected,
         ..._lossyDiagnostics(
           exportActivity,
           to,
@@ -422,16 +423,13 @@ class ActivityFiles {
         validation = validateRawActivity(exportActivity);
         stopwatch.stop();
         validationDuration = stopwatch.elapsed;
-        diagnostics = [
-          ...diagnostics,
-          ..._diagnosticsFromValidation(validation),
-        ];
+        collected = [...collected, ..._diagnosticsFromValidation(validation)];
       }
       return ActivityConversionResult._(
         activity: exportActivity,
         sourceFormat: loadResult.format,
         targetFormat: to,
-        diagnostics: diagnostics,
+        diagnostics: [...collected, ...diagnostics],
         encoderOptions: options,
         encoded: encoded,
         validation: validation,
@@ -446,8 +444,8 @@ class ActivityFiles {
     // exportActivity is already flattened by this point, so additionalTracks
     // reads 0 there; only this one check needs the count captured above.
     if (to != ActivityFileFormat.gpx && additionalTrackCount > 0) {
-      diagnostics = [
-        ...diagnostics,
+      collected = [
+        ...collected,
         ParseDiagnostic(
           severity: ParseSeverity.info,
           code: '${DiagnosticCategory.lossy}.multi_track_flattened',
@@ -465,7 +463,7 @@ class ActivityFiles {
       to: to,
       options: options,
       normalize: false,
-      diagnostics: diagnostics,
+      diagnostics: collected,
       runValidation: runValidation,
       useIsolate: true,
     );
@@ -476,7 +474,7 @@ class ActivityFiles {
       encoderOptions: options,
       encoded: exportResult.encoded,
       binary: exportResult.isBinary ? exportResult.asBytes() : null,
-      diagnostics: exportResult.diagnostics,
+      diagnostics: [...exportResult.diagnostics, ...diagnostics],
       validation: exportResult.validation,
       processingStats: exportResult.processingStats.copyWith(
         normalization: normalizationStats,
@@ -491,6 +489,18 @@ class ActivityFiles {
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for buffered
   /// streams. Pass `null` to disable the limit.
+  ///
+  /// [convert] already accepts a `Stream<List<int>>` as its source and
+  /// produces identical output, so this adds nothing but a required [from]
+  /// and a renamed isolate flag. Neither path parses incrementally: both
+  /// buffer the whole stream before parsing, so the memory profile is the
+  /// same too.
+  @Deprecated(
+    'Use ActivityFiles.convert, which accepts a Stream<List<int>> source and '
+    'produces identical output. Pass useIsolate for parseInIsolate, and pass '
+    'from explicitly if the format is not detectable from the first 64KB. '
+    'Will be removed in 0.10.0.',
+  )
   static Future<ActivityExportResult> convertStream({
     required Stream<List<int>> source,
     required ActivityFileFormat from,
@@ -506,6 +516,7 @@ class ActivityFiles {
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
   }) => _runPipeline(
     ActivityExportRequest.fromStream(
       stream: source,
@@ -521,6 +532,7 @@ class ActivityFiles {
       fitCorruptionHandling: fitCorruptionHandling,
       autoFix: autoFix,
       maxPayloadBytes: maxPayloadBytes,
+      diagnostics: diagnostics,
     ),
   );
 
@@ -541,6 +553,11 @@ class ActivityFiles {
   /// which argument is given: for new code, prefer calling the specific one
   /// directly: [convert] for [source]-based calls (identical behavior, no
   /// dispatch), or [buildAndExport] for [location]/[channels]-based calls.
+  @Deprecated(
+    'Use ActivityFiles.convert for source-based calls, or '
+    'ActivityFiles.buildAndExport for location/channels-based calls. '
+    'Will be removed in 0.10.0.',
+  )
   static Future<ActivityExportResult> convertAndExport({
     Object? source,
     Iterable<LocationStreamSample>? location,
@@ -667,6 +684,17 @@ class ActivityFiles {
   }
 
   /// Runs the export pipeline using a declarative [ActivityExportRequest].
+  ///
+  /// The three request factories map one-to-one onto named-argument methods:
+  /// `fromSource` and `fromStream` both onto [convert], which accepts a
+  /// `Stream<List<int>>` source, and `fromActivity` onto [export]. Every
+  /// field has an equivalent there, including `diagnostics`, so migrating
+  /// loses nothing.
+  @Deprecated(
+    'Use ActivityFiles.convert or ActivityFiles.export instead; convert '
+    'accepts a Stream<List<int>> source for the stream case. '
+    'Will be removed in 0.10.0.',
+  )
   static Future<ActivityExportResult> runPipeline(
     ActivityExportRequest request,
   ) => _runPipeline(request);
@@ -734,7 +762,7 @@ class ActivityFiles {
   ///
   /// Equivalent to configuring [builderFromStreams] by hand and passing the
   /// result to [export], with GPX metadata/track fields and [autoFix] wired
-  /// through. Use this instead of [convertAndExport] when there's no
+  /// through. Use this instead of [convert] when there's no
   /// file/byte `source` to parse, only raw samples.
   static Future<ActivityExportResult> buildAndExport({
     required Iterable<LocationStreamSample> location,
@@ -817,13 +845,13 @@ class ActivityFiles {
   }
 
   /// Returns all channels from [activity] as [ChannelStreamSample] lists,
-  /// ready to pass directly to [convertAndExport].
+  /// ready to pass directly to [buildAndExport].
   ///
   /// This removes the per-channel reconstruction glue when re-exporting a
   /// previously imported [RawActivity]. Timestamps are milliseconds since the
   /// epoch, matching [LocationStreamSample]/[ChannelStreamSample]'s
   /// [StreamTimestampDecoder] contract used by [builderFromStreams] and
-  /// [convertAndExport]; round-tripping through this method does not lose
+  /// [buildAndExport]; round-tripping through this method does not lose
   /// sub-second precision.
   ///
   /// ```dart
@@ -893,7 +921,7 @@ class ActivityFiles {
   // replacement.
   /// Deprecated name for [import]; forwards with identical behavior.
   @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.10.0.')
-  static Future<ActivityLoadResult> load(
+  static Future<ActivityImportResult> load(
     Object source, {
     ActivityFileFormat? format,
     bool useIsolate = true,
@@ -938,7 +966,8 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
     '(async, with normalize/validate). For a bare sync parse, use '
-    'CsvParser().parse(input) directly. Will be removed in 0.10.0.',
+    'ActivityParser.parse(input, ActivityFileFormat.csv). '
+    'Will be removed in 0.10.0.',
   )
   static ActivityParseResult importFromCsv(String input) =>
       const CsvParser().parse(input);
@@ -947,7 +976,8 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
     'instead (async, with normalize/validate). For a bare sync parse, use '
-    'GeojsonParser().parse(input) directly. Will be removed in 0.10.0.',
+    'ActivityParser.parse(input, ActivityFileFormat.geojson). '
+    'Will be removed in 0.10.0.',
   )
   static ActivityParseResult importFromGeojson(String input) =>
       const GeojsonParser().parse(input);
@@ -962,8 +992,12 @@ class ActivityFiles {
 
   /// Export multiple activities to CSV format.
   @Deprecated(
-    'Unused and will be removed in 0.10.0 with no replacement. Use '
-    'RawEditor.merge() followed by ActivityFiles.export() instead.',
+    'Will be removed in 0.10.0 with no exact replacement. This concatenates '
+    'each activity\'s rows under one header, in input order, keeping every '
+    'row. The closest alternative, RawEditor.merge() followed by '
+    'ActivityFiles.export(), is NOT equivalent: it sorts all points by time '
+    'and drops points whose timestamps collide across activities. Encode '
+    'each activity separately if you need every row.',
   )
   static String exportToCsvMultiple(List<RawActivity> activities) =>
       CsvEncoder.encodeMultiple(activities);
@@ -992,7 +1026,8 @@ class ActivityFiles {
 
   /// Deprecated name for [convertStream]; forwards with identical behavior.
   @Deprecated(
-    'Use ActivityFiles.convertStream instead. Will be removed in 0.10.0.',
+    'Use ActivityFiles.convert, which accepts a Stream<List<int>> source. '
+    'Will be removed in 0.10.0.',
   )
   static Future<ActivityExportResult> convertAndExportStream({
     required Stream<List<int>> source,

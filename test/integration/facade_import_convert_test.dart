@@ -730,5 +730,102 @@ void main() {
         isFalse,
       );
     });
+
+    group('seeded diagnostics', () {
+      final seeded = ParseDiagnostic(
+        severity: ParseSeverity.info,
+        code: 'caller.upstream_note',
+        message: 'Carried in by the caller.',
+      );
+
+      test('convert() merges caller diagnostics after its own', () async {
+        final result = await ActivityFiles.convert(
+          source: sampleGpx,
+          to: ActivityFileFormat.tcx,
+          useIsolate: false,
+          diagnostics: [seeded],
+        );
+        final codes = result.diagnostics.map((d) => d.code).toList();
+        expect(codes, contains('caller.upstream_note'));
+        expect(codes.last, equals('caller.upstream_note'));
+      });
+
+      test(
+        'convert() seeding adds exactly one entry, disturbing nothing else',
+        () async {
+          final plain = await ActivityFiles.convert(
+            source: sampleGpx,
+            to: ActivityFileFormat.tcx,
+            useIsolate: false,
+          );
+          final seededRun = await ActivityFiles.convert(
+            source: sampleGpx,
+            to: ActivityFileFormat.tcx,
+            useIsolate: false,
+            diagnostics: [seeded],
+          );
+          expect(
+            seededRun.diagnostics.length,
+            equals(plain.diagnostics.length + 1),
+          );
+          expect(
+            seededRun.diagnostics
+                .map((d) => d.code)
+                .where((c) => c != 'caller.upstream_note'),
+            equals(plain.diagnostics.map((d) => d.code)),
+          );
+        },
+      );
+
+      test('convertStream() merges caller diagnostics too', () async {
+        final result = await ActivityFiles.convertStream(
+          source: Stream.value(utf8.encode(sampleGpx)),
+          from: ActivityFileFormat.gpx,
+          to: ActivityFileFormat.tcx,
+          parseInIsolate: false,
+          diagnostics: [seeded],
+        );
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('caller.upstream_note'),
+        );
+      });
+    });
+
+    group('exportToCsvMultiple has no exact replacement', () {
+      DateTime t(int s) =>
+          DateTime.utc(2024, 1, 1, 10).add(Duration(seconds: s));
+      GeoPoint pt(int s, double lat) =>
+          GeoPoint(latitude: lat, longitude: 8.0, time: t(s));
+
+      test(
+        'merge() drops a point when timestamps collide across activities',
+        () {
+          // Both activities carry a point at +20s; they are distinct samples.
+          final a = RawActivity(
+            points: [pt(0, 47.0), pt(10, 47.1), pt(20, 47.2)],
+            sport: Sport.running,
+          );
+          final b = RawActivity(
+            points: [pt(5, 48.0), pt(20, 48.2), pt(30, 48.3)],
+            sport: Sport.cycling,
+          );
+
+          // ignore: deprecated_member_use_from_same_package
+          final concatenated = ActivityFiles.exportToCsvMultiple([a, b]);
+          final mergedCsv = ActivityFiles.export(
+            activity: RawEditor.merge([a, b]),
+            to: ActivityFileFormat.csv,
+          ).encoded;
+
+          int rows(String csv) => csv.trim().split('\n').length - 1;
+
+          // Concatenation keeps every source row; merging does not.
+          expect(rows(concatenated), equals(6));
+          expect(rows(mergedCsv), equals(5));
+          expect(rows(mergedCsv), lessThan(rows(concatenated)));
+        },
+      );
+    });
   });
 }

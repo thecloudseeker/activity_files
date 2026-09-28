@@ -15,7 +15,7 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
   channels, and device metadata.
 - `ActivityFiles` facade and CLI: load, normalize, validate, and convert
   between all five formats in a few calls.
-- Stream-aware builders (`builderFromStreams`, `convertAndExport`) accept raw
+- Stream-aware builders (`builderFromStreams`, `buildAndExport`) accept raw
   timestamp/value tuples, so servers can skip manual model assembly.
 - Parsers never throw on malformed files; every issue is reported as a
   diagnostic with a stable `code`, a `suggestedFix`, and a `priority`.

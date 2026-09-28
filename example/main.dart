@@ -184,7 +184,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
     'diagnostics: ${tcxConversion.diagnostics.length}',
   );
 
-  final fitExport = await ActivityFiles.convertAndExport(
+  final fitExport = await ActivityFiles.convert(
     source: sampleBytes,
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.fit,
@@ -198,14 +198,14 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
   }
   print('FIT payload bytes: ${fitExport.asBytes().length}');
 
-  final streamed = await ActivityFiles.convertStream(
+  final streamed = await ActivityFiles.convert(
     source: Stream<List<int>>.fromIterable([
       for (final chunk in sampleBytes.chunks(64)) chunk,
     ]),
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.tcx,
     runValidation: true,
-    parseInIsolate: supportsIsolates,
+    useIsolate: supportsIsolates,
     exportInIsolate: supportsIsolates,
   );
   if (streamed.hasErrors) {
@@ -337,7 +337,7 @@ Future<void> _exportFromRawStreams() async {
     manufacturer: 'ActivityFiles',
     model: 'CLI Device',
   );
-  final export = await ActivityFiles.convertAndExport(
+  final export = await ActivityFiles.buildAndExport(
     location: [
       (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
       (

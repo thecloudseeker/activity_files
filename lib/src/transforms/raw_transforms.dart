@@ -56,6 +56,24 @@ class RawTransforms {
   }
 
   /// Computes cumulative distance (meters) using the haversine formula.
+  ///
+  /// [RawEditor.recomputeDistanceAndSpeed] walks the same points with the same
+  /// haversine call and writes the same `Channel.distance`, and additionally
+  /// writes `Channel.speed` and sorts first when timestamps are out of order.
+  /// Read the total from the last distance sample, or use
+  /// [RawActivity.approximateDistance]:
+  ///
+  /// ```dart
+  /// final updated = ActivityFiles.edit(activity)
+  ///     .recomputeDistanceAndSpeed()
+  ///     .activity;
+  /// final total = updated.channels[Channel.distance]!.last.value;
+  /// ```
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed(), then read '
+    'the last Channel.distance sample for the total. '
+    'Will be removed in 0.10.0.',
+  )
   static ({RawActivity activity, double totalDistance})
   computeCumulativeDistance(RawActivity activity) {
     if (activity.points.length < 2) {

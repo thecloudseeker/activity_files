@@ -50,7 +50,7 @@ class ActivityRepository {
   }
 
   Future<ActivityExportResult> convertToFit(Uint8List gpxBytes) {
-    return ActivityFiles.convertAndExport(
+    return ActivityFiles.convert(
       source: gpxBytes,
       from: ActivityFileFormat.gpx,
       to: ActivityFileFormat.fit,
@@ -104,7 +104,7 @@ final device = ActivityDeviceMetadata(
   model: 'ScanWatch',
 );
 
-final export = await ActivityFiles.convertAndExport(
+final export = await ActivityFiles.buildAndExport(
   location: locationStream,
   channels: {
     Channel.heartRate: heartRateStream,
@@ -164,7 +164,7 @@ Future<void> bootstrap() async {
   );
   print('Detected format: ${ride.format}, points: ${ride.activity.points.length}');
 
-  final fit = await ActivityFiles.convertAndExport(
+  final fit = await ActivityFiles.convert(
     source: File('assets/ride.gpx'),
     to: ActivityFileFormat.fit,
     runValidation: true,
@@ -174,7 +174,7 @@ Future<void> bootstrap() async {
 }
 ```
 
-> Security note: String sources are treated as inline payloads by default. Only set `allowFilePaths: true` (available on `load`, `convert`, `convertAndExport`, and `ActivityExportRequest.fromSource`) when you explicitly trust and expect a filesystem path.
+> Security note: String sources are treated as inline payloads by default. Only set `allowFilePaths: true` (available on `import()` and `convert()`) when you explicitly trust and expect a filesystem path.
 
 ## Error handling
 
@@ -194,7 +194,7 @@ final normalized = ActivityFiles.edit(
 The same pattern applies to conversion/export results:
 
 ```dart
-final export = await ActivityFiles.convertAndExport(
+final export = await ActivityFiles.convert(
   source: someFile,
   to: ActivityFileFormat.fit,
   runValidation: true,
@@ -263,8 +263,7 @@ final crcErrors = r.diagnostics.where((d) => d.code == 'fit.trailer.crc_mismatch
   (`ActivityFiles.defaultMaxPayloadBytes`) by default. Larger inputs throw
   `FormatException` and the CLI rejects them to prevent unbounded buffering.
 - To override the limit, pass `maxPayloadBytes` to `import()`, `convert()`,
-  `convertAndExport()`, `convertStream()`, or `detectFormat()`. Pass
-  `null` to disable the limit entirely.
+  or `detectFormat()`. Pass `null` to disable the limit entirely.
 - For very large files, stream from disk/network in smaller chunks, split the
   source before parsing/exporting, or set `maxPayloadBytes: null` if you trust
   the input.
@@ -304,25 +303,22 @@ Future<void> exportOffMainThread(
 }
 
 Future<void> convertStreamedGpx(Stream<List<int>> stream) async {
-  final request = ActivityExportRequest.fromStream(
-    stream: stream,
+  final result = await ActivityFiles.convert(
+    source: stream,
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.tcx,
     runValidation: true,
   );
-  final result = await ActivityFiles.runPipeline(request);
   await File('streamed.tcx').writeAsString(result.asString());
 }
 
-Future<void> pipelineFromPath(String path) async {
-  final result = await ActivityFiles.runPipeline(
-    ActivityExportRequest.fromSource(
-      source: File(path),
-      from: null, // auto-detects GPX/TCX/FIT/CSV/GeoJSON
-      to: ActivityFileFormat.fit,
-      runValidation: true,
-      exportInIsolate: true,
-    ),
+Future<void> convertFromPath(String path) async {
+  final result = await ActivityFiles.convert(
+    source: File(path),
+    from: null, // auto-detects GPX/TCX/FIT/CSV/GeoJSON
+    to: ActivityFileFormat.fit,
+    runValidation: true,
+    exportInIsolate: true,
   );
   await File('converted.fit').writeAsBytes(result.asBytes());
 }
@@ -679,7 +675,7 @@ for (final result in batch.successes) {
 
 `ActivityFiles.channelSamplesFrom` converts all channels of a `RawActivity`
 into the `Map<Channel, List<ChannelStreamSample>>` format expected by
-`convertAndExport`, removing per-channel reconstruction glue:
+`buildAndExport`, removing per-channel reconstruction glue:
 
 ```dart
 final loaded = await ActivityFiles.import(File('ride.gpx'));
@@ -693,7 +689,7 @@ final location = [
       elevation: p.elevation,
     ),
 ];
-await ActivityFiles.convertAndExport(
+await ActivityFiles.buildAndExport(
   location: location,
   channels: channels,
   to: ActivityFileFormat.fit,
@@ -812,12 +808,12 @@ Future<void> convertGpxToTcx() async {
 }
 
 Future<void> streamAndConvert(File input) async {
-  final streamed = await ActivityFiles.convertStream(
+  final streamed = await ActivityFiles.convert(
     source: input.openRead(),
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.tcx,
     runValidation: true,
-    parseInIsolate: true,
+    useIsolate: true,
     exportInIsolate: true,
   );
   if (streamed.hasErrors) {
@@ -827,11 +823,10 @@ Future<void> streamAndConvert(File input) async {
 }
 ```
 
-- `convert`, `convertAndExport`, and `convertStream` all accept
-  `useIsolate`/`exportInIsolate` to offload parsing/encoding to a background
-  isolate.
-- `export` and `convertAndExport` accept `runValidation: true` to populate
-  `hasWarnings`/`warningCount`/`hasErrors` on the result.
+- `convert` accepts `useIsolate`/`exportInIsolate` to offload parsing/encoding
+  to a background isolate; `buildAndExport` accepts `exportInIsolate`.
+- `export`, `convert`, and `buildAndExport` accept `runValidation: true` to
+  populate `hasWarnings`/`warningCount`/`hasErrors` on the result.
 - To round-trip a FIT export, pass the exported `asBytes()` back into
   `ActivityFiles.import(..., format: ActivityFileFormat.fit)`.
 
