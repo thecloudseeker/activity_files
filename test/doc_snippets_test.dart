@@ -35,9 +35,8 @@ const _flutterMarkers = [
 /// the snippet demonstrates.
 const _preamble = '''
 late RawActivity activity;
-late RawActivity withDistance;
-late ActivityLoadResult r;
-late ActivityLoadResult result;
+late ActivityImportResult r;
+late ActivityImportResult result;
 late ValidationResult validation;
 late Uint8List fitBytes;
 late Uint8List sourceBytes;

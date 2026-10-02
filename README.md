@@ -24,6 +24,9 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
   metrics (pool length, stroke, lengths) and strength sets (`WorkoutSet`).
 - Point-level editing on `RawEditor`: `insertPoint`, `deletePointAt`,
   `updatePoint`, `deleteRange`, `insertPause`, `removePause`.
+- `RawTransforms.resample` puts points and channels on a fixed time grid by
+  interpolation, for charts, fixed-cadence models, or comparing two recordings
+  sample by sample.
 - Multi-sport workflows: `RawEditor.merge(preserveSportPerLap: true)`
   combines swim/bike/run files into one triathlon; `RawEditor.splitBySport()`
   breaks a multi-sport file back into single-sport activities.

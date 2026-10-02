@@ -39,7 +39,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class ActivityRepository {
-  Future<ActivityLoadResult> loadRideFromAssets() async {
+  Future<ActivityImportResult> loadRideFromAssets() async {
     final asset = await rootBundle.load('assets/ride.gpx');
     final bytes = asset.buffer.asUint8List();
     return ActivityFiles.import(
@@ -90,7 +90,7 @@ class ActivityRepository {
 ```
 
 Wire `repository.loadRideFromAssets()` / `.convertToFit()` into a `FutureBuilder`
-as usual; the futures resolve to `ActivityLoadResult`/`ActivityExportResult`.
+as usual; the futures resolve to `ActivityImportResult`/`ActivityExportResult`.
 
 > Web note: When targeting Flutter web, use `useIsolate: false` (and `exportInIsolate: false`). The snippets above gate those flags with `!kIsWeb` for convenience.
 
@@ -549,16 +549,60 @@ if (lapValidation.hasIssues) {
   print('Lap validation errors: ${lapValidation.errors}');
   print('Lap validation warnings: ${lapValidation.warnings}');
 }
-final resampled = RawTransforms.resample(cleaned, step: const Duration(seconds: 2));
-final (activity: withDistance, totalDistance: total) =
-    RawTransforms.computeCumulativeDistance(resampled);
+
+final total = cleaned.channels[Channel.distance]!.last.value;
 print('Distance: ${total.toStringAsFixed(1)} m');
 ```
+
+### Resampling to a fixed time step
+
+`RawEditor.downsampleTime` thins a recording by keeping original points and
+dropping the rest, so the gaps between the survivors still vary.
+`RawTransforms.resample` answers the other question: it puts points and
+channels on a fixed grid, synthesizing samples that were never recorded.
+
+```dart
+final onGrid = RawTransforms.resample(activity, step: const Duration(seconds: 1));
+```
+
+Reach for it when a consumer needs exactly one sample per interval: charting
+libraries that assume a regular x axis, models trained on fixed-cadence input,
+or comparing two recordings of the same route sample by sample.
+
+What the grid does to the data:
+
+- Points and every channel other than heart rate are interpolated linearly
+  between their two neighbouring samples. Latitude, longitude, and elevation
+  move along a straight line, which is an approximation, not a recovery of the
+  real track.
+- Heart rate takes the nearest sample within half a step and emits nothing when
+  there is none, so a dropout stays a dropout instead of being smoothed over.
+- Past a channel's last sample, its final value is held.
+- The activity's last timestamp is always the closing grid point, so the final
+  interval can be shorter than `step`.
+- Laps, summary, device metadata, and every other field carry over untouched.
+  Lap boundary times are not snapped to the grid, so a boundary may no longer
+  land on a point.
+
+Activities with fewer than two points come back unchanged, and a zero or
+negative `step` throws `ArgumentError`.
+
+Distance and speed are interpolated like any other channel, which is not the
+same as deriving them from the new geometry. Recompute after resampling when
+they need to agree with the grid:
+
+```dart
+final onGrid = RawTransforms.resample(activity, step: const Duration(seconds: 1));
+final rebuilt = ActivityFiles.edit(onGrid).recomputeDistanceAndSpeed().activity;
+```
+
+Interpolating across every point of a multi-hour recording is CPU-heavy; see
+[Performance tips](#performance-tips) before putting it on a UI thread.
 
 ## Validation
 
 ```dart
-final validation = validateRawActivity(withDistance);
+final validation = validateRawActivity(activity);
 if (validation.errors.isEmpty) {
   print('Activity valid with ${validation.warnings.length} warning(s).');
 } else {
