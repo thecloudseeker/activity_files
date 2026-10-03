@@ -34,6 +34,8 @@ Everything below still works as before; removal is planned for 0.10.0 with a mig
 - `ActivityConverter` → `ActivityFiles.convert`, or `ActivityParser.parse` plus `ActivityEncoder.encode` for a synchronous conversion; it had no capability of its own.
 - `RawTransforms.computeCumulativeDistance` → `RawEditor.recomputeDistanceAndSpeed()`, reading the total from the last `Channel.distance` sample; `RawTransforms.resample` is unaffected.
 - `ParseFidelityMode` → `normalize: false` on `convert`/`export`/`exportAsync`; the enum was never wired into the pipeline and has no effect.
+- `FitCorruptionHandling` and the `fitCorruptionHandling` parameter → `strictFitIntegrity`, which has the same effect.
+- `IntegrityStats.invalidMessages`/`.recoveryAttempts`/`.formatSpecificIssues` → no replacement; no parser ever populated them.
 
 ## 0.7.8
 ### Fixed

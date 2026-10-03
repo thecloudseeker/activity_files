@@ -76,6 +76,7 @@ class ActivityFiles {
     Encoding encoding = utf8,
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
+    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
@@ -339,6 +340,7 @@ class ActivityFiles {
     bool exportInIsolate = false,
     bool runValidation = true,
     bool strictFitIntegrity = false,
+    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),

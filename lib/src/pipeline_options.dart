@@ -20,6 +20,13 @@ enum ParseFidelityMode {
 }
 
 /// Controls how FIT corruption diagnostics are handled by facade helpers.
+///
+/// Equivalent to the `strictFitIntegrity` flag: [strict] behaves like
+/// `strictFitIntegrity: true` and [bestEffort] like `false`.
+@Deprecated(
+  'Use strictFitIntegrity instead; it has the same effect. '
+  'Will be removed in 0.10.0.',
+)
 enum FitCorruptionHandling {
   /// Keep best-effort parsing output and surface diagnostics.
   bestEffort,
