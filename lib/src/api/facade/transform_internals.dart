@@ -19,7 +19,7 @@ Future<ActivityExportResult> _convertAndExportFromSource({
   required ActivityAutoFixOptions autoFix,
   required int? maxPayloadBytes,
 }) => _runPipeline(
-  ActivityExportRequest.fromSource(
+  _ExportRequest.fromSource(
     source: source,
     from: from,
     to: to,
@@ -37,7 +37,7 @@ Future<ActivityExportResult> _convertAndExportFromSource({
   ),
 );
 
-Future<ActivityExportResult> _runPipeline(ActivityExportRequest request) async {
+Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
   if (request.activity != null) {
     var activity = request.activity!;
     var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
@@ -102,7 +102,7 @@ Future<ActivityExportResult> _runPipeline(ActivityExportRequest request) async {
       ...parseDiagnostics,
       ...request.diagnostics,
     ];
-    final downstreamRequest = ActivityExportRequest.fromActivity(
+    final downstreamRequest = _ExportRequest.fromActivity(
       activity: parsedActivity,
       to: request.to,
       options: request.options,
@@ -155,7 +155,7 @@ Future<ActivityExportResult> _runPipeline(ActivityExportRequest request) async {
     return result;
   }
   throw StateError(
-    'ActivityExportRequest must specify an activity, source, or stream.',
+    'An export request must specify an activity, source, or stream.',
   );
 }
 

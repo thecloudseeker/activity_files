@@ -24,6 +24,7 @@ import 'export_serialization.dart';
 import 'export_stats.dart';
 import '../pipeline_options.dart';
 
+part 'facade/export_request_internals.dart';
 part 'facade/import_internals.dart';
 part 'facade/transform_internals.dart';
 part 'facade/edit_internals.dart';
@@ -518,7 +519,7 @@ class ActivityFiles {
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
   }) => _runPipeline(
-    ActivityExportRequest.fromStream(
+    _ExportRequest.fromStream(
       stream: source,
       from: from,
       to: to,
@@ -697,7 +698,28 @@ class ActivityFiles {
   )
   static Future<ActivityExportResult> runPipeline(
     ActivityExportRequest request,
-  ) => _runPipeline(request);
+  ) => _runPipeline(
+    _ExportRequest._(
+      activity: request.activity,
+      source: request.source,
+      stream: request.stream,
+      to: request.to,
+      from: request.from,
+      options: request.options,
+      normalize: request.normalize,
+      runValidation: request.runValidation,
+      parseInIsolate: request.parseInIsolate,
+      exportInIsolate: request.exportInIsolate,
+      encoding: request.encoding,
+      allowFilePaths: request.allowFilePaths,
+      strictFitIntegrity: request.strictFitIntegrity,
+      fitCorruptionHandling: request.fitCorruptionHandling,
+      autoFix: request.autoFix,
+      diagnostics: request.diagnostics,
+      validation: request.validation,
+      maxPayloadBytes: request.maxPayloadBytes,
+    ),
+  );
 
   // Edit -- mutating an existing RawActivity. RawEditor is the primary
   // editing surface (see edit()); these are normalization internals
@@ -832,7 +854,7 @@ class ActivityFiles {
     }
     final activity = builder.build(normalize: false);
     return _runPipeline(
-      ActivityExportRequest.fromActivity(
+      _ExportRequest.fromActivity(
         activity: activity,
         to: to,
         options: options,
