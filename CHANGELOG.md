@@ -33,6 +33,7 @@ Everything below still works as before; removal is planned for 0.10.0 with a mig
 - `ActivityFiles.runPipeline` and `ActivityExportRequest` → `convert` for the `fromSource`/`fromStream` factories, `export` for `fromActivity`.
 - `ActivityConverter` → `ActivityFiles.convert`, or `ActivityParser.parse` plus `ActivityEncoder.encode` for a synchronous conversion; it had no capability of its own.
 - `RawTransforms.computeCumulativeDistance` → `RawEditor.recomputeDistanceAndSpeed()`, reading the total from the last `Channel.distance` sample; `RawTransforms.resample` is unaffected.
+- `ParseFidelityMode` → `normalize: false` on `convert`/`export`/`exportAsync`; the enum was never wired into the pipeline and has no effect.
 
 ## 0.7.8
 ### Fixed
