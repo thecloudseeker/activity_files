@@ -446,6 +446,8 @@ class ExportSerialization {
     },
     'gpxVersion': options.gpxVersion.name,
     'tcxVersion': options.tcxVersion.name,
+    'geojsonGeometry': options.geojsonGeometry.name,
+    'geojsonIncludeChannels': options.geojsonIncludeChannels,
   };
 
   static EncoderOptions encoderOptionsFromJson(Map<String, Object?> data) {
@@ -474,6 +476,12 @@ class ExportSerialization {
       },
       gpxVersion: _gpxVersionFromString(gpxVersionRaw),
       tcxVersion: _tcxVersionFromString(tcxVersionRaw),
+      geojsonGeometry: _geojsonGeometryFromString(
+        data['geojsonGeometry'] is String
+            ? data['geojsonGeometry'] as String
+            : null,
+      ),
+      geojsonIncludeChannels: data['geojsonIncludeChannels'] as bool? ?? false,
     );
   }
 
@@ -604,6 +612,16 @@ class ExportSerialization {
       case 'v2':
       default:
         return TcxVersion.v2;
+    }
+  }
+
+  static GeojsonGeometry _geojsonGeometryFromString(String? value) {
+    switch (value) {
+      case 'points':
+        return GeojsonGeometry.points;
+      case 'lineString':
+      default:
+        return GeojsonGeometry.lineString;
     }
   }
 }

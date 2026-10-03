@@ -3,6 +3,7 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/api/export_serialization.dart';
 import 'package:activity_files/src/platform/isolate_runner.dart'
     as isolate_runner;
 import 'package:activity_files/src/platform/isolate_runner_stub.dart'
@@ -174,6 +175,70 @@ void main() {
         expect(result.activity.laps.single.calories, equals(12));
       },
     );
+  });
+
+  group('EncoderOptions survive the isolate boundary', () {
+    test('every field round-trips through ExportSerialization', () {
+      final options = EncoderOptions(
+        defaultMaxDelta: const Duration(seconds: 3),
+        precisionLatLon: 4,
+        precisionEle: 2,
+        maxDeltaPerChannel: {Channel.heartRate: const Duration(seconds: 7)},
+        gpxVersion: GpxVersion.v1_0,
+        tcxVersion: TcxVersion.v1,
+        geojsonGeometry: GeojsonGeometry.points,
+        geojsonIncludeChannels: true,
+      );
+      final restored = ExportSerialization.encoderOptionsFromJson(
+        ExportSerialization.encoderOptionsToJson(options),
+      );
+      expect(restored.defaultMaxDelta, equals(options.defaultMaxDelta));
+      expect(restored.precisionLatLon, equals(options.precisionLatLon));
+      expect(restored.precisionEle, equals(options.precisionEle));
+      expect(
+        restored.maxDeltaPerChannel[Channel.heartRate],
+        equals(const Duration(seconds: 7)),
+      );
+      expect(restored.gpxVersion, equals(GpxVersion.v1_0));
+      expect(restored.tcxVersion, equals(TcxVersion.v1));
+      expect(restored.geojsonGeometry, equals(GeojsonGeometry.points));
+      expect(restored.geojsonIncludeChannels, isTrue);
+    });
+
+    test('a payload without the GeoJSON keys falls back to the defaults', () {
+      final restored = ExportSerialization.encoderOptionsFromJson({
+        'defaultMaxDeltaMicros': const Duration(seconds: 5).inMicroseconds,
+        'precisionLatLon': 6,
+        'precisionEle': 1,
+        'maxDeltaPerChannel': <String, int>{},
+        'gpxVersion': 'v1_1',
+        'tcxVersion': 'v2',
+      });
+      expect(restored.geojsonGeometry, equals(GeojsonGeometry.lineString));
+      expect(restored.geojsonIncludeChannels, isFalse);
+    });
+
+    test('exportAsync in an isolate emits Point features when asked', () async {
+      final activity = _fullyPopulatedActivity();
+      const options = EncoderOptions(
+        geojsonGeometry: GeojsonGeometry.points,
+        geojsonIncludeChannels: true,
+      );
+      final direct = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+        options: options,
+      );
+      final isolated = await ActivityFiles.exportAsync(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+        options: options,
+        useIsolate: true,
+      );
+      expect(isolated.asString(), equals(direct.asString()));
+      expect(isolated.asString(), contains('"type":"Point"'));
+      expect(isolated.asString(), isNot(contains('"type":"LineString"')));
+    });
   });
 }
 
