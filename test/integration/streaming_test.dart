@@ -3,6 +3,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
@@ -83,5 +84,25 @@ void main() {
         expect(result.activity.points.length, equals(2));
       },
     );
+
+    group('maxPayloadBytes on a stream source', () {
+      Stream<List<int>> padded(String gpx, int padBytes) async* {
+        yield utf8.encode(gpx);
+        yield Uint8List(padBytes);
+      }
+
+      test(
+        'null disables the cap rather than falling back to 64 MiB',
+        () async {
+          final result = await ActivityFiles.import(
+            padded(sampleGpx, 65 * 1024 * 1024),
+            format: ActivityFileFormat.gpx,
+            useIsolate: false,
+            maxPayloadBytes: null,
+          );
+          expect(result.activity.points, hasLength(3));
+        },
+      );
+    });
   });
 }

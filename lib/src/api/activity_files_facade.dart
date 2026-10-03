@@ -84,6 +84,7 @@ class ActivityFiles {
     final resolved = await _resolveSource(
       source,
       allowFilePaths: allowFilePaths,
+      maxPayloadBytes: maxPayloadBytes,
     );
     if (maxPayloadBytes != null) {
       _enforcePayloadLimit(

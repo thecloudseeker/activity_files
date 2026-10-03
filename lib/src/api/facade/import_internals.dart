@@ -3,6 +3,10 @@ part of '../activity_files_facade.dart';
 Future<_ResolvedSource> _resolveSource(
   Object source, {
   required bool allowFilePaths,
+  // Governs how much of a stream may be buffered for replay. Null means the
+  // caller disabled the cap; the facade's own default supplies 64 MiB when
+  // the caller says nothing.
+  int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
 }) async {
   if (source is _ResolvedSource) {
     return source;
@@ -42,10 +46,7 @@ Future<_ResolvedSource> _resolveSource(
 
     final sniffBytes = sniffedBytes == 0 ? null : sniffBuffer.takeBytes();
     return _ResolvedSource(
-      payload: _ReplayableStreamPayload(
-        replay(),
-        bufferLimit: _defaultStreamBufferLimitBytes,
-      ),
+      payload: _ReplayableStreamPayload(replay(), bufferLimit: maxPayloadBytes),
       description: 'stream',
       detectionBytes: sniffBytes,
     );

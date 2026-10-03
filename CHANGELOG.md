@@ -19,6 +19,9 @@ is a drop-in unless you implemented one of the two interfaces under Breaking.
 - `ActivityImportResult` replaces `ActivityLoadResult`, matching the `import()` verb that returns it; the old name stays as a deprecated alias.
 - `ActivityFiles.convert()` accepts `diagnostics`, merging caller-supplied entries into the result the way `export()` already did; this closes the last gap to the deprecated `runPipeline`.
 
+### Fixed
+- Passing `maxPayloadBytes: null` now disables the buffer cap for stream sources instead of falling back to the 64MB default.
+
 ### Deprecated
 Everything below still works as before; removal is planned for 0.10.0 with a migration entry then.
 - `ActivityFiles.load`/`.loadBatch` → `.import`/`.importBatch`.
