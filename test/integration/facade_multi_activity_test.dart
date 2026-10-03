@@ -416,6 +416,47 @@ void main() {
       expect(format, equals(ActivityFileFormat.gpx));
     });
 
+    test('a UTF-32 document keeps characters outside the BMP', () async {
+      // U+1F600 encodes as 00 F6 01 00 in UTF-32LE; read as UTF-16LE those
+      // bytes are 0xF600 and 0x0001 rather than a surrogate pair, so the
+      // four-byte BOM has to win over the two-byte one for it to survive.
+      const label = 'Run \u{1F600} \u{4E2D}\u{6587}';
+      final gpx =
+          '<?xml version="1.0"?><gpx version="1.1"><metadata>'
+          '<name>$label</name></metadata><trk><trkseg>'
+          '<trkpt lat="47.0" lon="11.0"><time>2026-01-01T00:00:00Z</time>'
+          '</trkpt></trkseg></trk></gpx>';
+
+      Uint8List asUtf32(Endian endian) {
+        final codePoints = gpx.runes.toList();
+        final bytes = Uint8List((codePoints.length + 1) * 4);
+        final view = bytes.buffer.asByteData();
+        view.setUint32(0, 0xFEFF, endian);
+        var offset = 4;
+        for (final codePoint in codePoints) {
+          view.setUint32(offset, codePoint, endian);
+          offset += 4;
+        }
+        return bytes;
+      }
+
+      for (final endian in [Endian.little, Endian.big]) {
+        final bytes = asUtf32(endian);
+        expect(
+          ActivityFiles.detectFormat(bytes),
+          equals(ActivityFileFormat.gpx),
+          reason: 'detection failed for $endian',
+        );
+        final result = await ActivityFiles.import(bytes, useIsolate: false);
+        expect(
+          result.activity.gpxMetadataName,
+          equals(label),
+          reason: 'metadata name lost characters for $endian',
+        );
+        expect(result.activity.points, hasLength(1));
+      }
+    });
+
     test('load infers CSV format from inline content', () async {
       const csv =
           'timestamp,latitude,longitude,heart_rate\n2025-01-01T10:00:00Z,52.52,13.405,140';

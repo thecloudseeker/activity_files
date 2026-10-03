@@ -453,16 +453,8 @@ bool _looksCsv(String text, {bool allowPartial = false}) {
 }
 
 String Function(Uint8List bytes)? _decoderForBom(Uint8List bytes) {
-  if (bytes.length >= 2) {
-    final first = bytes[0];
-    final second = bytes[1];
-    if (first == 0xFF && second == 0xFE) {
-      return (data) => _decodeUtf16(data, Endian.little);
-    }
-    if (first == 0xFE && second == 0xFF) {
-      return (data) => _decodeUtf16(data, Endian.big);
-    }
-  }
+  // The four-byte BOMs come first: UTF-32LE starts FF FE 00 00, whose first
+  // two bytes are also the UTF-16LE BOM, so a two-byte test would claim it.
   if (bytes.length >= 4) {
     final b0 = bytes[0];
     final b1 = bytes[1];
@@ -473,6 +465,16 @@ String Function(Uint8List bytes)? _decoderForBom(Uint8List bytes) {
     }
     if (b0 == 0xFF && b1 == 0xFE && b2 == 0x00 && b3 == 0x00) {
       return (data) => _decodeUtf32(data, Endian.little);
+    }
+  }
+  if (bytes.length >= 2) {
+    final first = bytes[0];
+    final second = bytes[1];
+    if (first == 0xFF && second == 0xFE) {
+      return (data) => _decodeUtf16(data, Endian.little);
+    }
+    if (first == 0xFE && second == 0xFF) {
+      return (data) => _decodeUtf16(data, Endian.big);
     }
   }
   return null;
