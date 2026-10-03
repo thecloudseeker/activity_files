@@ -42,7 +42,7 @@ body:
       description: If this is format/device-specific, a sample is the most useful thing you can attach.
       options:
         - label: Attached below (drag and drop into the description box)
-        - label: Emailed to packages@eikedreier.xyz instead
+        - label: Emailed to packages@eikedreier.com instead
         - label: No file to share
   - type: textarea
     id: context

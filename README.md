@@ -42,7 +42,7 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
 [Open an issue](https://github.com/thecloudseeker/activity_files/issues/new/choose) with a sample file and what you expected vs. got. 
 
 Real-world GPX, TCX, FIT, GeoJSON, and CSV files are also highly appreciated. (I only have one device to test against). Used for local testing only, never published or committed.
-Send to: `packages@eikedreier.xyz`
+Send to: `packages@eikedreier.com`
 
 ## Quick links
 
