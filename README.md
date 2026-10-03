@@ -15,7 +15,7 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
   channels, and device metadata.
 - `ActivityFiles` facade and CLI: load, normalize, validate, and convert
   between all five formats in a few calls.
-- Stream-aware builders (`builderFromStreams`, `convertAndExport`) accept raw
+- Stream-aware builders (`builderFromStreams`, `buildAndExport`) accept raw
   timestamp/value tuples, so servers can skip manual model assembly.
 - Parsers never throw on malformed files; every issue is reported as a
   diagnostic with a stable `code`, a `suggestedFix`, and a `priority`.
@@ -24,10 +24,13 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
   metrics (pool length, stroke, lengths) and strength sets (`WorkoutSet`).
 - Point-level editing on `RawEditor`: `insertPoint`, `deletePointAt`,
   `updatePoint`, `deleteRange`, `insertPause`, `removePause`.
-- Multi-sport workflows: `ActivityFiles.merge(preserveSportPerLap: true)`
-  combines swim/bike/run files into one triathlon; `splitBySport()` breaks a
-  multi-sport file back into single-sport activities.
-- Batch import (`ActivityFiles.loadBatch`) with per-file error capture and
+- `RawTransforms.resample` puts points and channels on a fixed time grid by
+  interpolation, for charts, fixed-cadence models, or comparing two recordings
+  sample by sample.
+- Multi-sport workflows: `RawEditor.merge(preserveSportPerLap: true)`
+  combines swim/bike/run files into one triathlon; `RawEditor.splitBySport()`
+  breaks a multi-sport file back into single-sport activities.
+- Batch import (`ActivityFiles.importBatch`) with per-file error capture and
   progress reporting.
 - Multi-track GPX round-trips: extra `<trk>` elements survive GPX export;
   single-track targets (TCX/FIT/CSV/GeoJSON) merge them so no points are lost.
@@ -39,7 +42,7 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
 [Open an issue](https://github.com/thecloudseeker/activity_files/issues/new/choose) with a sample file and what you expected vs. got. 
 
 Real-world GPX, TCX, FIT, GeoJSON, and CSV files are also highly appreciated. (I only have one device to test against). Used for local testing only, never published or committed.
-Send to: `packages@eikedreier.xyz`
+Send to: `packages@eikedreier.com`
 
 ## Quick links
 
@@ -55,7 +58,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.7.8
+  activity_files: ^0.8.0
 ```
 
 Then install dependencies:
@@ -70,17 +73,19 @@ Then jump straight into the facade:
 import 'package:activity_files/activity_files.dart';
 
 Future<void> convertGpxToFit(Uint8List bytes) async {
-  // 1) Load + auto-detect format.
-  final load = await ActivityFiles.load(
+  // 1) Import + auto-detect format.
+  final imported = await ActivityFiles.import(
     bytes,
     useIsolate: true,
   );
-  if (load.hasErrors) {
-    throw StateError('Load failed:\n${load.diagnosticsSummary()}');
+  if (imported.hasErrors) {
+    throw StateError('Import failed:\n${imported.diagnosticsSummary()}');
   }
 
   // 2) Normalize (sort/dedup + trim invalid points) before exporting.
-  final normalized = ActivityFiles.normalizeActivity(load.activity);
+  final normalized = ActivityFiles.edit(
+    imported.activity,
+  ).sortAndDedup().trimInvalid().activity;
 
   // 3) Export with validation so warnings/errors surface alongside the payload.
   final export = ActivityFiles.export(

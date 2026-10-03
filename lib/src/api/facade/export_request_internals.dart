@@ -1,28 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'dart:async';
-import 'dart:convert';
+part of '../activity_files_facade.dart';
 
-import '../encode/encoder_options.dart';
-import '../models.dart';
-import '../parse/parse_result.dart';
-import '../validation.dart';
-import '../pipeline_options.dart';
-
-/// Declarative description of an export pipeline for [ActivityFiles].
-///
-/// Its three factories map one-to-one onto named-argument methods:
-/// `fromSource` onto `ActivityFiles.convert`, `fromStream` onto
-/// `ActivityFiles.convert` with a `Stream<List<int>>` source, and
-/// `fromActivity` onto
-/// `ActivityFiles.export`. Every field has an equivalent there, so migrating
-/// loses nothing.
-@Deprecated(
-  'Use ActivityFiles.convert or ActivityFiles.export instead; convert '
-  'accepts a Stream<List<int>> source for the stream case. '
-  'Will be removed in 0.10.0.',
-)
-class ActivityExportRequest {
-  ActivityExportRequest._({
+// Internal description of one export pipeline run, consumed by _runPipeline.
+// The facade's own entry points build this directly; the public
+// ActivityExportRequest converts into it at its single call site.
+class _ExportRequest {
+  _ExportRequest._({
     this.activity,
     this.source,
     this.stream,
@@ -43,8 +26,8 @@ class ActivityExportRequest {
     this.maxPayloadBytes,
   }) : diagnostics = List<ParseDiagnostic>.unmodifiable(diagnostics);
 
-  /// Builds a request that skips parsing and exports an existing [RawActivity].
-  factory ActivityExportRequest.fromActivity({
+  // Skips parsing and exports an already-parsed activity.
+  factory _ExportRequest.fromActivity({
     required RawActivity activity,
     required ActivityFileFormat to,
     EncoderOptions options = const EncoderOptions(),
@@ -57,7 +40,7 @@ class ActivityExportRequest {
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-  }) => ActivityExportRequest._(
+  }) => _ExportRequest._(
     activity: activity,
     to: to,
     options: options,
@@ -75,8 +58,8 @@ class ActivityExportRequest {
     maxPayloadBytes: null,
   );
 
-  /// Builds a request that parses a file/path/byte source before exporting.
-  factory ActivityExportRequest.fromSource({
+  // Parses a file/path/byte source before exporting.
+  factory _ExportRequest.fromSource({
     required Object source,
     required ActivityFileFormat? from,
     required ActivityFileFormat to,
@@ -92,8 +75,8 @@ class ActivityExportRequest {
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = 64 * 1024 * 1024,
-  }) => ActivityExportRequest._(
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => _ExportRequest._(
     source: source,
     from: from,
     to: to,
@@ -112,7 +95,8 @@ class ActivityExportRequest {
     maxPayloadBytes: maxPayloadBytes,
   );
 
-  factory ActivityExportRequest.fromStream({
+  // Buffers a byte stream before parsing and exporting.
+  factory _ExportRequest.fromStream({
     required Stream<List<int>> stream,
     required ActivityFileFormat from,
     required ActivityFileFormat to,
@@ -127,8 +111,8 @@ class ActivityExportRequest {
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = 64 * 1024 * 1024,
-  }) => ActivityExportRequest._(
+    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  }) => _ExportRequest._(
     stream: stream,
     from: from,
     to: to,
@@ -147,59 +131,22 @@ class ActivityExportRequest {
     maxPayloadBytes: maxPayloadBytes,
   );
 
-  /// Activity to export when already parsed.
   final RawActivity? activity;
-
-  /// Arbitrary source object (path, bytes, etc.) for conversion flows.
   final Object? source;
-
-  /// Stream-based source for large payloads.
   final Stream<List<int>>? stream;
-
-  /// Source format when [source] or [stream] is provided.
   final ActivityFileFormat? from;
-
-  /// Target format for export.
   final ActivityFileFormat to;
-
-  /// Encoder options applied during export.
   final EncoderOptions options;
-
-  /// Whether to run normalization steps before encoding.
   final bool normalize;
-
-  /// Whether structural validation should run after encoding.
   final bool runValidation;
-
-  /// Whether parsing stages should run inside an isolate when needed.
   final bool parseInIsolate;
-
-  /// Whether export stages should run inside an isolate when possible.
   final bool exportInIsolate;
-
-  /// Text encoding used when parsing textual payloads.
   final Encoding encoding;
-
-  /// Whether plain string sources may be treated as local file paths.
   final bool allowFilePaths;
-
-  /// Whether FIT integrity failures (CRC/size) should throw instead of only
-  /// surfacing diagnostics.
   final bool strictFitIntegrity;
-
-  /// Policy for handling corrupted FIT payloads.
   final FitCorruptionHandling fitCorruptionHandling;
-
-  /// Auto-fix options applied before export.
   final ActivityAutoFixOptions autoFix;
-
-  /// Maximum bytes allowed for inline strings/bytes and buffered streams.
-  /// When null, no limit is enforced.
   final int? maxPayloadBytes;
-
-  /// Diagnostics gathered prior to export.
   final List<ParseDiagnostic> diagnostics;
-
-  /// Optional pre-computed validation result to reuse.
   final ValidationResult? validation;
 }

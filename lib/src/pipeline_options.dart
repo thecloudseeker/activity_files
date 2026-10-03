@@ -1,33 +1,32 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-/// Controls the normalization trade-off for load and convert operations.
+/// Reserved name for a normalization mode that was never wired into the
+/// pipeline: no facade method accepts it, and passing it anywhere has no
+/// effect.
 ///
-/// Declared in 0.7.0 for API stability. Pipeline wiring (the `fidelityMode`
-/// parameter on facade helpers) is planned for 0.8.0; until then the active
-/// mode is always [pragmaticNormalize] regardless of which value is passed.
-///
-/// Note that multi-track handling is independent of this enum: as of 0.7.0
-/// the GPX parser always preserves additional `<trk>` elements in
-/// `RawActivity.additionalTracks`, the GPX encoder re-emits them, and
-/// encoders for single-track formats (TCX, FIT, CSV, GeoJSON) merge them via
-/// `RawActivity.flattened()` so no data is lost.
+/// To skip normalization, pass `normalize: false` to
+/// `ActivityFiles.convert`, `ActivityFiles.export`, or
+/// `ActivityFiles.exportAsync`.
+@Deprecated(
+  'Has no effect; pass normalize: false to skip normalization. '
+  'Will be removed in 0.10.0.',
+)
 enum ParseFidelityMode {
   /// Preserve the source data as faithfully as possible.
-  ///
-  /// Intended behaviour once wired: no implicit sorting, deduplication, or
-  /// trimming of the parsed activity.
   strictFidelity,
 
-  /// Normalize and clean the activity for maximum downstream compatibility
-  /// (the current behaviour of facade helpers with `normalize: true`):
-  /// - Points are sorted and deduplicated.
-  /// - Channels are trimmed to the valid point range.
-  /// - Sentinel values (Null Island coordinates, −500 m elevations) are
-  ///   repaired; see `RawEditor.trimInvalid`.
+  /// Normalize and clean the activity for downstream compatibility.
   pragmaticNormalize,
 }
 
 /// Controls how FIT corruption diagnostics are handled by facade helpers.
+///
+/// Equivalent to the `strictFitIntegrity` flag: [strict] behaves like
+/// `strictFitIntegrity: true` and [bestEffort] like `false`.
+@Deprecated(
+  'Use strictFitIntegrity instead; it has the same effect. '
+  'Will be removed in 0.10.0.',
+)
 enum FitCorruptionHandling {
   /// Keep best-effort parsing output and surface diagnostics.
   bestEffort,

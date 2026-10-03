@@ -32,7 +32,7 @@ Future<void> _demoBatchDiagnosticsAndEditing() async {
     File('example/assets/sample.fit'),
     File('example/assets/sample.tcx'),
   ];
-  final batch = await ActivityFiles.loadBatch(
+  final batch = await ActivityFiles.importBatch(
     files,
     useIsolate: supportsIsolates,
     onProgress: (done, total) => print('Batch: $done/$total'),
@@ -151,7 +151,7 @@ Future<void> _demoBatchDiagnosticsAndEditing() async {
 Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
   print('=== Load & convert sample.gpx ===');
 
-  final loaded = await ActivityFiles.load(
+  final loaded = await ActivityFiles.import(
     sampleBytes,
     format: ActivityFileFormat.gpx,
     useIsolate: supportsIsolates,
@@ -184,7 +184,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
     'diagnostics: ${tcxConversion.diagnostics.length}',
   );
 
-  final fitExport = await ActivityFiles.convertAndExport(
+  final fitExport = await ActivityFiles.convert(
     source: sampleBytes,
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.fit,
@@ -198,14 +198,14 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
   }
   print('FIT payload bytes: ${fitExport.asBytes().length}');
 
-  final streamed = await ActivityFiles.convertAndExportStream(
+  final streamed = await ActivityFiles.convert(
     source: Stream<List<int>>.fromIterable([
       for (final chunk in sampleBytes.chunks(64)) chunk,
     ]),
     from: ActivityFileFormat.gpx,
     to: ActivityFileFormat.tcx,
     runValidation: true,
-    parseInIsolate: supportsIsolates,
+    useIsolate: supportsIsolates,
     exportInIsolate: supportsIsolates,
   );
   if (streamed.hasErrors) {
@@ -232,7 +232,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
     '${asyncExport.validation?.errors.length ?? 0}',
   );
 
-  final roundTrip = await ActivityFiles.load(
+  final roundTrip = await ActivityFiles.import(
     fitExport.asBytes(),
     format: ActivityFileFormat.fit,
     useIsolate: supportsIsolates,
@@ -256,14 +256,14 @@ Future<void> _demoFilePathHandling(File sampleFile) async {
   print('=== File path handling (0.4.0+ migration) ===');
 
   // Option 1: Pass File object directly (recommended)
-  final viaFileObject = await ActivityFiles.load(
+  final viaFileObject = await ActivityFiles.import(
     sampleFile,
     useIsolate: supportsIsolates,
   );
   print('Via File object: ${viaFileObject.activity.points.length} points');
 
   // Option 2: Use allowFilePaths flag with string path
-  final viaStringPath = await ActivityFiles.load(
+  final viaStringPath = await ActivityFiles.import(
     sampleFile.path,
     allowFilePaths: true,
     useIsolate: supportsIsolates,
@@ -271,7 +271,7 @@ Future<void> _demoFilePathHandling(File sampleFile) async {
   print('Via string path: ${viaStringPath.activity.points.length} points');
 
   // Note: Without allowFilePaths, string is treated as inline content:
-  // await ActivityFiles.load('/path/to/file.gpx'); // Would fail!
+  // await ActivityFiles.import('/path/to/file.gpx'); // Would fail!
 }
 
 Future<void> _buildAndExportSyntheticActivity() async {
@@ -316,7 +316,7 @@ Future<void> _buildAndExportSyntheticActivity() async {
   final normalized = ActivityFiles.edit(
     builder.build(),
   ).sortAndDedup().trimInvalid().recomputeDistanceAndSpeed().activity;
-  final prepared = ActivityFiles.smoothHeartRate(normalized, window: 3);
+  final prepared = ActivityFiles.edit(normalized).smoothHR(3).activity;
 
   final gpxExport = ActivityFiles.export(
     activity: prepared,
@@ -337,7 +337,7 @@ Future<void> _exportFromRawStreams() async {
     manufacturer: 'ActivityFiles',
     model: 'CLI Device',
   );
-  final export = await ActivityFiles.convertAndExport(
+  final export = await ActivityFiles.buildAndExport(
     location: [
       (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
       (
@@ -359,8 +359,8 @@ Future<void> _exportFromRawStreams() async {
     device: device,
     gpxMetadataDescription: 'Stream helper export',
     includeCreatorInGpxMetadataDescription: false,
-    metadataExtensions: [ActivityFiles.gpxActivityLabelNode('Stream Demo')],
-    trackExtensions: [ActivityFiles.gpxDeviceSummaryNode(device)],
+    metadataExtensions: [RawActivityBuilder.activityLabelNode('Stream Demo')],
+    trackExtensions: [RawActivityBuilder.deviceSummaryNode(device)],
     to: ActivityFileFormat.gpx,
     normalize: true,
     runValidation: true,

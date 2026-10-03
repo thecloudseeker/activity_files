@@ -94,3 +94,46 @@ jobs:
             git tag -a "$TAG" -m "$TAG"
             git push origin "$TAG"
           fi
+
+      # The release body is the CHANGELOG section for this version, verbatim:
+      # everything between `## X.Y.Z` and the next `## ` heading, which is
+      # exactly how every release from v0.6.0 on was written by hand. Failing
+      # loudly on a missing section is deliberate — a version bump with no
+      # CHANGELOG entry should stop the release, not produce an empty one.
+      - name: Extract changelog section
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          awk -v ver="## $VERSION" '
+            $0 == ver { found = 1; next }
+            found && /^## / { exit }
+            found { buf = buf $0 "\n" }
+            END { sub(/^\n+/, "", buf); sub(/\n+$/, "\n", buf); printf "%s", buf }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## $VERSION' section. Refusing to create an empty release."
+            exit 1
+          fi
+          echo "Release notes ($(wc -l < release_notes.md) lines):"
+          cat release_notes.md
+
+      # Idempotent like the tag step, and independent of it: when the tag
+      # already exists but the release does not, this still creates the
+      # release. RELEASE_TOKEN rather than GITHUB_TOKEN for the same reason as
+      # above — a release created by GITHUB_TOKEN cannot trigger an
+      # `on: release` workflow, which would silently break any future listener.
+      - name: Create GitHub release if missing
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="v$VERSION"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, skipping."
+            exit 0
+          fi
+          ARGS=(--title "$TAG" --notes-file release_notes.md)
+          # A pre-release suffix (0.9.0-beta.1) must not become "Latest".
+          case "$VERSION" in
+            *-*) ARGS+=(--prerelease) ;;
+          esac
+          gh release create "$TAG" "${ARGS[@]}"

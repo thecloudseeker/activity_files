@@ -7,6 +7,18 @@ import '../parse/parse_result.dart';
 import '../transforms.dart';
 
 /// High-level facade for converting between activity file formats.
+///
+/// This is sugar over [ActivityParser.parse] followed by
+/// [ActivityEncoder.encode], with no capability of its own: it cannot
+/// auto-detect the source format, and it returns a bare `String` rather than
+/// a result carrying diagnostics. Use [ActivityFiles.convert] for the async
+/// pipeline, or compose the two calls directly when you need a synchronous
+/// conversion.
+@Deprecated(
+  'Use ActivityFiles.convert, or compose ActivityParser.parse with '
+  'ActivityEncoder.encode for a synchronous conversion. '
+  'Will be removed in 0.10.0.',
+)
 class ActivityConverter {
   const ActivityConverter._();
 

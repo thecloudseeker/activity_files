@@ -2,8 +2,9 @@
 
 /// Integrity validation strategy for parsing activity files.
 ///
-/// Defines how parsers should handle integrity issues (CRC mismatches,
-/// truncated files, invalid structure) across all formats.
+/// Defines how the FIT parser handles integrity issues (CRC mismatches,
+/// truncated files, invalid structure). Only `FitParser` accepts an
+/// [IntegrityConfig]; the text formats have no checksums to verify.
 enum IntegrityMode {
   /// Fail-fast mode: throws FormatException on ANY integrity issue.
   /// Use for trusted/production data where 100% compliance is mandatory.
@@ -79,12 +80,21 @@ class IntegrityStats {
   int truncatedSections;
 
   /// Messages/records that couldn't be parsed.
+  ///
+  /// No parser populates this counter; it is always 0.
+  @Deprecated('Never populated by any parser. Will be removed in 0.10.0.')
   int invalidMessages;
 
   /// Attempted recoveries from errors.
+  ///
+  /// No parser populates this counter; it is always 0.
+  @Deprecated('Never populated by any parser. Will be removed in 0.10.0.')
   int recoveryAttempts;
 
   /// Format-specific issues (e.g., "fit.developer_fields_skipped").
+  ///
+  /// No parser populates this map; it is always empty.
+  @Deprecated('Never populated by any parser. Will be removed in 0.10.0.')
   final Map<String, int> formatSpecificIssues;
 
   /// Whether any integrity issues were detected.

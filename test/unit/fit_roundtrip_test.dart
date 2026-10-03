@@ -7,9 +7,9 @@ import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
 
-/// FIT → FIT round-trip coverage for the full 0.7.0 data model:
-/// session summary (incl. swim metrics, sub-sport, total cycles), per-lap
-/// metrics, and strength-training set messages (global 225).
+/// FIT → FIT round-trip coverage for the full data model: session summary
+/// (incl. swim metrics, sub-sport, total cycles), per-lap metrics, and
+/// strength-training set messages (global 225).
 void main() {
   final t0 = DateTime.utc(2024, 3, 1, 8, 0, 0);
 

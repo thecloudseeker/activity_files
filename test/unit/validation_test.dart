@@ -509,33 +509,4 @@ void main() {
       },
     );
   });
-
-  group('ParseFidelityMode (0.7.0)', () {
-    test('enum has both expected values', () {
-      expect(ParseFidelityMode.values, hasLength(2));
-      expect(
-        ParseFidelityMode.values,
-        contains(ParseFidelityMode.strictFidelity),
-      );
-      expect(
-        ParseFidelityMode.values,
-        contains(ParseFidelityMode.pragmaticNormalize),
-      );
-    });
-
-    test('strictFidelity and pragmaticNormalize are distinct', () {
-      expect(
-        ParseFidelityMode.strictFidelity,
-        isNot(equals(ParseFidelityMode.pragmaticNormalize)),
-      );
-    });
-
-    test('enum values have expected names', () {
-      expect(ParseFidelityMode.strictFidelity.name, equals('strictFidelity'));
-      expect(
-        ParseFidelityMode.pragmaticNormalize.name,
-        equals('pragmaticNormalize'),
-      );
-    });
-  });
 }

@@ -244,7 +244,7 @@ void main() {
     });
   });
 
-  group('RawEditor.repairDiagnostics (0.7.0)', () {
+  group('RawEditor.repairDiagnostics', () {
     test('empty when no repairs were needed', () {
       final base = DateTime.utc(2024, 1, 1, 10);
       final activity = RawActivity(

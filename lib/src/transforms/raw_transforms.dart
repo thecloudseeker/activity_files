@@ -4,8 +4,38 @@ part of '../transforms.dart';
 class RawTransforms {
   const RawTransforms._();
 
-  /// Resamples [activity] to a fixed temporal [step] using linear interpolation
-  /// for trajectory and continuous channels. Heart rate uses nearest samples.
+  /// Resamples [activity] onto a fixed time grid of [step], starting at the
+  /// first point's time.
+  ///
+  /// Use this when a consumer needs one sample per interval: charting, feeding
+  /// a model that expects a regular cadence, or comparing two recordings
+  /// sample by sample. [RawEditor.downsampleTime] is the cheaper choice when
+  /// you only want fewer points, since it keeps original samples and drops the
+  /// rest, while this one synthesizes new ones.
+  ///
+  /// Points, and every channel other than [Channel.heartRate], are
+  /// interpolated linearly between the two neighbouring samples. Heart rate
+  /// takes the nearest sample within half a [step] and emits nothing when
+  /// there is none, so gaps in heart rate coverage stay gaps instead of being
+  /// bridged. Past a channel's last sample its final value is held.
+  ///
+  /// The activity's last timestamp is always the closing grid point even when
+  /// it does not fall on [step], so the final interval can be shorter than the
+  /// others. Points out of chronological order are sorted first. Laps,
+  /// summary, device metadata, and every other field carry over untouched, so
+  /// a lap boundary may no longer line up with a point.
+  ///
+  /// Returns [activity] unchanged when it has fewer than two points, and
+  /// throws [ArgumentError] when [step] is zero or negative. Interpolating a
+  /// multi-hour recording is CPU-heavy, so consider running it off the main
+  /// isolate.
+  ///
+  /// ```dart
+  /// final onGrid = RawTransforms.resample(
+  ///   activity,
+  ///   step: const Duration(seconds: 1),
+  /// );
+  /// ```
   static RawActivity resample(RawActivity activity, {required Duration step}) {
     if (step <= Duration.zero) {
       throw ArgumentError.value(step, 'step', 'must be positive');
@@ -56,6 +86,24 @@ class RawTransforms {
   }
 
   /// Computes cumulative distance (meters) using the haversine formula.
+  ///
+  /// [RawEditor.recomputeDistanceAndSpeed] walks the same points with the same
+  /// haversine call and writes the same `Channel.distance`, and additionally
+  /// writes `Channel.speed` and sorts first when timestamps are out of order.
+  /// Read the total from the last distance sample, or use
+  /// [RawActivity.approximateDistance]:
+  ///
+  /// ```dart
+  /// final updated = ActivityFiles.edit(activity)
+  ///     .recomputeDistanceAndSpeed()
+  ///     .activity;
+  /// final total = updated.channels[Channel.distance]!.last.value;
+  /// ```
+  @Deprecated(
+    'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed(), then read '
+    'the last Channel.distance sample for the total. '
+    'Will be removed in 0.10.0.',
+  )
   static ({RawActivity activity, double totalDistance})
   computeCumulativeDistance(RawActivity activity) {
     if (activity.points.length < 2) {

@@ -27,10 +27,19 @@ class ActivityEncoder {
       ActivityFileFormat.tcx => const TcxEncoder().encode(activity, options),
       ActivityFileFormat.fit => const FitEncoder().encode(activity, options),
       ActivityFileFormat.csv => CsvEncoder.encode(activity, options: options),
-      ActivityFileFormat.geojson => GeojsonEncoder.encode(
-        activity,
-        options: options,
-      ),
+      ActivityFileFormat.geojson => switch (options.geojsonGeometry) {
+        GeojsonGeometry.lineString => GeojsonEncoder.encode(
+          activity,
+          options: options,
+        ),
+        GeojsonGeometry.points =>
+          options.geojsonIncludeChannels
+              ? GeojsonEncoder.encodeAsPointsWithChannels(
+                  activity,
+                  options: options,
+                )
+              : GeojsonEncoder.encodeAsPoints(activity, options: options),
+      },
     };
   }
 }

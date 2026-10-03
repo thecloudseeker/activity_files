@@ -1,4 +1,45 @@
 # Changelog
+## 0.8.0
+
+### Summary
+Facade cleanup: clearer, consistent names across `ActivityFiles`, `RawEditor`,
+and `RawActivityBuilder`. Old names still work (see Deprecated), so the upgrade
+is a drop-in unless you implemented one of the two interfaces under Breaking.
+
+### Breaking
+- `ActivityFormatParser` and `ActivityFormatEncoder` are no longer exported; neither was ever an extension point, since parser and encoder selection switches on the `ActivityFileFormat` enum with no way to register an implementation.
+  - Migration: call `ActivityParser.parse`/`ActivityEncoder.encode` with the format you want; support for a new format ships in a release.
+
+### Added
+- `ActivityFiles.import()`/`.importBatch()` replace `load`/`loadBatch`.
+- `RawEditor.merge()`/`.splitBySport()` and `RawActivityBuilder.activityLabelNode()`/`.deviceNode()`/`.deviceSummaryNode()` replace their `ActivityFiles` equivalents.
+- `RawEditor.autoFix()` makes the auto-fix pipeline (sort/dedup, trim invalid points, recompute distance/speed, fill timestamp gaps, auto-lap-by-distance) a public chainable method, not just an option on `convert()`.
+- `ActivityFiles.buildAndExport()` builds and exports a `RawActivity` from raw location/channel streams in one call, the streaming counterpart to `convert()`.
+- GeoJSON Point export: `EncoderOptions(geojsonGeometry: GeojsonGeometry.points)` emits a Point FeatureCollection; add `geojsonIncludeChannels: true` to attach channel values per point.
+- `ActivityImportResult` replaces `ActivityLoadResult`, matching the `import()` verb that returns it; the old name stays as a deprecated alias.
+- `ActivityFiles.convert()` accepts `diagnostics`, merging caller-supplied entries into the result the way `export()` already did; this closes the last gap to the deprecated `runPipeline`.
+
+### Fixed
+- Passing `maxPayloadBytes: null` now disables the buffer cap for stream sources instead of falling back to the 64MB default.
+
+### Deprecated
+Everything below still works as before; removal is planned for 0.10.0 with a migration entry then.
+- `ActivityFiles.load`/`.loadBatch` → `.import`/`.importBatch`.
+- `ActivityFiles.convertStream`/`.convertAndExportStream` → `convert`, which accepts a `Stream<List<int>>` source and produces identical output; neither path parses incrementally, so the memory profile is unchanged.
+- `ActivityLoadResult` → `ActivityImportResult`, via a type alias, so existing declarations and signatures keep compiling.
+- `ActivityFiles.merge`/`.splitBySport` → `RawEditor.merge`/`.splitBySport`.
+- `ActivityFiles.gpxActivityLabelNode`/`.gpxDeviceNode`/`.gpxDeviceSummaryNode` → `RawActivityBuilder.activityLabelNode`/`.deviceNode`/`.deviceSummaryNode`.
+- `ActivityFiles.normalizeActivity`/`.sortAndDedup`/`.trimInvalid`/`.crop`/`.smoothHeartRate`/`.recomputeDistanceAndSpeed` → the equivalent `ActivityFiles.edit(activity)` chain.
+- `ActivityFiles.exportToCsv`/`.exportToGeojson`/`.exportToGeojsonPoints`/`.importFromCsv`/`.importFromGeojson` → `ActivityFiles.export`/`.import` with an explicit format; the `importFrom*` methods are synchronous while `import()` is not, so use `ActivityParser.parse(input, format)` for a sync parse.
+- `ActivityFiles.exportToCsvMultiple` → no exact replacement; it concatenates each activity's rows under one header in input order, while `RawEditor.merge()` plus `export()` sorts by time and drops points whose timestamps collide across activities, so encode each activity separately if you need every row.
+- `ActivityFiles.convertAndExport` → `convert` for source-based calls, `buildAndExport` for location/channels-based calls.
+- `ActivityFiles.runPipeline` and `ActivityExportRequest` → `convert` for the `fromSource`/`fromStream` factories, `export` for `fromActivity`.
+- `ActivityConverter` → `ActivityFiles.convert`, or `ActivityParser.parse` plus `ActivityEncoder.encode` for a synchronous conversion; it had no capability of its own.
+- `RawTransforms.computeCumulativeDistance` → `RawEditor.recomputeDistanceAndSpeed()`, reading the total from the last `Channel.distance` sample; `RawTransforms.resample` is unaffected.
+- `ParseFidelityMode` → `normalize: false` on `convert`/`export`/`exportAsync`; the enum was never wired into the pipeline and has no effect.
+- `FitCorruptionHandling` and the `fitCorruptionHandling` parameter → `strictFitIntegrity`, which has the same effect.
+- `IntegrityStats.invalidMessages`/`.recoveryAttempts`/`.formatSpecificIssues` → no replacement; no parser ever populated them.
+
 ## 0.7.8
 ### Fixed
 - GeoJSON features with no timestamp data no longer get an unmarked synthetic epoch fallback time; a diagnostic reports it now.

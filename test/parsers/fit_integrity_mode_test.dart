@@ -110,15 +110,11 @@ void main() {
         headerCrcMismatches: 1,
         trailerCrcMismatches: 1,
         truncatedSections: 1,
-        invalidMessages: 3,
-        recoveryAttempts: 5,
       );
 
       final summary = stats.summary();
       expect(summary, contains('CRC'));
       expect(summary, contains('truncated'));
-      expect(summary, contains('invalid'));
-      expect(summary, contains('recovery'));
     });
 
     test('ActivityParseResult exposes integrityStats and mode', () {
