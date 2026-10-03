@@ -86,9 +86,12 @@ void main() {
     );
 
     group('maxPayloadBytes on a stream source', () {
+      // Pad with spaces, not NUL: trailing whitespace after the root element
+      // is legal XML, so the payload stays parseable and the test can only
+      // fail on the buffer limit it is actually about.
       Stream<List<int>> padded(String gpx, int padBytes) async* {
         yield utf8.encode(gpx);
-        yield Uint8List(padBytes);
+        yield Uint8List(padBytes)..fillRange(0, padBytes, 0x20);
       }
 
       test(
@@ -101,6 +104,10 @@ void main() {
             maxPayloadBytes: null,
           );
           expect(result.activity.points, hasLength(3));
+          expect(
+            result.diagnostics.where((d) => d.severity == ParseSeverity.error),
+            isEmpty,
+          );
         },
       );
     });

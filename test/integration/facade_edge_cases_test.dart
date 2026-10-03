@@ -185,12 +185,15 @@ void main() {
     });
 
     test('convert with runValidation appends diagnostics', () async {
-      // Create an activity with validation issues
+      // Both points share one instant, so normalization collapses them to a
+      // single point and the generated lap ends at its own start time. That
+      // structural problem is reported by the validation pass and by nothing
+      // else in the pipeline, which is what this test pins down.
       final base = DateTime.utc(2024, 12, 10, 6);
       final problematic = RawActivity(
         points: [
           GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
-          GeoPoint(latitude: 40.0, longitude: -105.0, time: base), // duplicate
+          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
         ],
       );
       final gpxString = ActivityEncoder.encode(
@@ -198,15 +201,36 @@ void main() {
         ActivityFileFormat.gpx,
       );
 
-      final result = await ActivityFiles.convert(
-        source: gpxString,
-        to: ActivityFileFormat.tcx,
-        useIsolate: false,
-        runValidation: true,
+      Future<ActivityConversionResult> convert({required bool runValidation}) =>
+          ActivityFiles.convert(
+            source: gpxString,
+            to: ActivityFileFormat.tcx,
+            useIsolate: false,
+            runValidation: runValidation,
+          );
+
+      final validated = await convert(runValidation: true);
+      expect(validated.validation, isNotNull);
+      expect(
+        validated.diagnostics,
+        contains(
+          isA<ParseDiagnostic>().having(
+            (d) => d.code,
+            'code',
+            'validation.error',
+          ),
+        ),
       );
 
-      expect(result.validation, isNotNull);
-      expect(result.hasDiagnostics, isTrue);
+      // The same source without the flag produces no validation output at
+      // all, so the assertion above is about runValidation rather than about
+      // something the fixture would have reported anyway.
+      final unvalidated = await convert(runValidation: false);
+      expect(unvalidated.validation, isNull);
+      expect(
+        unvalidated.diagnostics.where((d) => d.code.startsWith('validation.')),
+        isEmpty,
+      );
     });
 
     test('normalizeActivity with sortAndDedup=false skips sorting', () {
