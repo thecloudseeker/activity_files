@@ -1,0 +1,25 @@
+# Codecov behaviour for this repo. Without this file Codecov uses `target:
+# auto` for both statuses, which makes the patch check demand that every
+# changed line be covered at least as well as the project average.
+coverage:
+  precision: 2
+  round: down
+  range: "85...95"
+  status:
+    # A floor, not a ratchet: the build fails when overall coverage drops
+    # below 90% (with 2% leniency), not when it dips a fraction below the
+    # previous commit the way `target: auto` would.
+    project:
+      default:
+        target: 90%
+        threshold: 2%
+    # Reported in the PR comment but never fails the build. Patch coverage
+    # counts moved lines as new ones, so a refactor that relocates covered
+    # code scores badly without any test having been lost.
+    patch:
+      default:
+        informational: true
+
+comment:
+  # Skip the comment entirely on PRs that don't move coverage.
+  require_changes: true
