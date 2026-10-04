@@ -1,4 +1,11 @@
 # Changelog
+## 0.8.1
+### Changed
+- FIT and GeoJSON parsing no longer re-normalize the same channel identifier for every point that uses it.
+- GeoJSON encoding no longer rounds coordinate/elevation values by formatting and re-parsing a string.
+- `RawEditor.updatePoint()` no longer re-sorts the points list when a time update doesn't change point order.
+- FIT record parsing no longer allocates a throwaway one-element list for every scalar field.
+
 ## 0.8.0
 
 ### Summary

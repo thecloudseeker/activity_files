@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import '../models.dart';
 import 'encoder_options.dart';
@@ -52,11 +53,16 @@ class GeojsonEncoder {
     EncoderOptions options = const EncoderOptions(),
   }) => _encodePointFeatures(activity, includeChannels: true, options: options);
 
-  /// Rounds a coordinate/elevation value to [precision] fractional digits,
-  /// mirroring the GPX encoder's `_round` (JSON numbers, not strings, so the
-  /// value itself is rounded rather than formatted).
-  static double _round(double value, int precision) =>
-      double.parse(value.toStringAsFixed(precision));
+  /// Rounds a coordinate/elevation value to [precision] fractional digits.
+  /// Unlike the GPX encoder's `_round` (which formats to a `String` for XML
+  /// text content, so `toStringAsFixed` is the necessary final step), this
+  /// needs a JSON *number*, so rounding numerically and skipping the
+  /// string round-trip avoids formatting a value only to immediately
+  /// re-parse it back into the same type.
+  static double _round(double value, int precision) {
+    final multiplier = math.pow(10, precision).toDouble();
+    return (value * multiplier).round() / multiplier;
+  }
 
   /// Build GeoJSON Feature from activity
   static Map<String, dynamic> _buildFeature(

@@ -185,6 +185,18 @@ class FitParser implements ActivityFormatParser {
     final developerBaseTypes = <int, int>{};
     final developerFieldScales = <int, double>{};
     final developerFieldOffsets = <int, double>{};
+    // Record-level custom channels (developer fields, unmapped native
+    // fields) share a handful of distinct names across thousands of
+    // records; Channel.custom re-normalizes (trim + lowercase) and
+    // allocates a new instance on every call, so cache by the already-
+    // computed name string rather than rebuilding the same Channel per
+    // record. Keyed by the resolved name (not by field number alone) so a
+    // developer field's name changing mid-file (e.g. a field_description
+    // arriving late) still resolves correctly instead of returning a
+    // stale pre-registration Channel.
+    final recordChannelCache = <String, Channel>{};
+    Channel recordChannel(String id) =>
+        recordChannelCache.putIfAbsent(id, () => Channel.custom(id));
     if (dataLimit > payload.length) {
       diagnostics.add(
         ParseDiagnostic(
@@ -505,6 +517,38 @@ class FitParser implements ActivityFormatParser {
           Channel.custom('ebike_assist_level_percent'),
           _asNumber(values[fitFieldEbikeAssistLevelPercent]),
         );
+        // Handles one already-unwrapped element (a scalar field's own value,
+        // or one element of an array-width field) for record field
+        // [fieldKey]. Factored out (once per record, not per field) so the
+        // loop below can call it directly for the scalar case instead of
+        // wrapping every scalar in a throwaway one-element List just to
+        // reuse a shared per-element body -- the vast majority of a
+        // record's fields are scalars, and this runs on every field of
+        // every record.
+        void addRecordFieldSample(int fieldKey, num numeric, String suffix) {
+          if (_isDeveloperFieldKey(fieldKey)) {
+            // field_description supplies the channel name and optional
+            // scale/offset (spec formula: raw / scale - offset); files
+            // without one fall back to the generic fit_dev_<i>_<n> name.
+            var value = numeric.toDouble();
+            final scale = developerFieldScales[fieldKey];
+            if (scale != null) value = value / scale;
+            final offset = developerFieldOffsets[fieldKey];
+            if (offset != null) value = value - offset;
+            addSample(
+              recordChannel(
+                '${developerFieldNames[fieldKey] ?? _developerChannelName(developerIndex: _developerIndexFromKey(fieldKey), fieldNumber: _developerFieldNumberFromKey(fieldKey))}$suffix',
+              ),
+              value,
+            );
+          } else if (!_dedicatedRecordFields.contains(fieldKey)) {
+            // Unknown native record fields (e.g. running dynamics) are
+            // preserved generically as fit_field_<n> channels with their raw
+            // (unscaled) values so no sensor data is silently dropped.
+            addSample(recordChannel('fit_field_$fieldKey$suffix'), numeric);
+          }
+        }
+
         for (final entry in values.entries) {
           // A field can decode to a scalar num or (for an array-width field,
           // e.g. a 1/2/4-byte-wide developer field declared with size > its
@@ -517,39 +561,12 @@ class FitParser implements ActivityFormatParser {
           // sentinel (e.g. unused trailing slots in a fixed-width array), so
           // every element reaching this loop is a genuinely present sample.
           final raw = entry.value;
-          final elements = raw is List<num>
-              ? raw
-              : (raw is num ? [raw] : const <num>[]);
-          if (elements.isEmpty) {
-            continue;
-          }
-          final isArray = raw is List<num> && raw.length > 1;
-          for (var i = 0; i < elements.length; i++) {
-            final numeric = elements[i];
-            final suffix = isArray ? '_$i' : '';
-            if (_isDeveloperFieldKey(entry.key)) {
-              // field_description supplies the channel name and optional
-              // scale/offset (spec formula: raw / scale - offset); files
-              // without one fall back to the generic fit_dev_<i>_<n> name.
-              var value = numeric.toDouble();
-              final scale = developerFieldScales[entry.key];
-              if (scale != null) value = value / scale;
-              final offset = developerFieldOffsets[entry.key];
-              if (offset != null) value = value - offset;
-              addSample(
-                Channel.custom(
-                  '${developerFieldNames[entry.key] ?? _developerChannelName(developerIndex: _developerIndexFromKey(entry.key), fieldNumber: _developerFieldNumberFromKey(entry.key))}$suffix',
-                ),
-                value,
-              );
-            } else if (!_dedicatedRecordFields.contains(entry.key)) {
-              // Unknown native record fields (e.g. running dynamics) are
-              // preserved generically as fit_field_<n> channels with their raw
-              // (unscaled) values so no sensor data is silently dropped.
-              addSample(
-                Channel.custom('fit_field_${entry.key}$suffix'),
-                numeric,
-              );
+          if (raw is num) {
+            addRecordFieldSample(entry.key, raw, '');
+          } else if (raw is List<num> && raw.isNotEmpty) {
+            final isArray = raw.length > 1;
+            for (var i = 0; i < raw.length; i++) {
+              addRecordFieldSample(entry.key, raw[i], isArray ? '_$i' : '');
             }
           }
         }
