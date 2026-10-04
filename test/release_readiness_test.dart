@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:io';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -137,6 +138,39 @@ void main() {
       expect(content, isNotEmpty);
       final upper = content.toUpperCase();
       expect(upper.contains('BSD') || upper.contains('LICENSE'), isTrue);
+    });
+
+    test('LICENSE names the copyright holder', () async {
+      final content = await File('LICENSE').readAsString();
+      expect(
+        content,
+        contains('Eike Dreier'),
+        reason: 'The copyright holder must be a person, not the package name',
+      );
+
+      final binHeader = await File('bin/activity_files.dart').readAsString();
+      expect(
+        binHeader,
+        contains('Eike Dreier'),
+        reason: 'The inline license header must match LICENSE',
+      );
+    });
+
+    test('every Dart source file carries an SPDX header', () async {
+      // doc_snippets_test.dart writes throwaway sources here while it runs.
+      const generated = 'test/doc_snippets_generated';
+      final missing = <String>[];
+      for (final dir in ['lib', 'bin', 'example', 'test']) {
+        await for (final entity in Directory(dir).list(recursive: true)) {
+          if (entity is! File || !entity.path.endsWith('.dart')) continue;
+          if (entity.path.startsWith(generated)) continue;
+          final content = await entity.readAsString();
+          if (!content.contains('SPDX-License-Identifier: BSD-3-Clause')) {
+            missing.add(entity.path);
+          }
+        }
+      }
+      expect(missing, isEmpty, reason: 'Missing SPDX header: $missing');
     });
 
     test('lib/activity_files.dart main export exists', () async {

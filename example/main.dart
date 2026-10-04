@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:io';
 import 'dart:typed_data';
 

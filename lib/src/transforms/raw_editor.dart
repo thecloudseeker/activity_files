@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 part of '../transforms.dart';
 
 /// Provides chained, immutable transformations over [RawActivity].

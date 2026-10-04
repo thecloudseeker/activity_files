@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 part of '../transforms.dart';
 
 List<GeoPoint> _resamplePoints(List<GeoPoint> points, List<DateTime> times) {

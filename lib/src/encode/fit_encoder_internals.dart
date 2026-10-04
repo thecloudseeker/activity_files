@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 part of 'fit_encoder.dart';
 
 List<_RecordSample> _recordSamples(RawActivity activity) {
