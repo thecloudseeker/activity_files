@@ -405,6 +405,111 @@ void main() {
       });
     });
 
+    group('Default extension namespace', () {
+      const legacy = 'https://schemas.activityfiles.dev/extensions';
+      const current = ActivityFiles.gpxDefaultExtensionNamespace;
+      final time = DateTime.utc(2024, 1, 1, 10);
+
+      RawActivity withTrackExtensions(List<GpxExtensionNode> nodes) =>
+          RawActivity(
+            points: [GeoPoint(latitude: 40.0, longitude: -105.0, time: time)],
+            gpxTrackExtensions: nodes,
+          );
+
+      test('a node carrying the previous default is exported under the '
+          'current one and survives a round-trip', () {
+        const source =
+            '<?xml version="1.0"?>'
+            '<gpx version="1.1" creator="x" '
+            'xmlns="http://www.topografix.com/GPX/1/1" xmlns:ext="$legacy">'
+            '<metadata><extensions><ext:activity>Morning run</ext:activity>'
+            '</extensions></metadata>'
+            '<trk><extensions><ext:activity>Run</ext:activity></extensions>'
+            '<trkseg><trkpt lat="40.0" lon="-105.0">'
+            '<time>2024-01-01T10:00:00Z</time></trkpt></trkseg></trk></gpx>';
+        final parsed = ActivityParser.parse(source, ActivityFileFormat.gpx);
+        expect(
+          parsed.activity.gpxTrackExtensions.single.namespaceUri,
+          equals(legacy),
+        );
+
+        final gpx = ActivityEncoder.encode(
+          parsed.activity,
+          ActivityFileFormat.gpx,
+        );
+
+        expect(gpx, contains('xmlns:ext="$current"'));
+        expect(gpx, isNot(contains(legacy)));
+        final reparsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        expect(reparsed.diagnostics, isEmpty);
+        final metadataNode = reparsed.activity.gpxMetadataExtensions.single;
+        expect(metadataNode.namespaceUri, equals(current));
+        expect(metadataNode.value, equals('Morning run'));
+        final trackNode = reparsed.activity.gpxTrackExtensions.single;
+        expect(trackNode.namespaceUri, equals(current));
+        expect(trackNode.value, equals('Run'));
+      });
+
+      test('previous-default and current nodes share one declaration', () {
+        final activity = withTrackExtensions([
+          GpxExtensionNode(
+            name: 'activity',
+            namespacePrefix: 'ext',
+            namespaceUri: legacy,
+            value: 'Old',
+          ),
+          RawActivityBuilder.activityLabelNode('New'),
+        ]);
+
+        final gpx = ActivityEncoder.encode(activity, ActivityFileFormat.gpx);
+
+        expect(gpx, contains('xmlns:ext="$current"'));
+        expect(gpx, isNot(contains(legacy)));
+        final reparsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        expect(
+          reparsed.activity.gpxTrackExtensions.map((n) => n.namespaceUri),
+          everyElement(equals(current)),
+        );
+        expect(reparsed.activity.gpxTrackExtensions.map((n) => n.value), [
+          'Old',
+          'New',
+        ]);
+      });
+
+      test('a namespace from another tool is written unchanged', () {
+        const foreign = 'https://example.com/schemas/other';
+        final activity = withTrackExtensions([
+          GpxExtensionNode(
+            name: 'note',
+            namespacePrefix: 'other',
+            namespaceUri: foreign,
+            value: 'kept',
+          ),
+        ]);
+
+        final gpx = ActivityEncoder.encode(activity, ActivityFileFormat.gpx);
+
+        expect(gpx, contains('xmlns:other="$foreign"'));
+      });
+
+      test('TCX export declares the current namespace for a '
+          'previous-default node', () {
+        final activity = withTrackExtensions([
+          GpxExtensionNode(
+            name: 'activity',
+            namespacePrefix: 'ext',
+            namespaceUri: legacy,
+            value: 'Old',
+          ),
+        ]);
+
+        final tcx = ActivityEncoder.encode(activity, ActivityFileFormat.tcx);
+
+        expect(tcx, contains('xmlns:ext="$current"'));
+        expect(tcx, isNot(contains(legacy)));
+      });
+    });
+
     group('Track segments', () {
       test('overlapping-in-time segments keep their own points on re-encode '
           'instead of getting scrambled by a global time sort', () {

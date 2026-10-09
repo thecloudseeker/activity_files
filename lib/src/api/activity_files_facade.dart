@@ -7,6 +7,7 @@ import 'package:async/async.dart';
 import '../channel_mapper.dart';
 import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';
+import '../encode/encoder_utils.dart';
 import '../encode/csv_encoder.dart';
 import '../encode/geojson_encoder.dart';
 import '../fit/fit_epoch.dart';
@@ -53,8 +54,11 @@ class ActivityFiles {
   /// It is an identifier, not a location: XML namespace names are compared by
   /// string equality and never fetched, and this one is deliberately absent
   /// from the `xsi:schemaLocation` the GPX encoder writes.
-  static const String gpxDefaultExtensionNamespace =
-      'https://schemas.eikedreier.com/activity_files/v1';
+  ///
+  /// Extension nodes still carrying the previous default
+  /// (`https://schemas.activityfiles.dev/extensions`), such as those parsed
+  /// from an older export, are written under this namespace on export.
+  static const String gpxDefaultExtensionNamespace = defaultExtensionNamespace;
 
   /// Prefix bound to [gpxDefaultExtensionNamespace] on the GPX root element.
   static const String gpxDefaultExtensionPrefix = 'ext';

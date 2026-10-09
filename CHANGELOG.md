@@ -1,7 +1,8 @@
 # Changelog
 ## 0.8.1
 ### Changed
-- The default GPX extension namespace is now `https://schemas.eikedreier.com/activity_files/v1`; existing files keep their own on re-encode, so only code matching the old value needs updating.
+- The default GPX extension namespace is now `https://schemas.eikedreier.com/activity_files/v1`; code matching the old value needs updating.
+- Extension nodes carrying the previous default namespace are written under the new one on export, so every exported file uses the new namespace; other namespaces are left as they are.
 - FIT and GeoJSON parsing no longer re-normalize the same channel identifier for every point that uses it.
 - GeoJSON encoding no longer rounds coordinate/elevation values by formatting and re-parsing a string.
 - `RawEditor.updatePoint()` no longer re-sorts the points list when a time update doesn't change point order.

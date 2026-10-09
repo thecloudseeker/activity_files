@@ -7,6 +7,7 @@ import '../geo_math.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
+import 'encoder_utils.dart';
 
 /// Namespace URI hardcoded to the `ns3` prefix for TPX/LX elements
 /// everywhere this encoder writes them.
@@ -612,7 +613,7 @@ void _collectExtensionNamespaces(
   final prefix = node.namespacePrefix;
   final uri = node.namespaceUri;
   if (prefix != null && uri != null && !registry.containsKey(prefix)) {
-    registry[prefix] = uri;
+    registry[prefix] = extensionNamespaceForExport(uri);
   }
   for (final child in node.children) {
     _collectExtensionNamespaces(child, registry);
