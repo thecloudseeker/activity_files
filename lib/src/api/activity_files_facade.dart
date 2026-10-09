@@ -47,8 +47,16 @@ class ActivityFiles {
   /// inline strings/byte arrays or buffered streams.
   static const int defaultMaxPayloadBytes = _defaultStreamBufferLimitBytes;
 
+  /// Namespace declared for GPX extension elements this library writes when
+  /// the caller supplies no namespace of its own.
+  ///
+  /// It is an identifier, not a location: XML namespace names are compared by
+  /// string equality and never fetched, and this one is deliberately absent
+  /// from the `xsi:schemaLocation` the GPX encoder writes.
   static const String gpxDefaultExtensionNamespace =
-      'https://schemas.activityfiles.dev/extensions';
+      'https://schemas.eikedreier.com/activity_files/v1';
+
+  /// Prefix bound to [gpxDefaultExtensionNamespace] on the GPX root element.
   static const String gpxDefaultExtensionPrefix = 'ext';
 
   // Import -- file/bytes/stream => RawActivity.
