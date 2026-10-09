@@ -26,7 +26,11 @@ double _haversineMeters(double lat1, double lon1, double lat2, double lon2) {
 void main() {
   test('dev/fixtures parse, round-trip, and pass quality checks', () async {
     final fixturesDir = Directory('dev/fixtures');
-    if (!await fixturesDir.exists()) return; // local-only corpus, CI-safe
+    if (!await fixturesDir.exists()) {
+      // Local-only corpus, gitignored, so absent in CI.
+      markTestSkipped('Local-only corpus dev/fixtures is absent.');
+      return;
+    }
 
     final files = await fixturesDir
         .list(recursive: true)

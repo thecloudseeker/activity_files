@@ -38,8 +38,12 @@ void main() {
     // dev/fixtures holds private real-device files and is gitignored, so this
     // test is skipped when the file is absent (e.g. in CI). Ground truth was
     // extracted with python-fitparse from the same file.
-    final file = File('dev/fixtures/own_data/fit/4142889450.fit');
-    if (!file.existsSync()) return; // CI-safe
+    const path = 'dev/fixtures/own_data/fit/4142889450.fit';
+    final file = File(path);
+    if (!file.existsSync()) {
+      markTestSkipped('Local-only fixture $path is absent.');
+      return;
+    }
 
     final result = ActivityParser.parseBytes(
       file.readAsBytesSync(),
@@ -67,10 +71,7 @@ void main() {
   test(
     'garmin-fenix-5-bike.fit matches fit_tool/fit_converter/fitparse/garmin_fit_sdk ground truth',
     () {
-      // Cross-checked independently against 4 external readers (fit_tool
-      // 1.0.5, fit_converter 0.5.0, python-fitparse, Garmin's official
-      // garmin-fit-sdk), all of which agree exactly with each other. Source:
-      // https://github.com/dtcooper/python-fitparse (tests/files/), MIT.
+      // Cross-checked against Garmin's official garmin-fit-sdk.
       //
       // This file's vendor-specific messages (global IDs 79 and 141) are not
       // GPS records; their fields must not be read as lat/lon/altitude/

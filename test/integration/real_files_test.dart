@@ -137,8 +137,12 @@ void main() {
     test('sundaygreenloop FIT extracts a full, clean point set', () async {
       // Optional local fixture (see README "Found a bug, or have
       // real-world files to share?"); keep CI green when private data is absent.
-      final file = File('dev/fixtures/user_data/sundaygreenloop.fit');
-      if (!await file.exists()) return;
+      const path = 'dev/fixtures/user_data/sundaygreenloop.fit';
+      final file = File(path);
+      if (!await file.exists()) {
+        markTestSkipped('Local-only fixture $path is absent.');
+        return;
+      }
 
       final bytes = await file.readAsBytes();
       final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
@@ -157,14 +161,16 @@ void main() {
   });
 
   group('Synthetic fixtures', () {
-    Future<Directory?> syntheticDir() async {
+    Future<Directory> syntheticDir() async {
       final dir = Directory('example/assets/synthetic');
-      return await dir.exists() ? dir : null;
+      if (!await dir.exists()) {
+        throw StateError('example/assets/synthetic directory not found');
+      }
+      return dir;
     }
 
     test('synthetic files parse with expected quality', () async {
       final dir = await syntheticDir();
-      if (dir == null) return;
 
       for (final format in [
         ActivityFileFormat.gpx,
@@ -192,7 +198,6 @@ void main() {
       'synthetic files preserve point count through round-trip conversion',
       () async {
         final dir = await syntheticDir();
-        if (dir == null) return;
 
         final gpxFile = File('${dir.path}/clean_run.gpx');
         final originalBytes = await gpxFile.readAsBytes();
