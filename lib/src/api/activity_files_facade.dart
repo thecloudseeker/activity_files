@@ -893,7 +893,7 @@ class ActivityFiles {
   ///
   /// ```dart
   /// final channels = ActivityFiles.channelSamplesFrom(stored);
-  /// await ActivityFiles.convertAndExport(
+  /// await ActivityFiles.buildAndExport(
   ///   location: locationSamples,
   ///   channels: channels,
   ///   to: ActivityFileFormat.gpx,
@@ -1002,7 +1002,7 @@ class ActivityFiles {
   /// Import a CSV payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
-    '(async, with normalize/validate). For a bare sync parse, use '
+    '(async). For a sync parse, use '
     'ActivityParser.parse(input, ActivityFileFormat.csv). '
     'Will be removed in 0.10.0.',
   )
@@ -1012,7 +1012,7 @@ class ActivityFiles {
   /// Import a GeoJSON payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
-    'instead (async, with normalize/validate). For a bare sync parse, use '
+    'instead (async). For a sync parse, use '
     'ActivityParser.parse(input, ActivityFileFormat.geojson). '
     'Will be removed in 0.10.0.',
   )

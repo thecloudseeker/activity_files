@@ -486,7 +486,7 @@ String _decodeUtf32(Uint8List bytes, Endian endian) {
     return '';
   }
   final buffer = StringBuffer();
-  final view = bytes.buffer.asByteData();
+  final view = ByteData.sublistView(bytes);
   final usableLength = bytes.length - (bytes.length % 4);
   for (var offset = 4; offset < usableLength; offset += 4) {
     final codePoint = view.getUint32(offset, endian);
@@ -502,7 +502,7 @@ String _decodeUtf16(Uint8List bytes, Endian endian) {
   if (bytes.length < 2) {
     return '';
   }
-  final view = bytes.buffer.asByteData();
+  final view = ByteData.sublistView(bytes);
   final usableLength = bytes.length - (bytes.length % 2);
   final codeUnits = <int>[];
   for (var offset = 2; offset < usableLength; offset += 2) {
@@ -682,7 +682,7 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
     final bytes = _bytes ?? _buffer.takeBytes();
     if (maxBytes != null && bytes.length > maxBytes) {
       throw FormatException(
-        'Stream payload exceeds $maxBytes bytes. Hint: prefer streamed workflows (`ActivityParser.parseStream`, `convertStream`) or raise `maxPayloadBytes` for `import`/`convert`/`export`.',
+        'Stream payload exceeds $maxBytes bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit.',
       );
     }
     return bytes;
@@ -692,7 +692,7 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
     final threshold = limit ?? bufferLimit;
     if (threshold != null && _bufferedBytes + chunk.length > threshold) {
       throw FormatException(
-        'Stream payload exceeds $threshold bytes. Hint: increase buffer limit via `maxPayloadBytes` or switch to processing pipelines that don’t require full buffering.',
+        'Stream payload exceeds $threshold bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit.',
       );
     }
     _buffer.add(chunk);
@@ -731,7 +731,7 @@ void _enforcePayloadLimit(
   }
   if (sizeBytes > limit) {
     throw FormatException(
-      'Payload exceeds $limit bytes. Hint: use streaming APIs (`ActivityParser.parseStream`, `convertStream`) or increase `maxPayloadBytes` on `import`/`convert`/`export`. Pass `null` to disable the limit if you fully trust the input size.',
+      'Payload exceeds $limit bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit if you fully trust the input size.',
     );
   }
 }

@@ -445,9 +445,9 @@ class RawEditor {
       elevation: elevation,
       time: time,
     );
-    // Only pay for a sort when the update actually broke ordering (e.g. the
-    // new time still falls between the same neighbors) -- every other sort
-    // site in this file guards the same way instead of always re-sorting.
+    // Only pay for a sort when the update actually broke ordering; a new
+    // time that still falls between the same neighbors leaves the list
+    // sorted. Every other sort site in this file guards the same way.
     if (time != null && !_isSortedByTime(points)) {
       mergeSort(points, compare: (a, b) => a.time.compareTo(b.time));
     }
