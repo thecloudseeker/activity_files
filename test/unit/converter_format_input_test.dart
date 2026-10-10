@@ -469,8 +469,10 @@ void main() {
           to: ActivityFileFormat.csv,
         );
 
-        // Should produce at minimum a header row without crashing
-        expect(csv, isNotNull);
+        // No points, so only the header row is written.
+        final rows = csv.trim().split('\n');
+        expect(rows, hasLength(1));
+        expect(rows.single, startsWith('timestamp,latitude,longitude'));
       });
 
       test('single-point activity produces valid output', () {

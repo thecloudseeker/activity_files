@@ -335,8 +335,8 @@ void main() {
       expect(result.points[1].latitude, equals(40.002));
     });
 
-    test('a time update that keeps sorted order still applies correctly '
-        '(the no-reorder-needed fast path)', () {
+    test('a time update that keeps sorted order leaves point order '
+        'unchanged', () {
       final base = DateTime.utc(2024, 4, 1, 6);
       final activity = RawActivity(
         points: [
@@ -346,7 +346,7 @@ void main() {
         ],
       );
       // Nudge the middle point's time forward by 1s; still strictly between
-      // its neighbors, so the list stays sorted without needing a re-sort.
+      // its neighbors, so the list is still sorted.
       final newTime = base.add(const Duration(seconds: 11));
 
       final result = RawEditor(activity).updatePoint(1, time: newTime).activity;
