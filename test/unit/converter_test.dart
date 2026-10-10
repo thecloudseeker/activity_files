@@ -162,7 +162,8 @@ void main() {
           encoderOptions: options,
         );
 
-        expect(csv, isNotEmpty);
+        expect(csv, contains('40.0005,-105.0005,'));
+        expect(csv, isNot(contains('40.000500')));
       });
 
       test('handles GPX version option', () {
@@ -267,8 +268,10 @@ void main() {
           to: ActivityFileFormat.csv,
         );
 
-        // Should produce some output (possibly empty) rather than crashing
-        expect(csv, isNotNull);
+        // No points survive, so only the header row is written.
+        final rows = csv.trim().split('\n');
+        expect(rows, hasLength(1));
+        expect(rows.single, startsWith('timestamp,latitude,longitude'));
       });
 
       test('produces valid output despite warnings', () {

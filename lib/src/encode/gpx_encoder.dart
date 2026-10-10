@@ -6,6 +6,7 @@ import '../identifier_sanitizer.dart';
 import '../models.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
+import 'encoder_utils.dart';
 
 /// Encoder for the GPX file format.
 class GpxEncoder implements ActivityFormatEncoder {
@@ -507,7 +508,7 @@ void _collectExtensionNamespaces(
   final prefix = node.namespacePrefix;
   final uri = node.namespaceUri;
   if (prefix != null && uri != null && !registry.containsKey(prefix)) {
-    registry[prefix] = uri;
+    registry[prefix] = extensionNamespaceForExport(uri);
   }
   for (final child in node.children) {
     _collectExtensionNamespaces(child, registry);

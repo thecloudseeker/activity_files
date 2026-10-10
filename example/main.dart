@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -253,7 +254,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
 }
 
 Future<void> _demoFilePathHandling(File sampleFile) async {
-  print('=== File path handling (0.4.0+ migration) ===');
+  print('=== File path handling ===');
 
   // Option 1: Pass File object directly (recommended)
   final viaFileObject = await ActivityFiles.import(

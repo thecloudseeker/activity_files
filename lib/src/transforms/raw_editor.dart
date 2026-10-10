@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 part of '../transforms.dart';
 
 /// Provides chained, immutable transformations over [RawActivity].
@@ -444,7 +445,10 @@ class RawEditor {
       elevation: elevation,
       time: time,
     );
-    if (time != null) {
+    // Only pay for a sort when the update actually broke ordering; a new
+    // time that still falls between the same neighbors leaves the list
+    // sorted. Every other sort site in this file guards the same way.
+    if (time != null && !_isSortedByTime(points)) {
       mergeSort(points, compare: (a, b) => a.time.compareTo(b.time));
     }
     _activity = _activity.copyWith(points: points);

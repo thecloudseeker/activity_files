@@ -7,6 +7,7 @@ import 'package:async/async.dart';
 import '../channel_mapper.dart';
 import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';
+import '../encode/encoder_utils.dart';
 import '../encode/csv_encoder.dart';
 import '../encode/geojson_encoder.dart';
 import '../fit/fit_epoch.dart';
@@ -47,8 +48,19 @@ class ActivityFiles {
   /// inline strings/byte arrays or buffered streams.
   static const int defaultMaxPayloadBytes = _defaultStreamBufferLimitBytes;
 
-  static const String gpxDefaultExtensionNamespace =
-      'https://schemas.activityfiles.dev/extensions';
+  /// Namespace declared for GPX extension elements this library writes when
+  /// the caller supplies no namespace of its own.
+  ///
+  /// It is an identifier, not a location: XML namespace names are compared by
+  /// string equality and never fetched, and this one is deliberately absent
+  /// from the `xsi:schemaLocation` the GPX encoder writes.
+  ///
+  /// Extension nodes still carrying the previous default
+  /// (`https://schemas.activityfiles.dev/extensions`), such as those parsed
+  /// from an older export, are written under this namespace on export.
+  static const String gpxDefaultExtensionNamespace = defaultExtensionNamespace;
+
+  /// Prefix bound to [gpxDefaultExtensionNamespace] on the GPX root element.
   static const String gpxDefaultExtensionPrefix = 'ext';
 
   // Import -- file/bytes/stream => RawActivity.
@@ -881,7 +893,7 @@ class ActivityFiles {
   ///
   /// ```dart
   /// final channels = ActivityFiles.channelSamplesFrom(stored);
-  /// await ActivityFiles.convertAndExport(
+  /// await ActivityFiles.buildAndExport(
   ///   location: locationSamples,
   ///   channels: channels,
   ///   to: ActivityFileFormat.gpx,
@@ -990,7 +1002,7 @@ class ActivityFiles {
   /// Import a CSV payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
-    '(async, with normalize/validate). For a bare sync parse, use '
+    '(async). For a sync parse, use '
     'ActivityParser.parse(input, ActivityFileFormat.csv). '
     'Will be removed in 0.10.0.',
   )
@@ -1000,7 +1012,7 @@ class ActivityFiles {
   /// Import a GeoJSON payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
-    'instead (async, with normalize/validate). For a bare sync parse, use '
+    'instead (async). For a sync parse, use '
     'ActivityParser.parse(input, ActivityFileFormat.geojson). '
     'Will be removed in 0.10.0.',
   )

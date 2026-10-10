@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 import 'dart:convert';
 
 import '../models.dart';
@@ -356,6 +357,7 @@ class GeojsonParser implements ActivityFormatParser {
       // bad value shared across every coordinate).
       final times = _coordinateTimes(properties);
       final coordinateChannels = _coordinateChannels(properties);
+      final channelsByKey = _channelsByKey(coordinateChannels);
       final sharedTimestamp = _resolvePropertyTimestamp(
         properties,
         diagnostics,
@@ -385,6 +387,7 @@ class GeojsonParser implements ActivityFormatParser {
             point.time,
             i,
             coordinateChannels,
+            channelsByKey,
             channelMap,
           );
         }
@@ -423,6 +426,7 @@ class GeojsonParser implements ActivityFormatParser {
       );
       final lineTimes = _multiLineCoordinateTimes(properties);
       final coordinateChannels = _coordinateChannels(properties);
+      final channelsByKey = _channelsByKey(coordinateChannels);
       if (!_hasTimestampForEveryMultiLinePoint(
         coordinates,
         lineTimes,
@@ -455,6 +459,7 @@ class GeojsonParser implements ActivityFormatParser {
               lineIndex,
               i,
               coordinateChannels,
+              channelsByKey,
               channelMap,
             );
           }
@@ -467,6 +472,7 @@ class GeojsonParser implements ActivityFormatParser {
       if (exterior is List) {
         final times = _coordinateTimes(properties);
         final coordinateChannels = _coordinateChannels(properties);
+        final channelsByKey = _channelsByKey(coordinateChannels);
         final sharedTimestamp = _resolvePropertyTimestamp(
           properties,
           diagnostics,
@@ -496,6 +502,7 @@ class GeojsonParser implements ActivityFormatParser {
               point.time,
               i,
               coordinateChannels,
+              channelsByKey,
               channelMap,
             );
           }
@@ -687,12 +694,16 @@ class GeojsonParser implements ActivityFormatParser {
   /// [coordinateChannels], where each channel's array is itself one array
   /// per line (mirrors [_multiLineCoordinateTimes]'s per-line `coordTimes`
   /// shape), so a MultiLineString round-trips per-point channel data the
-  /// same way LineString/Polygon do.
+  /// same way LineString/Polygon do. [channelsByKey] is [_channelsByKey]'s
+  /// one-per-feature precomputed `Channel` for each key in
+  /// [coordinateChannels], so normalizing a channel id (string trim +
+  /// lowercase) happens once per feature rather than once per point.
   static void _collectMultiLineCoordinateChannelSamples(
     DateTime timestamp,
     int lineIndex,
     int pointIndex,
     Map<String, List>? coordinateChannels,
+    Map<String, Channel> channelsByKey,
     Map<Channel, List<Sample>> channelMap,
   ) {
     if (coordinateChannels == null) return;
@@ -703,7 +714,7 @@ class GeojsonParser implements ActivityFormatParser {
       final value = line[pointIndex];
       if (value is! num) continue;
       channelMap
-          .putIfAbsent(Channel.custom(entry.key), () => [])
+          .putIfAbsent(channelsByKey[entry.key]!, () => [])
           .add(Sample(time: timestamp, value: value.toDouble()));
     }
   }
@@ -722,14 +733,31 @@ class GeojsonParser implements ActivityFormatParser {
     };
   }
 
+  /// Precomputes [Channel.custom] for every key in [coordinateChannels],
+  /// once per feature: [_collectCoordinateChannelSamples]/
+  /// [_collectMultiLineCoordinateChannelSamples] run once per coordinate
+  /// (thousands of times on a large track) but the set of channel ids is
+  /// fixed for the whole feature, so normalizing the same id on every
+  /// point (a string trim + lowercase call each time) is pure waste.
+  static Map<String, Channel> _channelsByKey(
+    Map<String, List>? coordinateChannels,
+  ) {
+    if (coordinateChannels == null) return const {};
+    return {
+      for (final key in coordinateChannels.keys) key: Channel.custom(key),
+    };
+  }
+
   /// Reads channel values for coordinate [index] from [coordinateChannels]
   /// (the per-index parallel arrays), not the shared feature-level scalar
   /// properties, so a scalar summary property on a multi-point geometry
-  /// isn't broadcast as an identical sample at every point.
+  /// isn't broadcast as an identical sample at every point. [channelsByKey]
+  /// is [_channelsByKey]'s per-feature precomputed `Channel` for each key.
   static void _collectCoordinateChannelSamples(
     DateTime timestamp,
     int index,
     Map<String, List>? coordinateChannels,
+    Map<String, Channel> channelsByKey,
     Map<Channel, List<Sample>> channelMap,
   ) {
     if (coordinateChannels == null) return;
@@ -738,7 +766,7 @@ class GeojsonParser implements ActivityFormatParser {
       final value = entry.value[index];
       if (value is! num) continue;
       channelMap
-          .putIfAbsent(Channel.custom(entry.key), () => [])
+          .putIfAbsent(channelsByKey[entry.key]!, () => [])
           .add(Sample(time: timestamp, value: value.toDouble()));
     }
   }

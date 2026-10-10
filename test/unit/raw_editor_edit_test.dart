@@ -335,6 +335,26 @@ void main() {
       expect(result.points[1].latitude, equals(40.002));
     });
 
+    test('a time update that keeps sorted order leaves point order '
+        'unchanged', () {
+      final base = DateTime.utc(2024, 4, 1, 6);
+      final activity = RawActivity(
+        points: [
+          _pt(40.0, -105.0, base),
+          _pt(40.001, -105.001, base.add(const Duration(seconds: 10))),
+          _pt(40.002, -105.002, base.add(const Duration(seconds: 20))),
+        ],
+      );
+      // Nudge the middle point's time forward by 1s; still strictly between
+      // its neighbors, so the list is still sorted.
+      final newTime = base.add(const Duration(seconds: 11));
+
+      final result = RawEditor(activity).updatePoint(1, time: newTime).activity;
+
+      expect(result.points.map((p) => p.latitude), [40.0, 40.001, 40.002]);
+      expect(result.points[1].time, isAtSameMomentAs(newTime));
+    });
+
     test('does not re-sort when time is not updated', () {
       final base = DateTime.utc(2024, 4, 1, 6);
       final activity = RawActivity(

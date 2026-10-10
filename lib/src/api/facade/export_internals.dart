@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 part of '../activity_files_facade.dart';
 
 ActivityExportResult _exportFromActivity({

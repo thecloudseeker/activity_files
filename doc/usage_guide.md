@@ -6,7 +6,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.8.0
+  activity_files: ^0.8.1
 ```
 
 Then install dependencies:
@@ -230,11 +230,12 @@ if (hasIntegrityIssue && r.activity.points.isNotEmpty) {
 }
 ```
 
-**GPX/TCX malformed**: parse errors surface as `gpx.parse.malformed` or
-`tcx.parse.malformed`. If the result has no points, reject it.
+**GPX/TCX malformed**: parse errors surface as `gpx.parse.xml_error` or
+`tcx.parse.xml_error`. If the result has no points, reject it.
 
-**Bad GPS / sensor data**: use `normalizeActivity` with `trimInvalid: true`,
-`sortAndDedup: true`, and `recomputeDistanceAndSpeed: true`. The editor also
+**Bad GPS / sensor data**: chain
+`ActivityFiles.edit(activity).sortAndDedup().trimInvalid().recomputeDistanceAndSpeed()`.
+The editor also
 removes Null Island sentinel coordinates (lat/lon ≈ 0) and clears Garmin
 no-elevation sentinels (elevation ≤ −499 m; the point is kept, only the bogus
 elevation is discarded). Check `RawEditor.repairDiagnostics` after a

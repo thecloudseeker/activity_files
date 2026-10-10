@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 import 'package:csv/csv.dart';
 
 import '../models.dart';

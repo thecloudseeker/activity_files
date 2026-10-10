@@ -38,8 +38,12 @@ void main() {
     // dev/fixtures holds private real-device files and is gitignored, so this
     // test is skipped when the file is absent (e.g. in CI). Ground truth was
     // extracted with python-fitparse from the same file.
-    final file = File('dev/fixtures/own_data/fit/4142889450.fit');
-    if (!file.existsSync()) return; // CI-safe
+    const path = 'dev/fixtures/own_data/fit/4142889450.fit';
+    final file = File(path);
+    if (!file.existsSync()) {
+      markTestSkipped('Local-only fixture $path is absent.');
+      return;
+    }
 
     final result = ActivityParser.parseBytes(
       file.readAsBytesSync(),
@@ -64,50 +68,46 @@ void main() {
     expect(lap.avgHeartRate, closeTo(119.0, 0.01));
   });
 
-  test(
-    'garmin-fenix-5-bike.fit matches fit_tool/fit_converter/fitparse/garmin_fit_sdk ground truth',
-    () {
-      // Cross-checked independently against 4 external readers (fit_tool
-      // 1.0.5, fit_converter 0.5.0, python-fitparse, Garmin's official
-      // garmin-fit-sdk), all of which agree exactly with each other. Source:
-      // https://github.com/dtcooper/python-fitparse (tests/files/), MIT.
-      //
-      // This file's vendor-specific messages (global IDs 79 and 141) are not
-      // GPS records; their fields must not be read as lat/lon/altitude/
-      // heart-rate.
-      final bytes = File(
-        'test/fixtures/real_world/garmin-fenix-5-bike.fit',
-      ).readAsBytesSync();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
-      final activity = result.activity;
+  test('garmin-fenix-5-bike.fit matches garmin-fit-sdk ground truth', () {
+    // Cross-checked against Garmin's official garmin-fit-sdk. Fixture
+    // source: https://github.com/dtcooper/python-fitparse (tests/files/),
+    // MIT.
+    //
+    // This file's vendor-specific messages (global IDs 79 and 141) are not
+    // GPS records; their fields must not be read as lat/lon/altitude/
+    // heart-rate.
+    final bytes = File(
+      'test/fixtures/real_world/garmin-fenix-5-bike.fit',
+    ).readAsBytesSync();
+    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final activity = result.activity;
 
-      expect(activity.points, hasLength(19));
+    expect(activity.points, hasLength(19));
 
-      final first = activity.points.first;
-      expect(first.latitude, closeTo(37.41116, 0.0001));
-      expect(first.longitude, closeTo(-122.069067, 0.0001));
+    final first = activity.points.first;
+    expect(first.latitude, closeTo(37.41116, 0.0001));
+    expect(first.longitude, closeTo(-122.069067, 0.0001));
 
-      final last = activity.points.last;
-      expect(last.latitude, closeTo(37.415271, 0.0001));
-      expect(last.longitude, closeTo(-122.06886, 0.0001));
+    final last = activity.points.last;
+    expect(last.latitude, closeTo(37.415271, 0.0001));
+    expect(last.longitude, closeTo(-122.06886, 0.0001));
 
-      final heartRate = activity.channel(Channel.heartRate);
-      expect(heartRate, hasLength(19));
-      expect(
-        heartRate.map((s) => s.value),
-        everyElement(inClosedOpenRange(77, 115)),
-      );
+    final heartRate = activity.channel(Channel.heartRate);
+    expect(heartRate, hasLength(19));
+    expect(
+      heartRate.map((s) => s.value),
+      everyElement(inClosedOpenRange(77, 115)),
+    );
 
-      expect(activity.laps, hasLength(1));
-      expect(
-        result.diagnostics,
-        contains(
-          isA<ParseDiagnostic>()
-              .having((d) => d.code, 'code', 'fit.message.vendor_skipped')
-              .having((d) => d.message, 'message', contains('79'))
-              .having((d) => d.message, 'message', contains('141')),
-        ),
-      );
-    },
-  );
+    expect(activity.laps, hasLength(1));
+    expect(
+      result.diagnostics,
+      contains(
+        isA<ParseDiagnostic>()
+            .having((d) => d.code, 'code', 'fit.message.vendor_skipped')
+            .having((d) => d.message, 'message', contains('79'))
+            .having((d) => d.message, 'message', contains('141')),
+      ),
+    );
+  });
 }

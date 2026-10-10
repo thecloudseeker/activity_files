@@ -24,6 +24,10 @@ void main() {
       }
       if (file == null) {
         // Optional local fixture; keep CI green when private data is absent.
+        markTestSkipped(
+          'Local-only fixture sundaygreenloop.fit is absent from '
+          '${candidates.join(' and ')}.',
+        );
         return;
       }
       final resolvedFile = file;

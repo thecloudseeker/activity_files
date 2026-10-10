@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2024 activity_files
+// Copyright (c) 2024-2026 Eike Dreier
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without

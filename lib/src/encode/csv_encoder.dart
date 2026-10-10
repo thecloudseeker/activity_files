@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 import '../models.dart';
 import 'encoder_options.dart';
 import 'encoder_utils.dart';

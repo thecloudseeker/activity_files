@@ -96,7 +96,7 @@ class ActivityParser {
           totalBytes += chunk.length;
           if (maxBytes != null && totalBytes > maxBytes) {
             throw FormatException(
-              'Stream payload exceeds $maxBytes bytes. Hint: use `ActivityParser.parseStream` with a sensible `maxBytes`, or route large inputs through streamed conversion/export APIs.',
+              'Stream payload exceeds $maxBytes bytes. Hint: raise `maxBytes`, or pass `null` to disable the limit.',
             );
           }
           builder.add(chunk);

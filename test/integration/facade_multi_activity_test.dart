@@ -457,6 +457,31 @@ void main() {
       }
     });
 
+    test('a UTF-16 stream chunk that is a view into a larger buffer '
+        'decodes from the view offset', () async {
+      const gpx =
+          '<?xml version="1.0"?><gpx version="1.1"><trk><trkseg>'
+          '<trkpt lat="47.0" lon="11.0"><time>2026-01-01T00:00:00Z</time>'
+          '</trkpt></trkseg></trk></gpx>';
+      const leading = 6;
+      final backing = Uint8List(leading + 2 + gpx.length * 2);
+      final data = ByteData.sublistView(backing, leading);
+      data.setUint16(0, 0xFEFF, Endian.little);
+      for (var i = 0; i < gpx.length; i++) {
+        data.setUint16(2 + i * 2, gpx.codeUnitAt(i), Endian.little);
+      }
+      final chunk = Uint8List.sublistView(backing, leading);
+
+      final result = await ActivityFiles.import(
+        Stream.value(chunk),
+        format: ActivityFileFormat.gpx,
+        useIsolate: false,
+      );
+
+      expect(result.hasErrors, isFalse);
+      expect(result.activity.points, hasLength(1));
+    });
+
     test('load infers CSV format from inline content', () async {
       const csv =
           'timestamp,latitude,longitude,heart_rate\n2025-01-01T10:00:00Z,52.52,13.405,140';
