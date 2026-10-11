@@ -1,4 +1,8 @@
 # Changelog
+## 0.8.2
+### Fixed
+- FIT files carrying only the `enhanced_*` speed fields no longer come back without a speed channel or session/lap `avgSpeed`/`maxSpeed`.
+
 ## 0.8.1
 ### Changed
 - The default GPX extension namespace is now `https://schemas.eikedreier.com/activity_files/v1`; code matching the old value needs updating.
