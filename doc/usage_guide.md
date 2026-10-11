@@ -6,7 +6,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.8.1
+  activity_files: ^0.8.2
 ```
 
 Then install dependencies:

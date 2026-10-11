@@ -1,4 +1,11 @@
 # Changelog
+## 0.8.2
+### Fixed
+- FIT files carrying only the `enhanced_*` speed fields no longer come back without a speed channel or session/lap `avgSpeed`/`maxSpeed`.
+- Chained FIT files are no longer cut off after their first segment; `fit.file.chained_segments` reports them.
+- A truncated or corrupt later segment of a chained FIT file now raises the same `fit.header.*`/`fit.trailer.*` errors as the first.
+- Bytes after the FIT data that aren't a chained file are no longer ignored silently; `fit.file.trailing_bytes` reports them.
+
 ## 0.8.1
 ### Changed
 - The default GPX extension namespace is now `https://schemas.eikedreier.com/activity_files/v1`; code matching the old value needs updating.

@@ -68,6 +68,30 @@ void main() {
     expect(lap.avgHeartRate, closeTo(119.0, 0.01));
   });
 
+  test('local device fixture with only enhanced speed fields matches '
+      'garmin-fit-sdk ground truth', () {
+    // The session and lap of this file carry enhanced_avg_speed and
+    // enhanced_max_speed only, and its records enhanced_speed only. Ground
+    // truth was extracted with garmin-fit-sdk from the same file.
+    const path = 'dev/fixtures/user_data/21485067005_ACTIVITY.fit';
+    final file = File(path);
+    if (!file.existsSync()) {
+      markTestSkipped('Local-only fixture $path is absent.');
+      return;
+    }
+
+    final activity = ActivityParser.parseBytes(
+      file.readAsBytesSync(),
+      ActivityFileFormat.fit,
+    ).activity;
+
+    expect(activity.summary!.avgSpeed, closeTo(1.098, 0.0005));
+    expect(activity.summary!.maxSpeed, closeTo(2.239, 0.0005));
+    expect(activity.laps.first.avgSpeed, closeTo(1.098, 0.0005));
+    expect(activity.laps.first.maxSpeed, closeTo(2.239, 0.0005));
+    expect(activity.channel(Channel.speed), isNotEmpty);
+  });
+
   test('garmin-fenix-5-bike.fit matches garmin-fit-sdk ground truth', () {
     // Cross-checked against Garmin's official garmin-fit-sdk. Fixture
     // source: https://github.com/dtcooper/python-fitparse (tests/files/),

@@ -9,6 +9,7 @@ const int fitFieldHeartRate = 3;
 const int fitFieldCadence = 4;
 const int fitFieldDistance = 5;
 const int fitFieldSpeed = 6;
+const int fitFieldEnhancedSpeed = 73;
 const int fitFieldPower = 7;
 const int fitFieldGrade = 9;
 const int fitFieldTemperature = 13;

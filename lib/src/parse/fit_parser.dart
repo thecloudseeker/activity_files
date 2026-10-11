@@ -141,7 +141,11 @@ class FitParser implements ActivityFormatParser {
         'If you believe this is a valid FIT file, please report it as a bug.',
       );
     }
-    final dataLimit = header.headerSize + header.dataSize;
+    var dataLimit = header.headerSize + header.dataSize;
+    // A FIT file may be several complete FIT files back to back (header,
+    // data, CRC, then the next header). Each one is a segment; this counts
+    // the segments read so far.
+    var segmentCount = 1;
 
     // Keep definition state in-order as records appear in the stream.
     final definitions = <int, _FitMessageDefinition>{};
@@ -252,8 +256,125 @@ class FitParser implements ActivityFormatParser {
         );
       }
     }
+    // Moves on to the segment that follows the current one's trailer CRC,
+    // if there is one. Definitions, compressed-timestamp references and the
+    // developer-field registry are scoped to a single FIT file, so they are
+    // reset; everything collected so far carries over.
+    bool advanceToNextSegment() {
+      final segmentStart = dataLimit + 2;
+      final remaining = payload.length - segmentStart;
+      if (remaining <= 0) return false;
+      final next = remaining >= 12
+          ? _FitHeader.tryRead(_FitByteReader(payload)..position = segmentStart)
+          : null;
+      if (next == null || next.dataType != '.FIT') {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'fit.file.trailing_bytes',
+            message:
+                '$remaining byte(s) after the FIT data are not a chained FIT '
+                'file and were ignored.',
+            node: const ParseNodeReference(path: 'fit.file'),
+            suggestedFix:
+                'The activity itself was read in full. Re-export the file if '
+                'the extra bytes were expected to hold data.',
+            priority: 3,
+          ),
+        );
+        return false;
+      }
+      segmentCount++;
+      final segmentNode = ParseNodeReference(
+        path: 'fit.header',
+        description: 'segment=$segmentCount',
+      );
+      final segmentDataStart = segmentStart + next.headerSize;
+      final segmentDataEnd = segmentDataStart + next.dataSize;
+      if (next.hasHeaderCrc && segmentDataStart <= payload.length) {
+        final stored =
+            payload[segmentDataStart - 2] |
+            (payload[segmentDataStart - 1] << 8);
+        final computed = computeFitCrc(
+          payload,
+          offset: segmentStart,
+          length: next.headerSize - 2,
+        );
+        if (stored != 0 && stored != computed) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.error,
+              code: 'fit.header.crc_mismatch',
+              message:
+                  "FIT header CRC 0x${stored.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computed.toRadixString(16).padLeft(4, '0')} in chained segment $segmentCount.",
+              node: segmentNode,
+              suggestedFix:
+                  'Re-download or re-export the FIT file from the source device. If the file is otherwise valid, try parsing with IntegrityMode.silent to recover data.',
+              priority: 1,
+            ),
+          );
+        }
+      }
+      if (segmentDataEnd + 2 > payload.length) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.error,
+            code: segmentDataEnd > payload.length
+                ? 'fit.header.size_mismatch'
+                : 'fit.trailer.truncated',
+            message:
+                'Chained FIT segment $segmentCount is truncated; its data '
+                'was read as far as the file goes.',
+            node: segmentNode,
+            suggestedFix:
+                'The file is likely incomplete. Re-download or re-export the activity and ensure the full file was transferred.',
+            priority: 0,
+          ),
+        );
+      } else {
+        final stored =
+            payload[segmentDataEnd] | (payload[segmentDataEnd + 1] << 8);
+        final computed = computeFitCrc(
+          payload,
+          offset: segmentStart,
+          length: next.headerSize + next.dataSize,
+        );
+        if (stored != computed) {
+          diagnostics.add(
+            ParseDiagnostic(
+              severity: ParseSeverity.error,
+              code: 'fit.trailer.crc_mismatch',
+              message:
+                  "FIT trailer CRC 0x${stored.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computed.toRadixString(16).padLeft(4, '0')} in chained segment $segmentCount.",
+              node: ParseNodeReference(
+                path: 'fit.trailer',
+                description: 'segment=$segmentCount',
+              ),
+              suggestedFix:
+                  'The data may be corrupted. Re-download the file from the device; if recovery is needed, parse with IntegrityMode.silent.',
+              priority: 1,
+            ),
+          );
+        }
+      }
+      definitions.clear();
+      lastTimestamps.clear();
+      lastKnownTimestamp = null;
+      developerFieldNames.clear();
+      developerBaseTypes.clear();
+      developerFieldScales.clear();
+      developerFieldOffsets.clear();
+      reader.position = segmentDataStart;
+      dataLimit = segmentDataEnd;
+      return true;
+    }
+
     reader.position = header.headerSize;
-    while (reader.position < payload.length && reader.position < dataLimit) {
+    while (true) {
+      if (reader.position >= payload.length || reader.position >= dataLimit) {
+        if (advanceToNextSegment()) continue;
+        break;
+      }
       final recordHeader = reader.readUint8();
       final isCompressed = (recordHeader & 0x80) != 0;
       final isDefinition = !isCompressed && (recordHeader & 0x40) != 0;
@@ -463,7 +584,12 @@ class FitParser implements ActivityFormatParser {
             ),
           );
         }
-        final speed = _asNumber(values[fitFieldSpeed]);
+        // enhanced_speed (73) is the uint32 form of speed (6) with the same
+        // scale; newer devices write only the enhanced field, so prefer it
+        // when present.
+        final speed =
+            _asNumber(values[fitFieldEnhancedSpeed]) ??
+            _asNumber(values[fitFieldSpeed]);
         if (speed != null) {
           speedSamples.add(
             Sample(
@@ -574,6 +700,11 @@ class FitParser implements ActivityFormatParser {
       }
       switch (definition.globalId) {
         case 0: // file_id
+          // A chained segment carries its own file_id; the first segment
+          // is the activity, so its device identity stands.
+          if (segmentCount > 1 && deviceMetadata != null) {
+            break;
+          }
           final manufacturer = values[1];
           final product = values[2];
           final serial = values[3];
@@ -635,8 +766,13 @@ class FitParser implements ActivityFormatParser {
             timerTime: _decodeFitDuration(values[8]),
             totalDistanceMeters: _decodeFitDistance(values[9]),
             calories: _asNumber(values[11])?.toDouble(),
-            avgSpeed: _decodeFitSpeed(values[14]),
-            maxSpeed: _decodeFitSpeed(values[15]),
+            // enhanced_avg_speed (124) / enhanced_max_speed (125) are the
+            // uint32 forms of avg_speed (14) / max_speed (15); newer devices
+            // write only the enhanced pair.
+            avgSpeed:
+                _decodeFitSpeed(values[124]) ?? _decodeFitSpeed(values[14]),
+            maxSpeed:
+                _decodeFitSpeed(values[125]) ?? _decodeFitSpeed(values[15]),
             avgHeartRate: _asNumber(values[16])?.toDouble(),
             maxHeartRate: _asNumber(values[17])?.toDouble(),
             avgCadence: _asNumber(values[18])?.toDouble(),
@@ -682,7 +818,8 @@ class FitParser implements ActivityFormatParser {
           // (s, scale 1000), 253 timestamp (end, used when start/elapsed
           // are absent, e.g. encoders that only stamp the lap's close),
           // 9 total_distance (m, scale 100), 11 total_calories,
-          // 13/14 avg/max_speed (m/s, scale 1000), 15/16 avg/max_heart_rate,
+          // 13/14 avg/max_speed (m/s, scale 1000), 110/111 their enhanced
+          // (uint32) forms, 15/16 avg/max_heart_rate,
           // 17/18 avg/max_cadence, 19/20 avg/max_power, 0 event,
           // 1 event_type, 38 swim_stroke, 40 num_active_lengths.
           final declaredStart = _decodeTimestamp(values[2]);
@@ -721,8 +858,12 @@ class FitParser implements ActivityFormatParser {
                 distanceMeters: distanceMeters,
                 name: 'Lap ${laps.length + 1}',
                 calories: _asNumber(values[11])?.toDouble(),
-                avgSpeed: _decodeFitSpeed(values[13]),
-                maxSpeed: _decodeFitSpeed(values[14]),
+                // enhanced_avg_speed (110) / enhanced_max_speed (111)
+                // supersede avg_speed (13) / max_speed (14) when present.
+                avgSpeed:
+                    _decodeFitSpeed(values[110]) ?? _decodeFitSpeed(values[13]),
+                maxSpeed:
+                    _decodeFitSpeed(values[111]) ?? _decodeFitSpeed(values[14]),
                 avgHeartRate: _asNumber(values[15])?.toDouble(),
                 maxHeartRate: _asNumber(values[16])?.toDouble(),
                 avgCadence: _asNumber(values[17])?.toDouble(),
@@ -825,6 +966,11 @@ class FitParser implements ActivityFormatParser {
           // are treated as the creator (some watches omit it).
           final deviceIndex = _asNumber(values[0])?.toInt();
           if (deviceIndex != null && deviceIndex != 0) {
+            break;
+          }
+          // As for file_id: a chained segment's own head unit entry does
+          // not replace the identity the first segment established.
+          if (segmentCount > 1 && deviceMetadata != null) {
             break;
           }
           final manufacturerId = _asNumber(values[2])?.toInt();
@@ -953,6 +1099,18 @@ class FitParser implements ActivityFormatParser {
               'end time (corrupted or reordered lap message); clamped to '
               'a zero-length lap.',
           node: const ParseNodeReference(path: 'fit.lap'),
+        ),
+      );
+    }
+    if (segmentCount > 1) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.file.chained_segments',
+          message:
+              'File is $segmentCount chained FIT files; every segment was '
+              'read into one activity.',
+          node: const ParseNodeReference(path: 'fit.file'),
         ),
       );
     }
@@ -1165,6 +1323,7 @@ const Set<int> _dedicatedRecordFields = {
   253, // timestamp
   0, 1, 2, 78, // position_lat, position_long, altitude, enhanced_altitude
   3, 4, 5, 6, 7, 13, // heart_rate, cadence, distance, speed, power, temp
+  73, // enhanced_speed
   8, // compressed_speed_distance (decoded into speed + distance channels)
   9, 30, 120, // grade, left_right_balance, ebike_assist_level_percent
 };
@@ -1177,6 +1336,7 @@ const Set<int> _dedicatedSessionFields = {
   5, 6, // sport, sub_sport
   7, 8, 9, 10, 11, // elapsed, timer, distance, cycles, calories
   14, 15, 16, 17, 18, 19, 20, 21, // avg/max speed, hr, cadence, power
+  124, 125, // enhanced_avg_speed, enhanced_max_speed
   41, 43, 44, 47, // avg_stroke_count, swim_stroke, pool_length, active_lengths
 };
 
@@ -1187,6 +1347,7 @@ const Set<int> _dedicatedLapFields = {
   0, 1, 2, // event, event_type, start_time
   7, 9, 11, // elapsed, distance, calories
   13, 14, 15, 16, 17, 18, 19, 20, // avg/max speed, hr, cadence, power
+  110, 111, // enhanced_avg_speed, enhanced_max_speed
   38, 40, // swim_stroke, num_active_lengths
 };
 
