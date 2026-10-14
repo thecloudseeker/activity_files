@@ -524,4 +524,80 @@ void main() {
       expect(copy.approximateDistance, equals(activity.approximateDistance));
     });
   });
+
+  group('RawEditor.markLapsByDistance', () {
+    final start = DateTime.utc(2024, 1, 1, 10);
+    RawActivity withDistances(List<double> distances) => RawActivity(
+      points: [
+        for (var i = 0; i < distances.length; i++)
+          GeoPoint(
+            latitude: 47.0 + i * 0.001,
+            longitude: 8.0,
+            time: start.add(Duration(seconds: i * 60)),
+          ),
+      ],
+      channels: {
+        Channel.distance: [
+          for (var i = 0; i < distances.length; i++)
+            Sample(
+              time: start.add(Duration(seconds: i * 60)),
+              value: distances[i],
+            ),
+        ],
+      },
+    );
+
+    test('splits a plain distance channel at every boundary', () {
+      final editor = RawEditor(withDistances([0, 600, 1200, 2500]))
+        ..markLapsByDistance(1000);
+
+      expect(editor.activity.laps.map((lap) => lap.distanceMeters), [
+        1000,
+        1000,
+        500,
+      ]);
+      expect(editor.repairDiagnostics, isEmpty);
+    });
+
+    test('ignores non-finite distance samples', () {
+      for (final bad in [double.infinity, double.nan, -double.infinity]) {
+        final editor = RawEditor(withDistances([0, 600, bad, 1200, 2500]))
+          ..markLapsByDistance(1000);
+
+        expect(editor.activity.laps.map((lap) => lap.distanceMeters), [
+          1000,
+          1000,
+          500,
+        ], reason: 'distance sample $bad');
+      }
+    });
+
+    test('stops at the lap limit on an implausibly large distance', () {
+      for (final huge in [1e300, 1e308, 4294967.295 * 10]) {
+        final editor = RawEditor(withDistances([0, 600, huge]))
+          ..markLapsByDistance(0.001);
+
+        expect(editor.activity.laps, hasLength(100001), reason: '$huge');
+        expect(
+          editor.repairDiagnostics.map((d) => d.code),
+          contains('repaired.lap_split_limit_reached'),
+          reason: '$huge',
+        );
+      }
+    });
+
+    test('autoFix returns when the recomputed distance cannot overflow', () {
+      final fixed = RawEditor(withDistances([0, double.infinity, 1e308]))
+          .autoFix(
+            const ActivityAutoFixOptions(
+              fixDistanceDrift: false,
+              autoLapByDistance: true,
+              autoLapOnlyWhenMissing: false,
+            ),
+          )
+          .activity;
+
+      expect(fixed.laps.length, lessThan(100));
+    });
+  });
 }

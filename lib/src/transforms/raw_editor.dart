@@ -842,15 +842,24 @@ class RawEditor {
   }
 
   /// Generates laps at every [meters] boundary using the distance channel.
+  ///
+  /// Non-finite distance samples are ignored. Splitting stops after
+  /// 100,000 laps and reports `repaired.lap_split_limit_reached`, so a
+  /// corrupt distance value cannot exhaust memory.
   RawEditor markLapsByDistance(double meters) {
     if (meters <= 0) {
       throw ArgumentError.value(meters, 'meters', 'must be positive');
     }
-    final distanceSamples = _activity.channel(Channel.distance);
+    // A non-finite distance can never be reached by a split boundary.
+    final distanceSamples = [
+      for (final sample in _activity.channel(Channel.distance))
+        if (sample.value.isFinite) sample,
+    ];
     if (distanceSamples.isEmpty) {
       return this;
     }
     final laps = <Lap>[];
+    var splitLimitReached = false;
     final firstSample = distanceSamples.first;
     DateTime? lapStart = firstSample.time;
     var normalizedDistance = firstSample.value;
@@ -870,6 +879,10 @@ class RawEditor {
         previousRaw = rawValue;
       }
       while (normalizedDistance >= nextSplit) {
+        if (laps.length >= _maxDistanceSplits) {
+          splitLimitReached = true;
+          break;
+        }
         final lapDistance = nextSplit - lapStartDistance;
         laps.add(
           Lap(
@@ -904,6 +917,22 @@ class RawEditor {
           distanceMeters:
               distanceSamples.last.value - distanceSamples.first.value,
           name: 'Split 1',
+        ),
+      );
+    }
+    if (splitLimitReached) {
+      _repairDiagnostics.add(
+        ValidationDiagnostic(
+          severity: ValidationSeverity.warning,
+          code: '${DiagnosticCategory.repaired}.lap_split_limit_reached',
+          message:
+              'Splitting every $meters m stopped after $_maxDistanceSplits '
+              'laps; the remaining distance is one final lap. The distance '
+              'channel likely holds a corrupt value.',
+          suggestedFix:
+              'Recompute the distance channel with '
+              'recomputeDistanceAndSpeed(), or use a longer split distance.',
+          priority: 5,
         ),
       );
     }
@@ -1294,6 +1323,10 @@ class RawEditor {
     return result;
   }
 }
+
+// Upper bound on the laps markLapsByDistance generates; far above any real
+// activity, low enough that a corrupt distance value stays cheap.
+const _maxDistanceSplits = 100000;
 
 bool _isSortedBy<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {
