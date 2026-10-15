@@ -154,6 +154,13 @@ class FitParser implements ActivityFormatParser {
     int? lastKnownTimestamp;
     final points = <GeoPoint>[];
     final hrSamples = <Sample>[];
+    // Strap heart rate arrives in hr messages (global 132), usually in a
+    // later chained segment, and is merged into the records after the loop.
+    // These two lists hold every timestamped record's time and its own
+    // heart rate, in file order, for that merge.
+    final hrMerger = _FitHrMerger();
+    final recordTimes = <DateTime>[];
+    final recordHeartRates = <double?>[];
     final cadenceSamples = <Sample>[];
     final powerSamples = <Sample>[];
     final tempSamples = <Sample>[];
@@ -569,6 +576,8 @@ class FitParser implements ActivityFormatParser {
         if (hr != null) {
           hrSamples.add(Sample(time: recordTime, value: hr.toDouble()));
         }
+        recordTimes.add(recordTime);
+        recordHeartRates.add(hr?.toDouble());
         final cadence = _asNumber(values[fitFieldCadence]);
         if (cadence != null) {
           cadenceSamples.add(
@@ -1063,6 +1072,9 @@ class FitParser implements ActivityFormatParser {
             developerFieldOffsets[devKey] = devOffset;
           }
           break;
+        case 132: // hr (heart rate from a strap that stores and forwards)
+          hrMerger.add(values);
+          break;
         default:
           // Vendor-specific or otherwise undocumented message: no generic
           // representation exists, so it's skipped, but the global ID is
@@ -1124,6 +1136,50 @@ class FitParser implements ActivityFormatParser {
               'Message global ID(s) $ids have no generic representation '
               'in this library and were not decoded.',
           node: const ParseNodeReference(path: 'fit.message'),
+        ),
+      );
+    }
+
+    if (hrMerger.hasBeats) {
+      final merged = hrMerger.mergeInto([
+        for (final time in recordTimes)
+          time.difference(fitEpoch).inMicroseconds /
+              Duration.microsecondsPerSecond,
+      ]);
+      hrSamples.clear();
+      var mergedRecords = 0;
+      for (var i = 0; i < recordTimes.length; i++) {
+        final value = merged[i] ?? recordHeartRates[i];
+        if (merged[i] != null) mergedRecords++;
+        if (value != null) {
+          hrSamples.add(Sample(time: recordTimes[i], value: value));
+        }
+      }
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.info,
+          code: 'fit.hr.merged',
+          message:
+              '${hrMerger.messageCount} hr message(s) supplied the heart '
+              'rate of $mergedRecords record(s), averaged over each '
+              'record interval.',
+          node: const ParseNodeReference(path: 'fit.hr'),
+        ),
+      );
+    }
+    if (hrMerger.skippedMessages > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.hr.skipped',
+          message:
+              '${hrMerger.skippedMessages} hr message(s) could not be '
+              'placed on the timeline and were skipped.',
+          node: const ParseNodeReference(path: 'fit.hr'),
+          suggestedFix:
+              'Some strap heart rate may be missing. Re-export the activity '
+              'from the device if the heart rate looks incomplete.',
+          priority: 3,
         ),
       );
     }
@@ -1817,6 +1873,174 @@ class _FitMessageDefinition {
     }
     return values;
   }
+}
+
+/// Collects FIT `hr` messages (global 132) and merges them into records.
+///
+/// A strap that stores heart rate and forwards it later (during a swim, for
+/// example) is written as hr messages: one anchor message with a timestamp,
+/// then messages carrying eight beats each, timed by 12-bit event timestamps
+/// in 1/1024 s. The expansion and the per-record averaging follow the FIT
+/// SDK's heart rate merge, so the result equals what Garmin's tools report.
+///
+/// Field numbers per the FIT profile: 253 timestamp, 0 fractional_timestamp
+/// (1/32768 s), 1 time256 (1/256 s), 6 filtered_bpm, 9 event_timestamp
+/// (1/1024 s), 10 event_timestamp_12 (packed 12-bit values that accumulate
+/// into event_timestamp).
+class _FitHrMerger {
+  static const _gapStepSeconds = 0.25;
+  static const _gapMaxSteps = 20;
+  // event_timestamp wraps at 22 bits of seconds.
+  static const _eventRollover = 0x400000;
+
+  final _beats = <({double time, double bpm})>[];
+  double? _anchorTimestamp;
+  double _anchorEventTimestamp = 0;
+  // Running event_timestamp in 1/1024 s, and the last 12-bit value seen.
+  int? _eventAccumulated;
+  int _eventLast = 0;
+
+  /// Messages that contributed beats.
+  int messageCount = 0;
+
+  /// Messages left out: no anchor before them, beat and timestamp counts
+  /// that differ, or an event timestamp earlier than the anchor's.
+  int skippedMessages = 0;
+
+  bool get hasBeats => _beats.isNotEmpty;
+
+  void add(Map<int, Object?> values) {
+    final bpm = _numbers(values[6]);
+    var eventTimestamps = <double>[];
+    final direct = _numbers(values[9]);
+    if (direct.isNotEmpty) {
+      eventTimestamps = [for (final raw in direct) raw / 1024];
+      _eventAccumulated = direct.last.toInt();
+      _eventLast = direct.last.toInt();
+    }
+    final packed = values[10];
+    if (packed is Uint8List && packed.any((byte) => byte != 0xFF)) {
+      eventTimestamps = _unpackEventTimestamps(packed);
+    }
+
+    final timestamp = values[253];
+    if (timestamp is num) {
+      final fractional = values[0];
+      final time256 = values[1];
+      _anchorTimestamp =
+          timestamp +
+          (fractional is num
+              ? fractional / 32768
+              : time256 is num
+              ? time256 / 256
+              : 0);
+      if (eventTimestamps.length != 1) {
+        skippedMessages++;
+        return;
+      }
+      _anchorEventTimestamp = eventTimestamps.first;
+    }
+    final anchorTimestamp = _anchorTimestamp;
+    if (anchorTimestamp == null ||
+        eventTimestamps.isEmpty ||
+        eventTimestamps.length != bpm.length) {
+      skippedMessages++;
+      return;
+    }
+    for (var i = 0; i < eventTimestamps.length; i++) {
+      final event = eventTimestamps[i];
+      if (event < _anchorEventTimestamp) {
+        if (_anchorEventTimestamp - event <= _eventRollover) {
+          skippedMessages++;
+          return;
+        }
+        eventTimestamps[i] = event + _eventRollover;
+      }
+    }
+    messageCount++;
+    for (var i = 0; i < eventTimestamps.length; i++) {
+      final time = anchorTimestamp + eventTimestamps[i] - _anchorEventTimestamp;
+      // The previous beat carries forward across a gap, in 250 ms steps for
+      // up to five seconds.
+      if (_beats.isNotEmpty) {
+        final previous = _beats.last;
+        var gapMilliseconds = (time - previous.time).abs() * 1000;
+        for (
+          var step = 1;
+          gapMilliseconds > 250 && step <= _gapMaxSteps;
+          step++
+        ) {
+          _beats.add((
+            time: previous.time + _gapStepSeconds * step,
+            bpm: previous.bpm,
+          ));
+          gapMilliseconds -= 250;
+        }
+      }
+      _beats.add((time: time, bpm: bpm[i].toDouble()));
+    }
+  }
+
+  /// The heart rate each record takes from the beats, or null where no beat
+  /// falls in that record's interval. [recordSeconds] are the records' times
+  /// in seconds since the FIT epoch, in file order.
+  List<double?> mergeInto(List<double> recordSeconds) {
+    final merged = List<double?>.filled(recordSeconds.length, null);
+    var beatIndex = 0;
+    double? rangeStart;
+    for (var i = 0; i < recordSeconds.length; i++) {
+      final rangeEnd = recordSeconds[i];
+      var start = rangeStart ?? rangeEnd;
+      if (start == rangeEnd) {
+        start -= 1;
+        beatIndex = beatIndex >= 1 ? beatIndex - 1 : 0;
+      }
+      rangeStart = start;
+      var sum = 0.0;
+      var count = 0;
+      while (beatIndex < _beats.length) {
+        final beat = _beats[beatIndex];
+        if (beat.time > start && beat.time <= rangeEnd) {
+          sum += beat.bpm;
+          count++;
+        } else if (beat.time > rangeEnd) {
+          if (count > 0) {
+            merged[i] = (sum / count + 0.5).floorToDouble();
+          }
+          rangeStart = rangeEnd;
+          break;
+        }
+        beatIndex++;
+      }
+    }
+    return merged;
+  }
+
+  List<double> _unpackEventTimestamps(Uint8List packed) {
+    final result = <double>[];
+    final totalBits = packed.length * 8;
+    for (var bit = 0; bit + 12 <= totalBits && result.length < 10; bit += 12) {
+      final byte = bit >> 3;
+      // Values are packed least significant bit first.
+      final value = (bit & 7) == 0
+          ? packed[byte] | ((packed[byte + 1] & 0x0F) << 8)
+          : (packed[byte] >> 4) | (packed[byte + 1] << 4);
+      final accumulated = _eventAccumulated;
+      final next = accumulated == null
+          ? value
+          : accumulated + ((value - _eventLast) & 0xFFF);
+      _eventAccumulated = next;
+      _eventLast = value;
+      result.add(next / 1024);
+    }
+    return result;
+  }
+
+  static List<num> _numbers(Object? value) => switch (value) {
+    final num single => [single],
+    final List<num> many => many,
+    _ => const [],
+  };
 }
 
 class _FitDeveloperFieldDefinition {

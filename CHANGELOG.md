@@ -4,6 +4,7 @@
 - `RawEditor.markLapsByDistance()` no longer runs out of memory on a non-finite or corrupt distance sample; it stops at 100,000 laps now.
 - `detectFormat()`/`import()` no longer throw `RangeError` on UTF-32 text with an invalid code point.
 - A stream source over `maxPayloadBytes` no longer returns a result while raising an unhandled error; it throws `FormatException` now.
+- FIT no longer ignores `hr` messages (strap heart rate, e.g. on a swim); they're merged into the record heart rate like Garmin's SDK does.
 
 ## 0.8.2
 ### Fixed

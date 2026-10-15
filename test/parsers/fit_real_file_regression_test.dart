@@ -134,4 +134,52 @@ void main() {
       ),
     );
   });
+
+  // Strap heart rate stored in hr messages inside chained segments. Ground
+  // truth was extracted with garmin-fit-sdk (heart rate merging on) from the
+  // same files: the number of records with a heart rate, their mean, and the
+  // first and last values.
+  for (final (name, count, mean, first, last) in [
+    (
+      'event_timestamp.fit',
+      4376,
+      138.2856,
+      [95, 92, 91, 90, 91, 92],
+      [139, 137, 136, 134],
+    ),
+    (
+      'sample_mulitple_header.fit',
+      1773,
+      171.6627,
+      [138, 138, 139, 143, 148, 156],
+      [185, 186, 186, 186],
+    ),
+  ]) {
+    test('local fixture $name merges hr messages like garmin-fit-sdk', () {
+      final path = 'dev/fixtures/third_party/fit/$name';
+      final file = File(path);
+      if (!file.existsSync()) {
+        markTestSkipped('Local-only fixture $path is absent.');
+        return;
+      }
+
+      final result = ActivityParser.parseBytes(
+        file.readAsBytesSync(),
+        ActivityFileFormat.fit,
+      );
+      final heartRate = [
+        for (final sample in result.activity.channel(Channel.heartRate))
+          sample.value,
+      ];
+
+      expect(heartRate, hasLength(count));
+      expect(
+        heartRate.reduce((a, b) => a + b) / heartRate.length,
+        closeTo(mean, 0.00005),
+      );
+      expect(heartRate.take(6), first);
+      expect(heartRate.skip(heartRate.length - 4), last);
+      expect(result.diagnostics.map((d) => d.code), contains('fit.hr.merged'));
+    });
+  }
 }
