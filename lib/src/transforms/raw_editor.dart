@@ -1213,9 +1213,13 @@ class RawEditor {
     RawActivity activity, {
     bool normalize = true,
   }) {
+    RawActivity normalized(RawActivity whole) => normalize
+        ? RawEditor(whole).sortAndDedup().trimInvalid().activity
+        : whole;
+
     if (activity.laps.isEmpty) {
       // No laps - return entire activity under its overall sport
-      return {activity.sport: activity};
+      return {activity.sport: normalized(activity)};
     }
 
     // Group laps by sport
@@ -1226,8 +1230,8 @@ class RawEditor {
     }
 
     if (lapsBySport.length == 1) {
-      // Single sport - return as-is
-      return {lapsBySport.keys.first: activity};
+      // Single sport - nothing to split
+      return {lapsBySport.keys.first: normalized(activity)};
     }
 
     // Create separate activities for each sport

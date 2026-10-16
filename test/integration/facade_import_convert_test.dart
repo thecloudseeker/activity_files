@@ -889,4 +889,55 @@ void main() {
       });
     }
   });
+
+  group('autofix.invalid_gps.trimmed counts only trimmed points', () {
+    final start = DateTime.utc(2024, 1, 1, 10).millisecondsSinceEpoch;
+    LocationStreamSample at(int seconds, {double latitude = 46.0}) => (
+      timestamp: start + seconds * 1000,
+      latitude: latitude == 0 ? 0 : latitude + seconds * 0.0001,
+      longitude: latitude == 0 ? 0 : 13.0,
+      elevation: 100,
+    );
+    const options = ActivityAutoFixOptions(
+      fixDistanceDrift: false,
+      fixTimestampGaps: false,
+    );
+    Future<ActivityExportResult> export(List<LocationStreamSample> location) =>
+        ActivityFiles.buildAndExport(
+          location: location,
+          to: ActivityFileFormat.gpx,
+          autoFix: options,
+        );
+    Iterable<String> trimmed(ActivityExportResult result) => result.diagnostics
+        .where((d) => d.code == 'autofix.invalid_gps.trimmed')
+        .map((d) => d.message);
+
+    test('valid points sharing a timestamp are not reported', () async {
+      final result = await export([
+        at(0),
+        at(10),
+        at(20),
+        at(20),
+        at(30),
+        at(30),
+      ]);
+
+      expect(result.activity.points, hasLength(4));
+      expect(trimmed(result), isEmpty);
+    });
+
+    test('a point without a GPS fix is counted once', () async {
+      final result = await export([
+        at(0),
+        at(10),
+        at(20),
+        at(20),
+        at(30, latitude: 0),
+        at(40),
+      ]);
+
+      expect(result.activity.points, hasLength(4));
+      expect(trimmed(result), [contains('removed 1 invalid')]);
+    });
+  });
 }

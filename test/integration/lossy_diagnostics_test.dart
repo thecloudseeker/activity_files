@@ -271,4 +271,64 @@ void main() {
       expect(setsDropped, hasLength(1));
     });
   });
+
+  group('lossy.summary_dropped and GeoJSON calories', () {
+    final t0 = DateTime.utc(2024, 3, 1, 8);
+    ActivityExportResult export(
+      ActivitySummary summary,
+      ActivityFileFormat to,
+    ) => ActivityFiles.export(
+      activity: RawActivity(
+        points: [
+          for (var i = 0; i < 3; i++)
+            GeoPoint(
+              latitude: 47.0 + i * 0.001,
+              longitude: 11.0,
+              time: t0.add(Duration(seconds: i * 10)),
+            ),
+        ],
+        summary: summary,
+      ),
+      to: to,
+    );
+    Iterable<String> codes(ActivityExportResult result) =>
+        result.diagnostics.map((d) => d.code);
+
+    test('a calories-only summary survives GeoJSON and is not reported', () {
+      final result = export(
+        const ActivitySummary(calories: 321),
+        ActivityFileFormat.geojson,
+      );
+
+      expect(result.encoded, contains('"total_calories":321'));
+      expect(codes(result), isNot(contains('lossy.summary_dropped')));
+    });
+
+    test('any other summary field is still reported for GeoJSON', () {
+      for (final summary in const [
+        ActivitySummary(calories: 321, totalDistanceMeters: 1000),
+        ActivitySummary(avgHeartRate: 140),
+        ActivitySummary(calories: 321, extraFitFields: {200: 1}),
+      ]) {
+        expect(
+          codes(export(summary, ActivityFileFormat.geojson)),
+          contains('lossy.summary_dropped'),
+        );
+      }
+    });
+
+    test('a calories-only summary is reported where it is not written', () {
+      for (final to in [
+        ActivityFileFormat.gpx,
+        ActivityFileFormat.tcx,
+        ActivityFileFormat.csv,
+      ]) {
+        expect(
+          codes(export(const ActivitySummary(calories: 321), to)),
+          contains('lossy.summary_dropped'),
+          reason: to.name,
+        );
+      }
+    });
+  });
 }

@@ -578,4 +578,50 @@ void main() {
       });
     });
   });
+
+  group('GPX 1.1 metadata element order', () {
+    RawActivity activity() => RawActivity(
+      points: [
+        GeoPoint(
+          latitude: 40.0,
+          longitude: -105.0,
+          time: DateTime.utc(2024, 1, 1, 10),
+        ),
+      ],
+      creator: 'Device',
+      gpxMetadataName: 'Morning run',
+      gpxMetadataDescription: 'Easy pace',
+      device: const ActivityDeviceMetadata(manufacturer: 'Garmin'),
+    );
+
+    test('children follow the schema: name, desc, time, extensions', () {
+      final document = XmlDocument.parse(
+        ActivityEncoder.encode(activity(), ActivityFileFormat.gpx),
+      );
+      final metadata = document.rootElement.childElements.firstWhere(
+        (element) => element.name.local == 'metadata',
+      );
+
+      expect(metadata.childElements.map((element) => element.name.local), [
+        'name',
+        'desc',
+        'time',
+        'extensions',
+      ]);
+    });
+
+    test('the reordered metadata reads back unchanged', () {
+      final parsed = ActivityParser.parse(
+        ActivityEncoder.encode(activity(), ActivityFileFormat.gpx),
+        ActivityFileFormat.gpx,
+      );
+
+      expect(parsed.activity.gpxMetadataName, 'Morning run');
+      expect(parsed.activity.gpxMetadataDescription, 'Easy pace');
+      expect(
+        parsed.diagnostics.where((d) => d.severity != ParseSeverity.info),
+        isEmpty,
+      );
+    });
+  });
 }

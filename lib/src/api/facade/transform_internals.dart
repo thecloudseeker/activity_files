@@ -173,7 +173,10 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
     return (activity, diagnostics);
   }
   final fixed = RawEditor(activity).autoFix(options).activity;
-  return (fixed, [...diagnostics, ..._autoFixDiagnostics(activity, fixed)]);
+  // Counted from the deduplicated input: points and samples that only shared
+  // a timestamp are not invalid data the trim removed.
+  final deduped = RawEditor(activity).sortAndDedup().activity;
+  return (fixed, [...diagnostics, ..._autoFixDiagnostics(deduped, fixed)]);
 }
 
 List<ParseDiagnostic> _autoFixDiagnostics(
