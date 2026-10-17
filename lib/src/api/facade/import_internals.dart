@@ -14,12 +14,12 @@ Future<_ResolvedSource> _resolveSource(
   }
   if (source is Stream<List<int>>) {
     const sniffLimit = 64 * 1024;
-    final queue = StreamQueue(source);
+    final iterator = StreamIterator(source);
     final consumedChunks = <List<int>>[];
     final sniffBuffer = BytesBuilder(copy: false);
     var sniffedBytes = 0;
-    while (sniffedBytes < sniffLimit && await queue.hasNext) {
-      final chunk = await queue.next;
+    while (sniffedBytes < sniffLimit && await iterator.moveNext()) {
+      final chunk = iterator.current;
       consumedChunks.add(chunk);
       if (chunk.isEmpty) {
         continue;
@@ -37,12 +37,19 @@ Future<_ResolvedSource> _resolveSource(
       }
     }
     Stream<List<int>> replay() async* {
-      for (final chunk in consumedChunks) {
-        if (chunk.isNotEmpty) {
-          yield chunk;
+      try {
+        for (final chunk in consumedChunks) {
+          if (chunk.isNotEmpty) {
+            yield chunk;
+          }
         }
+        while (await iterator.moveNext()) {
+          yield iterator.current;
+        }
+      } finally {
+        // Cancelling the replay must cancel the source as well.
+        await iterator.cancel();
       }
-      yield* queue.rest;
     }
 
     final sniffBytes = sniffedBytes == 0 ? null : sniffBuffer.takeBytes();

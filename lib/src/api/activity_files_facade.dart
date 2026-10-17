@@ -3,7 +3,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:async/async.dart';
 import '../channel_mapper.dart';
 import '../encode/activity_encoder.dart';
 import '../encode/encoder_options.dart';

@@ -1,4 +1,9 @@
 # Changelog
+## 0.8.4
+### Changed
+- Requires Dart 3.10.1, which `csv` 8 already needed; the previous `^3.9.0` could never resolve.
+- No longer depends on `async`.
+
 ## 0.8.3
 ### Fixed
 - `RawEditor.markLapsByDistance()` no longer runs out of memory on a non-finite or corrupt distance sample; it stops at 100,000 laps now.

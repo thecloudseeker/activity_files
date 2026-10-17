@@ -53,9 +53,39 @@ jobs:
           fail_ci_if_error: false
           verbose: true
 
+  # The pubspec promises the oldest SDK and the lowest runtime dependency
+  # versions it allows; this job holds it to that. Only the runtime
+  # dependencies are downgraded: the lowest versions of the test tooling's own
+  # dependencies don't run on current SDKs, and they never reach users.
+  # Formatting is checked in `test` only, since formatter output can differ
+  # between SDK versions.
+  minimum-versions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@9a04e6d73cca37bd455e0608d7e5092f881fd603
+        with:
+          sdk: 3.10.1
+
+      - name: Resolve the lowest allowed runtime dependency versions
+        run: |
+          dart pub get
+          dart pub downgrade args collection csv xml
+
+      # Errors only: lint rules newer than the minimum SDK are unknown to its
+      # analyzer, and `test` enforces every lint on the current SDK.
+      - name: Analyze project source
+        run: dart analyze --no-fatal-warnings
+
+      - name: Run tests
+        run: dart test
+
   tag-release:
     name: Tag release
-    needs: test
+    needs: [test, minimum-versions]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
