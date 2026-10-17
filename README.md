@@ -58,7 +58,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.8.2
+  activity_files: ^0.8.3
 ```
 
 Then install dependencies:
