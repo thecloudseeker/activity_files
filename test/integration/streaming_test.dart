@@ -2,6 +2,7 @@
 /// Integration tests for stream-based parsing.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -10,7 +11,6 @@ import 'package:test/test.dart';
 
 import '../fixtures/builders.dart';
 import '../fixtures/sample_data.dart';
-import 'dart:async';
 
 void main() {
   const encoderOptions = EncoderOptions(

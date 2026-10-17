@@ -24,8 +24,10 @@ const ParseDiagnostic _syntheticTimestampDiagnostic = ParseDiagnostic(
 /// `"geometry"` field that's a string, not an object) must degrade to a
 /// per-feature diagnostic, not an uncaught TypeError that wipes every other
 /// valid feature in the same FeatureCollection.
-Map? _asMapOrNull(Object? value) => value is Map ? value : null;
-List? _asListOrNull(Object? value) => value is List ? value : null;
+Map<Object?, Object?>? _asMapOrNull(Object? value) =>
+    value is Map<Object?, Object?> ? value : null;
+List<Object?>? _asListOrNull(Object? value) =>
+    value is List<Object?> ? value : null;
 String? _asStringOrNull(Object? value) => value is String ? value : null;
 
 /// Parser for GeoJSON format activity files
@@ -117,7 +119,9 @@ class GeojsonParser implements ActivityFormatParser {
       return _parseFeature(features[0], diagnostics);
     }
 
-    final pointFeatures = features.whereType<Map>().where((feature) {
+    final pointFeatures = features.whereType<Map<Object?, Object?>>().where((
+      feature,
+    ) {
       final geometry = _asMapOrNull(feature['geometry']);
       return geometry != null && geometry['type'] == 'Point';
     }).toList();
@@ -201,7 +205,7 @@ class GeojsonParser implements ActivityFormatParser {
       return ActivityParseResult(activity: activity, diagnostics: diagnostics);
     }
 
-    final trackFeatures = <Map>[];
+    final trackFeatures = <Map<Object?, Object?>>[];
     var droppedPointFeatures = 0;
     var droppedMalformedFeatures = 0;
     for (final feature in features) {
@@ -574,7 +578,7 @@ class GeojsonParser implements ActivityFormatParser {
   /// structured field the encoder actually regenerates `total_calories`
   /// from; without this, the property (excluded from [_collectMetadata] on
   /// the assumption it's regenerated) had nowhere to go and was dropped.
-  static ActivitySummary? _parseSummary(Map properties) {
+  static ActivitySummary? _parseSummary(Map<Object?, Object?> properties) {
     final calories = properties['total_calories'];
     return calories is num
         ? ActivitySummary(calories: calories.toDouble())
@@ -583,7 +587,9 @@ class GeojsonParser implements ActivityFormatParser {
 
   /// Reads `properties.device_manufacturer` into
   /// [ActivityDeviceMetadata.manufacturer]; see [_parseSummary].
-  static ActivityDeviceMetadata? _parseDevice(Map properties) {
+  static ActivityDeviceMetadata? _parseDevice(
+    Map<Object?, Object?> properties,
+  ) {
     final manufacturer = properties['device_manufacturer'];
     return manufacturer is String
         ? ActivityDeviceMetadata(manufacturer: manufacturer)
@@ -597,7 +603,9 @@ class GeojsonParser implements ActivityFormatParser {
   /// regenerates from the activity itself, so keeping a stale copy in
   /// `metadata` would let old values survive an edit and contradict the
   /// freshly re-encoded output.
-  static Map<String, Object?> _collectMetadata(Map properties) {
+  static Map<String, Object?> _collectMetadata(
+    Map<Object?, Object?> properties,
+  ) {
     final metadata = <String, Object?>{};
     for (final entry in properties.entries) {
       final key = entry.key;
@@ -612,7 +620,7 @@ class GeojsonParser implements ActivityFormatParser {
   /// Parses per-point timestamps parallel to a LineString/Polygon's
   /// coordinates array: `coordTimes` (togeojson/Mapbox) or
   /// `coordinateProperties.times` (this library's own encoder), if present.
-  static List<DateTime?>? _coordinateTimes(Map properties) {
+  static List<DateTime?>? _coordinateTimes(Map<Object?, Object?> properties) {
     final coordTimes = properties['coordTimes'];
     if (coordTimes is List) {
       return [
@@ -631,7 +639,9 @@ class GeojsonParser implements ActivityFormatParser {
   }
 
   /// `properties.coordTimes` for a MultiLineString: one array per line.
-  static List<List<DateTime?>?>? _multiLineCoordinateTimes(Map properties) {
+  static List<List<DateTime?>?>? _multiLineCoordinateTimes(
+    Map<Object?, Object?> properties,
+  ) {
     final coordTimes = properties['coordTimes'];
     if (coordTimes is! List) return null;
     return [
@@ -665,7 +675,7 @@ class GeojsonParser implements ActivityFormatParser {
   /// [_hasTimestampForEveryPoint] for a MultiLineString's nested per-line
   /// coordinate lists.
   static bool _hasTimestampForEveryMultiLinePoint(
-    List coordinateLines,
+    List<Object?> coordinateLines,
     List<List<DateTime?>?>? lineTimes,
     DateTime? sharedTimestamp,
   ) {
@@ -702,7 +712,7 @@ class GeojsonParser implements ActivityFormatParser {
     DateTime timestamp,
     int lineIndex,
     int pointIndex,
-    Map<String, List>? coordinateChannels,
+    Map<String, List<Object?>>? coordinateChannels,
     Map<String, Channel> channelsByKey,
     Map<Channel, List<Sample>> channelMap,
   ) {
@@ -721,7 +731,9 @@ class GeojsonParser implements ActivityFormatParser {
 
   /// Parses `properties.coordinateProperties.channels` (one parallel array
   /// per channel id, index-aligned with the coordinates array), if present.
-  static Map<String, List>? _coordinateChannels(Map properties) {
+  static Map<String, List<Object?>>? _coordinateChannels(
+    Map<Object?, Object?> properties,
+  ) {
     final coordinateProperties = properties['coordinateProperties'];
     if (coordinateProperties is! Map) return null;
     final channels = coordinateProperties['channels'];
@@ -740,7 +752,7 @@ class GeojsonParser implements ActivityFormatParser {
   /// fixed for the whole feature, so normalizing the same id on every
   /// point (a string trim + lowercase call each time) is pure waste.
   static Map<String, Channel> _channelsByKey(
-    Map<String, List>? coordinateChannels,
+    Map<String, List<Object?>>? coordinateChannels,
   ) {
     if (coordinateChannels == null) return const {};
     return {
@@ -756,7 +768,7 @@ class GeojsonParser implements ActivityFormatParser {
   static void _collectCoordinateChannelSamples(
     DateTime timestamp,
     int index,
-    Map<String, List>? coordinateChannels,
+    Map<String, List<Object?>>? coordinateChannels,
     Map<String, Channel> channelsByKey,
     Map<Channel, List<Sample>> channelMap,
   ) {
@@ -777,7 +789,7 @@ class GeojsonParser implements ActivityFormatParser {
   /// [_coordinateToGeoPoint]'s `timeOverride`, so an invalid value reports
   /// `geojson.point.invalid_timestamp` once per feature, not once per point.
   static DateTime? _resolvePropertyTimestamp(
-    Map properties,
+    Map<Object?, Object?> properties,
     List<ParseDiagnostic> diagnostics,
   ) {
     final raw = properties['timestamp'];
@@ -808,8 +820,8 @@ class GeojsonParser implements ActivityFormatParser {
   /// threaded it through [timeOverride], to avoid re-resolving (and
   /// re-diagnosing) it per coordinate.
   static GeoPoint? _coordinateToGeoPoint(
-    List coord,
-    Map properties,
+    List<Object?> coord,
+    Map<Object?, Object?> properties,
     List<ParseDiagnostic> diagnostics, {
     DateTime? timeOverride,
     bool resolvePropertyTimestamp = true,
@@ -911,7 +923,7 @@ class GeojsonParser implements ActivityFormatParser {
   /// unknown names are preserved as custom channels.
   static void _collectChannelSamples(
     DateTime timestamp,
-    Map properties,
+    Map<Object?, Object?> properties,
     Map<Channel, List<Sample>> channelMap,
   ) {
     for (final entry in properties.entries) {

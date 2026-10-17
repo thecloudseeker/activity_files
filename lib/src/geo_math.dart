@@ -6,7 +6,7 @@ import 'models.dart';
 /// Great-circle distance in meters between [a] and [b] using the haversine
 /// formula on a spherical Earth (radius 6371 km).
 double haversineMeters(GeoPoint a, GeoPoint b) {
-  const earthRadius = 6371000.0; // meters
+  const earthRadius = 6_371_000.0; // meters
   final dLat = _radians(b.latitude - a.latitude);
   final dLon = _radians(b.longitude - a.longitude);
   final lat1 = _radians(a.latitude);

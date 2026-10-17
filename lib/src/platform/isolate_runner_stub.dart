@@ -10,5 +10,5 @@ Future<T> runWithIsolation<T>(
   required bool useIsolate,
 }) async {
   // Ignore [useIsolate]; no isolate support is available.
-  return Future.sync(task);
+  return await task();
 }

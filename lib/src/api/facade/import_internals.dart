@@ -158,10 +158,10 @@ Future<ActivityParseResult> _parseResolved(
 }) async {
   if (payload is _ReplayableStreamPayload) {
     final bytes = await payload.materialize(maxBytes: maxPayloadBytes);
-    return _parseBytesIsolated(bytes, format, encoding, useIsolate);
+    return await _parseBytesIsolated(bytes, format, encoding, useIsolate);
   }
   if (payload is Stream<List<int>>) {
-    return ActivityParser.parseStream(
+    return await ActivityParser.parseStream(
       payload,
       format,
       useIsolate: useIsolate,
@@ -172,7 +172,7 @@ Future<ActivityParseResult> _parseResolved(
   if (maxPayloadBytes != null) {
     _enforcePayloadLimit(payload, encoding: encoding, limit: maxPayloadBytes);
   }
-  return isolate_runner.runWithIsolation(
+  return await isolate_runner.runWithIsolation(
     () => _parseSync(payload, format, encoding),
     useIsolate: useIsolate,
   );

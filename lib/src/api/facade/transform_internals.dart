@@ -48,7 +48,7 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
       diagnostics,
     );
     if (request.exportInIsolate) {
-      return ActivityFiles.exportAsync(
+      return await ActivityFiles.exportAsync(
         activity: activity,
         to: request.to,
         options: request.options,
@@ -113,7 +113,7 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
       diagnostics: downstreamDiagnostics,
       validation: request.validation,
     );
-    return _runPipeline(downstreamRequest);
+    return await _runPipeline(downstreamRequest);
   }
   if (request.source != null) {
     final conversion = await ActivityFiles.convert(
