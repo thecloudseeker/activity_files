@@ -10,6 +10,7 @@ import 'package:test/test.dart';
 
 import '../fixtures/builders.dart';
 import '../fixtures/sample_data.dart';
+import 'dart:async';
 
 void main() {
   const encoderOptions = EncoderOptions(
@@ -110,6 +111,83 @@ void main() {
           );
         },
       );
+    });
+  });
+
+  group('maxPayloadBytes crossed after the first stream chunk', () {
+    // The limit is larger than the first chunk, so it is only exceeded once
+    // later chunks arrive.
+    const limit = 256 * 1024;
+    Stream<List<int>> oversized() async* {
+      yield utf8.encode(sampleGpx);
+      for (var i = 0; i < 8; i++) {
+        yield Uint8List(64 * 1024)..fillRange(0, 64 * 1024, 0x20);
+      }
+    }
+
+    Future<List<Object>> unhandledErrorsOf(Future<void> Function() body) async {
+      final unhandled = <Object>[];
+      final done = Completer<void>();
+      runZonedGuarded(() async {
+        await body();
+        // Let any error that nobody awaits reach the zone.
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        done.complete();
+      }, (error, _) => unhandled.add(error));
+      await done.future;
+      return unhandled;
+    }
+
+    for (final format in [ActivityFileFormat.gpx, null]) {
+      final label = format == null ? 'detected format' : 'given format';
+      test('import throws FormatException to the caller ($label)', () async {
+        Object? caught;
+        final unhandled = await unhandledErrorsOf(() async {
+          try {
+            await ActivityFiles.import(
+              oversized(),
+              format: format,
+              useIsolate: false,
+              maxPayloadBytes: limit,
+            );
+          } catch (error) {
+            caught = error;
+          }
+        });
+
+        expect(caught, isA<FormatException>());
+        expect('$caught', contains('exceeds $limit bytes'));
+        expect(unhandled, isEmpty);
+      });
+    }
+
+    test('convert throws FormatException to the caller', () async {
+      Object? caught;
+      final unhandled = await unhandledErrorsOf(() async {
+        try {
+          await ActivityFiles.convert(
+            source: oversized(),
+            to: ActivityFileFormat.tcx,
+            useIsolate: false,
+            maxPayloadBytes: limit,
+          );
+        } catch (error) {
+          caught = error;
+        }
+      });
+
+      expect(caught, isA<FormatException>());
+      expect(unhandled, isEmpty);
+    });
+
+    test('a stream within the limit still imports', () async {
+      final result = await ActivityFiles.import(
+        oversized(),
+        useIsolate: false,
+        maxPayloadBytes: 1024 * 1024,
+      );
+
+      expect(result.activity.points, hasLength(3));
     });
   });
 }

@@ -1408,7 +1408,7 @@ class RawActivity {
     // no per-track slot for these on the flattened result), so a sub-track's
     // value only fills in when the primary track doesn't already have one --
     // first sub-track with a value wins among sub-tracks. List/map fields
-    // (waypoints, routes, metadata) merge instead, since those genuinely can
+    // (waypoints, routes, sessions, metadata) merge instead, since those can
     // hold every track's contribution.
     var mergedSummary = summary;
     var mergedDevice = device;
@@ -1416,6 +1416,7 @@ class RawActivity {
     var mergedTcxAuthor = tcxAuthor;
     final mergedGpxWaypoints = <GeoPoint>[...gpxWaypoints];
     final mergedGpxRoutes = <GpxRoute>[...gpxRoutes];
+    final mergedAdditionalSessions = <ActivitySummary>[...additionalSessions];
     final mergedMetadata = <String, Object?>{...metadata};
     for (final track in additionalTracks) {
       final flat = track.flattened();
@@ -1442,6 +1443,7 @@ class RawActivity {
       mergedTcxAuthor ??= flat.tcxAuthor;
       mergedGpxWaypoints.addAll(flat.gpxWaypoints);
       mergedGpxRoutes.addAll(flat.gpxRoutes);
+      mergedAdditionalSessions.addAll(flat.additionalSessions);
       for (final entry in flat.metadata.entries) {
         mergedMetadata.putIfAbsent(entry.key, () => entry.value);
       }
@@ -1479,6 +1481,7 @@ class RawActivity {
       tcxAuthor: mergedTcxAuthor,
       gpxWaypoints: mergedGpxWaypoints,
       gpxRoutes: mergedGpxRoutes,
+      additionalSessions: mergedAdditionalSessions,
       metadata: mergedMetadata,
       additionalTracks: const [],
       // Segment boundaries index the primary track's points; after merging and

@@ -682,7 +682,7 @@ void main() {
         expect(splits[Sport.cycling]!.points.map((p) => p.time), [at(45)]);
       });
 
-      test('splitBySport returns single activity unchanged', () {
+      test('splitBySport returns a single-sport activity whole', () {
         final activity = RawActivity(
           points: [
             GeoPoint(
@@ -704,7 +704,12 @@ void main() {
 
         expect(splits.length, 1);
         expect(splits.keys.first, Sport.running);
-        expect(splits[Sport.running], activity);
+        expect(splits[Sport.running]!.points, activity.points);
+        expect(splits[Sport.running]!.laps, hasLength(1));
+        expect(
+          ActivityFiles.splitBySport(activity, normalize: false)[Sport.running],
+          same(activity),
+        );
       });
 
       test('splitBySport handles activity without laps', () {
@@ -723,7 +728,11 @@ void main() {
 
         expect(splits.length, 1);
         expect(splits.keys.first, Sport.cycling);
-        expect(splits[Sport.cycling], activity);
+        expect(splits[Sport.cycling]!.points, activity.points);
+        expect(
+          ActivityFiles.splitBySport(activity, normalize: false)[Sport.cycling],
+          same(activity),
+        );
       });
 
       test(
@@ -769,5 +778,57 @@ void main() {
         },
       );
     });
+  });
+
+  group('splitBySport normalization without a split', () {
+    final start = DateTime.utc(2024, 7, 21, 6);
+    GeoPoint point(int seconds) => GeoPoint(
+      latitude: 47.5 + seconds * 0.0001,
+      longitude: -122.2,
+      time: start.add(Duration(seconds: seconds)),
+    );
+    // Out of order, with one timestamp twice.
+    final points = [point(30), point(10), point(20), point(10), point(0)];
+    final singleSportLaps = [
+      Lap(
+        startTime: start,
+        endTime: start.add(const Duration(seconds: 30)),
+        sport: Sport.running,
+      ),
+    ];
+
+    for (final laps in [const <Lap>[], singleSportLaps]) {
+      final label = laps.isEmpty ? 'no laps' : 'laps of one sport';
+
+      test('sorts and deduplicates by default ($label)', () {
+        final activity = RawActivity(
+          points: points,
+          laps: laps,
+          sport: Sport.running,
+        );
+
+        final split = RawEditor.splitBySport(activity);
+
+        expect(split.keys, [Sport.running]);
+        expect(
+          split.values.single.points.map(
+            (p) => p.time.difference(start).inSeconds,
+          ),
+          [0, 10, 20, 30],
+        );
+      });
+
+      test('returns the input untouched with normalize: false ($label)', () {
+        final activity = RawActivity(
+          points: points,
+          laps: laps,
+          sport: Sport.running,
+        );
+
+        final split = RawEditor.splitBySport(activity, normalize: false);
+
+        expect(split.values.single, same(activity));
+      });
+    }
   });
 }

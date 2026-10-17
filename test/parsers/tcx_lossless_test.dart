@@ -121,4 +121,68 @@ void main() {
       expect('<Activity '.allMatches(encoded).length, 1);
     });
   });
+
+  group('TCX multi-lap round-trip with a gap between laps', () {
+    final start = DateTime.utc(2024, 7, 21, 6);
+    DateTime at(int seconds) => start.add(Duration(seconds: seconds));
+    // Thirteen points ten seconds apart; the laps leave 40 s to 80 s
+    // uncovered.
+    final original = RawActivity(
+      sport: Sport.running,
+      points: [
+        for (var i = 0; i <= 12; i++)
+          GeoPoint(
+            latitude: 47.5 + i * 0.0001,
+            longitude: -122.2,
+            time: at(i * 10),
+          ),
+      ],
+      laps: [
+        Lap(startTime: at(0), endTime: at(40), distanceMeters: 400),
+        Lap(startTime: at(80), endTime: at(120), distanceMeters: 500),
+      ],
+    );
+    List<(int, int)> bounds(RawActivity activity) => [
+      for (final lap in activity.laps)
+        (
+          lap.startTime.difference(start).inSeconds,
+          lap.endTime.difference(start).inSeconds,
+        ),
+    ];
+
+    test('every point and each lap distance survive', () {
+      final reparsed = parse(encode(original));
+
+      expect(
+        reparsed.points.map((p) => p.time),
+        original.points.map((p) => p.time),
+      );
+      expect(reparsed.laps.map((lap) => lap.distanceMeters), [400, 500]);
+    });
+
+    test('each lap grows to the trackpoints it was written with', () {
+      // The gap is split at its midpoint, so the points inside it belong to
+      // a lap, and a lap's bounds are read from its own trackpoints.
+      final reparsed = parse(encode(original));
+
+      expect(bounds(reparsed), [(0, 60), (70, 120)]);
+    });
+
+    test('the written TotalTimeSeconds keeps the original lap duration', () {
+      expect(
+        RegExp(
+          r'<TotalTimeSeconds>([^<]*)</TotalTimeSeconds>',
+        ).allMatches(encode(original)).map((m) => double.parse(m.group(1)!)),
+        [40, 40],
+      );
+    });
+
+    test('a second round-trip changes nothing further', () {
+      final once = parse(encode(original));
+      final twice = parse(encode(once));
+
+      expect(bounds(twice), bounds(once));
+      expect(twice.points, hasLength(once.points.length));
+    });
+  });
 }

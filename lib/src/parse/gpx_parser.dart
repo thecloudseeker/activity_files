@@ -46,7 +46,6 @@ class GpxParser implements ActivityFormatParser {
     'bearing': Channel.bearing,
   };
 
-  static final _gpxSportCache = <String, Sport>{};
   static const _gpxSportMap = {
     'running': Sport.running,
     'cycling': Sport.cycling,
@@ -466,19 +465,7 @@ class GpxParser implements ActivityFormatParser {
       return Sport.unknown;
     }
 
-    // Check cache first
-    final cached = GpxParser._gpxSportCache[value];
-    if (cached != null) {
-      return cached;
-    }
-
-    final normalized = value.trim().toLowerCase();
-    final result = GpxParser._gpxSportMap[normalized] ?? Sport.unknown;
-
-    // Cache for future lookups
-    GpxParser._gpxSportCache[value] = result;
-
-    return result;
+    return GpxParser._gpxSportMap[value.trim().toLowerCase()] ?? Sport.unknown;
   }
 }
 

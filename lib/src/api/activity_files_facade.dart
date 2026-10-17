@@ -139,6 +139,8 @@ class ActivityFiles {
         encoding: encoding,
         maxPayloadBytes: maxPayloadBytes,
       );
+    } on _PayloadLimitException {
+      rethrow;
     } on FormatException catch (error) {
       parseResult = _failedParseResult(format: detected, error: error);
     }

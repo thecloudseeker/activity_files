@@ -1,4 +1,16 @@
 # Changelog
+## 0.8.3
+### Fixed
+- `RawEditor.markLapsByDistance()` no longer runs out of memory on a non-finite or corrupt distance sample; it stops at 100,000 laps now.
+- `detectFormat()`/`import()` no longer throw `RangeError` on UTF-32 text with an invalid code point.
+- A stream source over `maxPayloadBytes` no longer returns a result while raising an unhandled error; it throws `FormatException` now.
+- FIT no longer ignores `hr` messages (strap heart rate, e.g. on a swim); they're merged into the record heart rate like Garmin's SDK does.
+- GPX 1.1 export no longer writes `<metadata>`'s `<time>` before `<name>`/`<desc>`, which the schema rejects.
+- `RawActivity.flattened()` no longer drops `additionalSessions` carried on `additionalTracks`.
+- `splitBySport()` no longer skips `normalize: true` for an activity with no laps or only one sport.
+- `autofix.invalid_gps.trimmed` no longer counts valid points removed as duplicate timestamps.
+- `lossy.summary_dropped` no longer fires for a GeoJSON export whose summary holds only calories.
+
 ## 0.8.2
 ### Fixed
 - FIT files carrying only the `enhanced_*` speed fields no longer come back without a speed channel or session/lap `avgSpeed`/`maxSpeed`.

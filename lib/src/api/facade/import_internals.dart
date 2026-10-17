@@ -493,7 +493,9 @@ String _decodeUtf32(Uint8List bytes, Endian endian) {
     if (codePoint == 0) {
       continue;
     }
-    buffer.writeCharCode(codePoint);
+    // A value past the last Unicode code point is not text; the replacement
+    // character keeps decoding total and leaves the parser to report it.
+    buffer.writeCharCode(codePoint > 0x10FFFF ? 0xFFFD : codePoint);
   }
   return buffer.toString();
 }
@@ -597,9 +599,20 @@ class _ResolvedSource {
   final Uint8List? detectionBytes;
 }
 
+/// A payload larger than the caller's limit. A subtype so the import path can
+/// tell it from a parser's [FormatException], which becomes a diagnostic.
+class _PayloadLimitException extends FormatException {
+  const _PayloadLimitException(super.message);
+}
+
 class _ReplayableStreamPayload extends Stream<List<int>> {
   _ReplayableStreamPayload(Stream<List<int>> source, {this.bufferLimit})
-    : _source = source;
+    : _source = source {
+    // Failures reach callers through materialize() or the listener's
+    // onError; without this an error that nobody awaits here would also
+    // surface as an unhandled async error.
+    _completed.future.ignore();
+  }
 
   final Stream<List<int>> _source;
   final BytesBuilder _buffer = BytesBuilder(copy: false);
@@ -681,7 +694,7 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
     }
     final bytes = _bytes ?? _buffer.takeBytes();
     if (maxBytes != null && bytes.length > maxBytes) {
-      throw FormatException(
+      throw _PayloadLimitException(
         'Stream payload exceeds $maxBytes bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit.',
       );
     }
@@ -691,7 +704,7 @@ class _ReplayableStreamPayload extends Stream<List<int>> {
   void _addChunk(List<int> chunk, {int? limit}) {
     final threshold = limit ?? bufferLimit;
     if (threshold != null && _bufferedBytes + chunk.length > threshold) {
-      throw FormatException(
+      throw _PayloadLimitException(
         'Stream payload exceeds $threshold bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit.',
       );
     }

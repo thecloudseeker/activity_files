@@ -1018,4 +1018,35 @@ void main() {
       expect(copy.sets, hasLength(1));
     });
   });
+
+  group('RawActivity.flattened() and additional sessions', () {
+    test('keeps the sessions carried by every track', () {
+      final now = DateTime.utc(2024, 1, 1, 10);
+      RawActivity track(int minute, List<ActivitySummary> sessions) =>
+          RawActivity(
+            points: [
+              GeoPoint(
+                latitude: 40.0,
+                longitude: -105.0,
+                time: now.add(Duration(minutes: minute)),
+              ),
+            ],
+            additionalSessions: sessions,
+          );
+      final primary = track(0, const [ActivitySummary(calories: 1)]).copyWith(
+        additionalTracks: [
+          track(10, const [ActivitySummary(calories: 2)]),
+          track(20, const [
+            ActivitySummary(calories: 3),
+            ActivitySummary(calories: 4),
+          ]),
+        ],
+      );
+
+      final flat = primary.flattened();
+
+      expect(flat.additionalTracks, isEmpty);
+      expect(flat.additionalSessions.map((s) => s.calories), [1, 2, 3, 4]);
+    });
+  });
 }

@@ -121,8 +121,10 @@ class GpxEncoder implements ActivityFormatEncoder {
             builder.element(
               'metadata',
               nest: () {
-                builder.element('time', nest: start.toIso8601String());
+                // The GPX 1.1 schema fixes this order: name, desc, time,
+                // extensions.
                 writeNameAndDescription();
+                builder.element('time', nest: start.toIso8601String());
                 writeExtensionsBlock();
               },
             );

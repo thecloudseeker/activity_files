@@ -828,4 +828,116 @@ void main() {
       );
     });
   });
+
+  group('UTF-32 text with an invalid code point', () {
+    // U+10FFFF is the last code point; this value is one past it.
+    const invalidCodePoint = 0x110000;
+    Uint8List utf32(String text, Endian endian, {int? insertAfter}) {
+      final codePoints = [0xFEFF, ...text.runes];
+      if (insertAfter != null) {
+        // Index 0 is the byte-order mark.
+        codePoints.insert(insertAfter + 2, invalidCodePoint);
+      }
+      final data = ByteData(codePoints.length * 4);
+      for (var i = 0; i < codePoints.length; i++) {
+        data.setUint32(i * 4, codePoints[i], endian);
+      }
+      return data.buffer.asUint8List();
+    }
+
+    const gpx =
+        '<gpx version="1.1" creator="x" '
+        'xmlns="http://www.topografix.com/GPX/1/1"><trk><name>AB</name>'
+        '<trkseg><trkpt lat="46" lon="13">'
+        '<time>2024-01-01T10:00:00Z</time></trkpt></trkseg></trk></gpx>';
+    final afterA = gpx.indexOf('<name>A') + '<name>A'.length - 1;
+
+    for (final endian in [Endian.little, Endian.big]) {
+      final label = endian == Endian.little ? 'little-endian' : 'big-endian';
+
+      test('detectFormat still recognises the format ($label)', () {
+        expect(
+          ActivityFiles.detectFormat(utf32(gpx, endian, insertAfter: afterA)),
+          ActivityFileFormat.gpx,
+        );
+      });
+
+      test(
+        'import replaces it with U+FFFD and keeps the data ($label)',
+        () async {
+          final result = await ActivityFiles.import(
+            utf32(gpx, endian, insertAfter: afterA),
+            useIsolate: false,
+          );
+
+          expect(result.activity.points, hasLength(1));
+          expect(result.activity.gpxTrackName, 'A\u{FFFD}B');
+        },
+      );
+
+      test('a payload of nothing else does not throw ($label)', () async {
+        final bytes = utf32('', endian, insertAfter: -1);
+
+        expect(() => ActivityFiles.detectFormat(bytes), returnsNormally);
+        final result = await ActivityFiles.import(
+          bytes,
+          format: ActivityFileFormat.gpx,
+          useIsolate: false,
+        );
+        expect(result.activity.points, isEmpty);
+        expect(result.hasErrors, isTrue);
+      });
+    }
+  });
+
+  group('autofix.invalid_gps.trimmed counts only trimmed points', () {
+    final start = DateTime.utc(2024, 1, 1, 10).millisecondsSinceEpoch;
+    LocationStreamSample at(int seconds, {double latitude = 46.0}) => (
+      timestamp: start + seconds * 1000,
+      latitude: latitude == 0 ? 0 : latitude + seconds * 0.0001,
+      longitude: latitude == 0 ? 0 : 13.0,
+      elevation: 100,
+    );
+    const options = ActivityAutoFixOptions(
+      fixDistanceDrift: false,
+      fixTimestampGaps: false,
+    );
+    Future<ActivityExportResult> export(List<LocationStreamSample> location) =>
+        ActivityFiles.buildAndExport(
+          location: location,
+          to: ActivityFileFormat.gpx,
+          autoFix: options,
+        );
+    Iterable<String> trimmed(ActivityExportResult result) => result.diagnostics
+        .where((d) => d.code == 'autofix.invalid_gps.trimmed')
+        .map((d) => d.message);
+
+    test('valid points sharing a timestamp are not reported', () async {
+      final result = await export([
+        at(0),
+        at(10),
+        at(20),
+        at(20),
+        at(30),
+        at(30),
+      ]);
+
+      expect(result.activity.points, hasLength(4));
+      expect(trimmed(result), isEmpty);
+    });
+
+    test('a point without a GPS fix is counted once', () async {
+      final result = await export([
+        at(0),
+        at(10),
+        at(20),
+        at(20),
+        at(30, latitude: 0),
+        at(40),
+      ]);
+
+      expect(result.activity.points, hasLength(4));
+      expect(trimmed(result), [contains('removed 1 invalid')]);
+    });
+  });
 }

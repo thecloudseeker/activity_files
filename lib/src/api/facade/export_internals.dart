@@ -121,6 +121,33 @@ Map<String, Object?> _runExportIsolate(Map<String, Object?> request) {
   return _encodeExportResult(result);
 }
 
+/// Whether calories is the only field [summary] carries. GeoJSON writes it
+/// as `total_calories`, so such a summary survives that export whole.
+bool _holdsOnlyCalories(ActivitySummary summary) =>
+    summary.calories != null &&
+    ActivitySummary(
+      elapsedTime: summary.elapsedTime,
+      timerTime: summary.timerTime,
+      totalDistanceMeters: summary.totalDistanceMeters,
+      avgSpeed: summary.avgSpeed,
+      maxSpeed: summary.maxSpeed,
+      avgHeartRate: summary.avgHeartRate,
+      maxHeartRate: summary.maxHeartRate,
+      avgCadence: summary.avgCadence,
+      maxCadence: summary.maxCadence,
+      avgPower: summary.avgPower,
+      maxPower: summary.maxPower,
+      poolLengthMeters: summary.poolLengthMeters,
+      numActiveLengths: summary.numActiveLengths,
+      swimStroke: summary.swimStroke,
+      avgStrokeCount: summary.avgStrokeCount,
+      subSport: summary.subSport,
+      totalCycles: summary.totalCycles,
+      sport: summary.sport,
+      extraFitFields: summary.extraFitFields,
+      extraFitArrays: summary.extraFitArrays,
+    ).isEmpty;
+
 /// Diagnostics for data an [activity] carries that the [to] format cannot
 /// represent, so target-format loss is reported rather than silent.
 ///
@@ -190,7 +217,10 @@ List<ParseDiagnostic> _lossyDiagnostics(
         fix: toFit,
       );
     }
-    if (activity.summary?.isNotEmpty ?? false) {
+    final summary = activity.summary;
+    if (summary != null &&
+        summary.isNotEmpty &&
+        !(to == ActivityFileFormat.geojson && _holdsOnlyCalories(summary))) {
       add(
         'summary_dropped',
         'The session summary statistics are not written to $format.',
