@@ -13,6 +13,7 @@
 - An unknown command exits with 64 instead of 0.
 - The package declares its `activity_files` executable, so `dart pub global activate activity_files` installs the command.
 - The usage guide's `dart run activity_files:activity_files.dart` examples, which could not run, are now `dart run activity_files`.
+- `example/assets/sample.gpx` no longer writes `<metadata>`'s `<time>` before `<name>`/`<desc>`.
 
 ## 0.8.3
 ### Fixed
