@@ -39,6 +39,7 @@ Future<void> main(List<String> arguments) async {
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show usage.');
 
   final convertParser = ArgParser()
+    ..addFlag('help', abbr: 'h', negatable: false, help: 'Show usage.')
     ..addOption(
       'from',
       allowed: ['gpx', 'tcx', 'fit', 'csv', 'geojson'],
@@ -53,8 +54,8 @@ Future<void> main(List<String> arguments) async {
     ..addOption('output', abbr: 'o', help: 'Output file path.')
     ..addOption(
       'encoding',
-      help: 'Text encoding for GPX/TCX/CSV/GeoJSON inputs (default utf8).',
-      defaultsTo: 'utf8',
+      help: 'Text encoding for GPX/TCX/CSV/GeoJSON inputs.',
+      defaultsTo: 'utf-8',
     )
     ..addOption(
       'max-delta-seconds',
@@ -98,12 +99,18 @@ Future<void> main(List<String> arguments) async {
     );
 
   final validateParser = ArgParser()
+    ..addFlag('help', abbr: 'h', negatable: false, help: 'Show usage.')
     ..addOption(
       'format',
       allowed: ['gpx', 'tcx', 'fit', 'csv', 'geojson'],
       help: 'Format to validate.',
     )
     ..addOption('input', abbr: 'i', help: 'Input file path.')
+    ..addOption(
+      'encoding',
+      help: 'Text encoding for GPX/TCX/CSV/GeoJSON inputs.',
+      defaultsTo: 'utf-8',
+    )
     ..addOption(
       'gap-threshold',
       help: 'Warn when gaps exceed this many seconds (default 300).',
@@ -122,23 +129,41 @@ Future<void> main(List<String> arguments) async {
     return;
   }
 
+  if (results.command == null && results.rest.isNotEmpty) {
+    _printError('Unknown command: ${results.rest.first}');
+    _printUsage(parser);
+    exitCode = 64;
+    return;
+  }
   if (results['help'] == true || results.command == null) {
     _printUsage(parser);
     return;
   }
 
-  switch (results.command!.name) {
-    case 'convert':
-      await _handleConvert(results.command!);
-      break;
-    case 'validate':
-      await _handleValidate(results.command!);
-      break;
-    default:
-      _printError('Unknown command: ${results.command!.name}');
-      _printUsage(parser);
-      exitCode = 64;
+  final command = results.command!;
+  if (command['help'] == true) {
+    _printCommandUsage(command.name!, parser.commands[command.name]!);
+    return;
   }
+
+  try {
+    switch (command.name) {
+      case 'convert':
+        await _handleConvert(command);
+      case 'validate':
+        await _handleValidate(command);
+    }
+  } on _UsageException catch (e) {
+    _printError(e.message);
+    exitCode = 64;
+  }
+}
+
+/// An invalid command-line value; reported with exit code 64.
+class _UsageException implements Exception {
+  _UsageException(this.message);
+
+  final String message;
 }
 
 Future<void> _handleConvert(ArgResults command) async {
@@ -146,10 +171,6 @@ Future<void> _handleConvert(ArgResults command) async {
   final outputPath = command['output'] as String?;
   final fromFormat = _parseFormat(command['from'] as String?);
   final toFormat = _parseFormat(command['to'] as String?);
-  final encodingName = (command['encoding'] as String?)?.trim();
-  final encoding = encodingName == null || encodingName.isEmpty
-      ? utf8
-      : Encoding.getByName(encodingName.toLowerCase());
 
   if (inputPath == null ||
       outputPath == null ||
@@ -159,11 +180,7 @@ Future<void> _handleConvert(ArgResults command) async {
     exitCode = 64;
     return;
   }
-  if (encoding == null) {
-    _printError('Unknown encoding "$encodingName".');
-    exitCode = 64;
-    return;
-  }
+  final encoding = _encodingOption(command);
 
   final inputFile = File(inputPath);
   if (!inputFile.existsSync()) {
@@ -241,26 +258,31 @@ Future<void> _handleValidate(ArgResults command) async {
     return;
   }
 
-  final gapSeconds = double.tryParse(command['gap-threshold'] as String? ?? '');
-  final gapThreshold = gapSeconds != null && gapSeconds > 0
-      ? Duration(milliseconds: (gapSeconds * 1000).round())
-      : const Duration(minutes: 5);
+  final encoding = _encodingOption(command);
+  final gapThreshold =
+      _secondsOption(command, 'gap-threshold', allowZero: false) ??
+      const Duration(minutes: 5);
 
-  final parserDiagnostics = <ParseDiagnostic>[];
   try {
-    final payload = format == ActivityFileFormat.fit
-        ? inputFile.readAsBytesSync()
-        : inputFile.readAsStringSync();
-    final parseResult = payload is List<int>
-        ? ActivityParser.parseBytes(payload, format)
-        : ActivityParser.parse(payload as String, format);
-    parserDiagnostics.addAll(parseResult.diagnostics);
-    final validation = validateRawActivity(
+    final parseResult = await ActivityFiles.import(
+      inputFile.readAsBytesSync(),
+      format: format,
+      encoding: encoding,
+      useIsolate: false,
+    );
+    final validation = ActivityFiles.validate(
       parseResult.activity,
       gapWarningThreshold: gapThreshold,
     );
 
-    _printDiagnostics(parserDiagnostics);
+    _printDiagnostics(parseResult.diagnostics);
+    if (parseResult.diagnostics.any(
+      (diagnostic) => diagnostic.severity == ParseSeverity.error,
+    )) {
+      stdout.writeln('Validation failed: the file could not be read.');
+      exitCode = 65;
+      return;
+    }
     if (validation.errors.isEmpty) {
       stdout.writeln(
         'Validation passed (${parseResult.activity.points.length} points).',
@@ -311,37 +333,21 @@ ActivityFileFormat? _parseFormat(String? value) {
 }
 
 EncoderOptions _buildEncoderOptions(ArgResults command) {
-  final defaultDeltaSeconds = double.tryParse(
-    command['max-delta-seconds'] as String? ?? '',
-  );
-  final defaultDelta = defaultDeltaSeconds != null && defaultDeltaSeconds >= 0
-      ? Duration(milliseconds: (defaultDeltaSeconds * 1000).round())
-      : const Duration(seconds: 5);
-
-  final precisionLatLon =
-      int.tryParse(command['precision-latlon'] as String? ?? '') ?? 6;
-  final precisionEle =
-      int.tryParse(command['precision-ele'] as String? ?? '') ?? 2;
+  final defaultDelta =
+      _secondsOption(command, 'max-delta-seconds') ??
+      const Duration(seconds: 5);
+  final precisionLatLon = _digitsOption(command, 'precision-latlon') ?? 6;
+  final precisionEle = _digitsOption(command, 'precision-ele') ?? 2;
   final gpxVersionRaw = (command['gpx-version'] as String? ?? '').trim();
   final gpxVersion = gpxVersionRaw == '1.0' ? GpxVersion.v1_0 : GpxVersion.v1_1;
   final tcxVersionRaw = (command['tcx-version'] as String? ?? '').trim();
   final tcxVersion = tcxVersionRaw == '1' ? TcxVersion.v1 : TcxVersion.v2;
 
-  Duration? parseChannelDelta(String? value) {
-    final seconds = double.tryParse(value ?? '');
-    if (seconds == null || seconds < 0) {
-      return null;
-    }
-    return Duration(milliseconds: (seconds * 1000).round());
-  }
-
   final overrides = <Channel, Duration>{};
-  final hrDelta = parseChannelDelta(command['hr-max-delta'] as String?);
-  final cadenceDelta = parseChannelDelta(
-    command['cadence-max-delta'] as String?,
-  );
-  final powerDelta = parseChannelDelta(command['power-max-delta'] as String?);
-  final tempDelta = parseChannelDelta(command['temp-max-delta'] as String?);
+  final hrDelta = _secondsOption(command, 'hr-max-delta');
+  final cadenceDelta = _secondsOption(command, 'cadence-max-delta');
+  final powerDelta = _secondsOption(command, 'power-max-delta');
+  final tempDelta = _secondsOption(command, 'temp-max-delta');
 
   if (hrDelta != null) overrides[Channel.heartRate] = hrDelta;
   if (cadenceDelta != null) overrides[Channel.cadence] = cadenceDelta;
@@ -363,7 +369,65 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('Commands:');
   stdout.writeln('  convert   Convert between gpx/tcx/fit/csv/geojson');
   stdout.writeln('  validate  Validate an activity file');
-  stdout.writeln('\nUse --help with a command to see additional options.');
+  stdout.writeln(
+    '\nRun "activity_files <command> --help" to see the options of a command.',
+  );
+}
+
+void _printCommandUsage(String name, ArgParser parser) {
+  stdout.writeln('Usage: activity_files $name [options]');
+  stdout.writeln(parser.usage);
+}
+
+/// Reads `--encoding`; an unknown name is a usage error.
+Encoding _encodingOption(ArgResults command) {
+  final name = (command['encoding'] as String?)?.trim() ?? '';
+  if (name.isEmpty) {
+    return utf8;
+  }
+  final encoding = _encodingByName(name);
+  if (encoding == null) {
+    throw _UsageException('Unknown encoding "$name".');
+  }
+  return encoding;
+}
+
+/// Reads a duration given in seconds, or null when the option is absent.
+Duration? _secondsOption(
+  ArgResults command,
+  String name, {
+  bool allowZero = true,
+}) {
+  final raw = (command[name] as String?)?.trim();
+  if (raw == null) {
+    return null;
+  }
+  final seconds = double.tryParse(raw);
+  if (seconds == null ||
+      !seconds.isFinite ||
+      seconds < 0 ||
+      (!allowZero && seconds == 0)) {
+    throw _UsageException(
+      '--$name must be ${allowZero ? 'zero or more' : 'more than zero'} '
+      'seconds, got "$raw".',
+    );
+  }
+  return Duration(milliseconds: (seconds * 1000).round());
+}
+
+/// Reads a number of fractional digits (0 to 20), or null when absent.
+int? _digitsOption(ArgResults command, String name) {
+  final raw = (command[name] as String?)?.trim();
+  if (raw == null) {
+    return null;
+  }
+  final digits = int.tryParse(raw);
+  if (digits == null || digits < 0 || digits > 20) {
+    throw _UsageException(
+      '--$name must be a whole number from 0 to 20, got "$raw".',
+    );
+  }
+  return digits;
 }
 
 void _printDiagnostics(
@@ -387,6 +451,13 @@ void _printDiagnostics(
     );
     stdout.writeln('      ${diagnostic.message}');
   }
+}
+
+/// Resolves an `--encoding` value by its IANA name, also accepting `utf8`,
+/// which `Encoding.getByName` does not know.
+Encoding? _encodingByName(String name) {
+  final normalized = name.toLowerCase();
+  return normalized == 'utf8' ? utf8 : Encoding.getByName(normalized);
 }
 
 void _printError(String message) {

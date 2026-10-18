@@ -4,6 +4,16 @@
 - Requires Dart 3.10.1, which `csv` 8 already needed; the previous `^3.9.0` could never resolve.
 - No longer depends on `async`.
 
+### Fixed
+- The command-line `convert` no longer fails with `Unknown encoding "utf8"` unless `--encoding` is given; it defaults to `utf-8` and accepts `utf8` too.
+- The command-line `validate` no longer passes a file the parser rejects; it exits with 65.
+- The command-line `validate` takes `--encoding` like `convert`.
+- `activity_files <command> --help` lists the command's options.
+- The command line rejects invalid option values with exit code 64 instead of using the default or crashing.
+- An unknown command exits with 64 instead of 0.
+- The package declares its `activity_files` executable, so `dart pub global activate activity_files` installs the command.
+- The usage guide's `dart run activity_files:activity_files.dart` examples, which could not run, are now `dart run activity_files`.
+
 ## 0.8.3
 ### Fixed
 - `RawEditor.markLapsByDistance()` no longer runs out of memory on a non-finite or corrupt distance sample; it stops at 100,000 laps now.

@@ -884,18 +884,18 @@ diagnostics handling end to end.
 Run the bundled converter/validator directly from your project:
 
 ```shell
-dart run activity_files:activity_files.dart convert \
+dart run activity_files convert \
   --from gpx --to tcx -i ride.gpx -o ride.tcx \
   --max-delta-seconds 2 --precision-latlon 7 --hr-max-delta 1 \
   --encoding latin1
 
-dart run activity_files:activity_files.dart convert \
+dart run activity_files convert \
   --from gpx --to gpx -i legacy.gpx -o legacy-1-0.gpx --gpx-version 1.0
 
-dart run activity_files:activity_files.dart convert \
+dart run activity_files convert \
   --from tcx --to tcx -i legacy.tcx -o legacy-v1.tcx --tcx-version 1
 
-dart run activity_files:activity_files.dart validate \
+dart run activity_files validate \
   --format gpx -i ride.gpx --gap-threshold 180
 ```
 
@@ -903,7 +903,8 @@ dart run activity_files:activity_files.dart validate \
 `geojson`) as `--from`/`--to`; `validate` accepts the same set via `--format`.
 
 Prefer a global install? Activate the package once (`dart pub global activate activity_files`)
-and invoke it via `dart pub global run activity_files:activity_files.dart ...`.
+and run `activity_files ...` directly. `activity_files <command> --help` lists the options of
+each command.
 The CLI reports parser diagnostics, validation warnings, and exits with a non-zero
 status when conversion/validation errors occur. Use `--encoding` for non-UTF8 GPX/TCX/CSV/GeoJSON
 inputs. FIT inputs/outputs are handled as raw binary files by default (the string

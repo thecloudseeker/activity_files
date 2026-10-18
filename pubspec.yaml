@@ -11,6 +11,9 @@ topics:
   - converter
   - sports
 
+executables:
+  activity_files: activity_files
+
 environment:
   sdk: ^3.10.1
 
