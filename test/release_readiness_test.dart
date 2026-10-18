@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'dart:io';
+
+import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
-import 'package:activity_files/activity_files.dart';
 
 void main() {
   test('pubspec.yaml has semantic version', () {

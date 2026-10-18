@@ -1533,7 +1533,7 @@ DateTime? _decodeTimestamp(Object? raw) {
   // - Min: 1989-12-31 00:00:01 = 1 second (allow from epoch start)
   // - Max: 2050-12-31 = ~1924992000 seconds
   // This filters obviously corrupted data while allowing valid activities.
-  if (seconds < 1 || seconds > 1924992000) {
+  if (seconds < 1 || seconds > 1_924_992_000) {
     return null;
   }
   return fitEpoch.add(Duration(seconds: seconds));
@@ -1628,11 +1628,11 @@ List<GeoPoint> _filterContiguousPoints(
   // rather than silently dropped.
   var flaggedEdgeAnomalies = 0;
   if (currentGroup.length >= 2) {
-    if (haversineMeters(currentGroup[0], currentGroup[1]) > 100000) {
+    if (haversineMeters(currentGroup[0], currentGroup[1]) > 100_000) {
       flaggedEdgeAnomalies++;
     }
     final last = currentGroup.length - 1;
-    if (haversineMeters(currentGroup[last], currentGroup[last - 1]) > 100000) {
+    if (haversineMeters(currentGroup[last], currentGroup[last - 1]) > 100_000) {
       flaggedEdgeAnomalies++;
     }
   }

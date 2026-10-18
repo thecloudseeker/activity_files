@@ -3,36 +3,35 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:async/async.dart';
 import '../channel_mapper.dart';
 import '../encode/activity_encoder.dart';
+import '../encode/csv_encoder.dart';
 import '../encode/encoder_options.dart';
 import '../encode/encoder_utils.dart';
-import '../encode/csv_encoder.dart';
 import '../encode/geojson_encoder.dart';
 import '../fit/fit_epoch.dart';
-import '../platform/file_system.dart' as file_system;
-import '../platform/isolate_runner.dart' as isolate_runner;
 import '../models.dart';
 import '../parse/activity_parser.dart';
 import '../parse/csv_parser.dart';
 import '../parse/geojson_parser.dart';
 import '../parse/parse_result.dart';
+import '../pipeline_options.dart';
+import '../platform/file_system.dart' as file_system;
+import '../platform/isolate_runner.dart' as isolate_runner;
 import '../transforms.dart';
 import '../validation.dart';
 import 'activity_export_request.dart';
 import 'export_serialization.dart';
 import 'export_stats.dart';
-import '../pipeline_options.dart';
 
-part 'facade/export_request_internals.dart';
-part 'facade/import_internals.dart';
-part 'facade/transform_internals.dart';
 part 'facade/edit_internals.dart';
-part 'facade/helpers_internals.dart';
 part 'facade/export_internals.dart';
-part 'facade/results.dart';
+part 'facade/export_request_internals.dart';
+part 'facade/helpers_internals.dart';
+part 'facade/import_internals.dart';
 part 'facade/raw_activity_builder.dart';
+part 'facade/results.dart';
+part 'facade/transform_internals.dart';
 
 /// Callback used to translate arbitrary identifiers into [Sport] values.
 typedef SportMapper = Sport? Function(dynamic source);
@@ -295,16 +294,14 @@ class ActivityFiles {
     bool useIsolate = true,
   }) async {
     if (!useIsolate) {
-      return Future.value(
-        export(
-          activity: activity,
-          to: to,
-          options: options,
-          normalize: normalize,
-          diagnostics: diagnostics,
-          runValidation: runValidation,
-          validation: validation,
-        ),
+      return export(
+        activity: activity,
+        to: to,
+        options: options,
+        normalize: normalize,
+        diagnostics: diagnostics,
+        runValidation: runValidation,
+        validation: validation,
       );
     }
     final request = <String, Object?>{

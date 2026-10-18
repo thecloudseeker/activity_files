@@ -1,7 +1,7 @@
 name: activity_files
 description: >
   A pure Dart toolkit for parsing, editing, validating, and converting workout activity files in GPX, TCX, FIT, GeoJSON, and CSV formats.
-version: 0.8.3
+version: 0.8.4
 repository: https://github.com/thecloudseeker/activity_files
 issue_tracker: https://github.com/thecloudseeker/activity_files/issues
 topics:
@@ -11,11 +11,13 @@ topics:
   - converter
   - sports
 
+executables:
+  activity_files: activity_files
+
 environment:
-  sdk: ^3.9.0
+  sdk: ^3.10.1
 
 dependencies:
-  async: ^2.13.1
   args: ^2.7.0
   collection: ^1.19.1
   xml: ">=6.6.1 <8.0.0"

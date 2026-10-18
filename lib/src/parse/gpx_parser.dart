@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import '../geo_math.dart';
 import 'package:xml/xml.dart';
+
+import '../geo_math.dart';
 import '../models.dart';
 import 'activity_parser.dart';
 import 'parse_result.dart';

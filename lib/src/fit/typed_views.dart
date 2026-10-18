@@ -69,7 +69,7 @@ class FitTypedActivityView {
       return null;
     }
     Sample? best;
-    var bestDelta = Duration(days: 36500);
+    var bestDelta = Duration(days: 36_500);
     for (final sample in samples) {
       final delta = sample.time.difference(time).abs();
       if (delta < bestDelta) {

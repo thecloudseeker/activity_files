@@ -1330,7 +1330,7 @@ class RawEditor {
 
 // Upper bound on the laps markLapsByDistance generates; far above any real
 // activity, low enough that a corrupt distance value stays cheap.
-const _maxDistanceSplits = 100000;
+const _maxDistanceSplits = 100_000;
 
 bool _isSortedBy<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {

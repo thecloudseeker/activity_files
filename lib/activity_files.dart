@@ -3,9 +3,8 @@
 /// Activity files parsing, editing, and encoding toolkit.
 library;
 
-export 'src/api/activity_files_facade.dart';
 export 'src/api/activity_export_request.dart';
-export 'src/pipeline_options.dart';
+export 'src/api/activity_files_facade.dart';
 export 'src/channel_mapper.dart';
 export 'src/convert/converter.dart';
 export 'src/encode/activity_encoder.dart' show ActivityEncoder;
@@ -23,6 +22,7 @@ export 'src/parse/parse_result.dart'
         DiagnosticsFormatter,
         ActivityParseResult,
         DiagnosticCategory;
+export 'src/pipeline_options.dart';
 export 'src/transforms.dart';
 export 'src/validation.dart'
     show
