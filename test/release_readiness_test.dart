@@ -111,7 +111,7 @@ void main() {
             : filename.endsWith('.tcx')
             ? ActivityFileFormat.tcx
             : ActivityFileFormat.fit;
-        final result = await ActivityFiles.load(
+        final result = await ActivityFiles.import(
           bytes,
           format: format,
           useIsolate: false,

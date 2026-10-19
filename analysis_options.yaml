@@ -1,11 +1,18 @@
 include: package:lints/recommended.yaml
 
+analyzer:
+  errors:
+    # Fails the build on any use of a deprecated member of this package,
+    # docs examples included; deprecated code paths carry an explicit ignore.
+    deprecated_member_use_from_same_package: warning
+
 linter:
   rules:
     - no_dynamic_casts
     - no_raw_types
     - async_return_with_no_await
     - remove_deprecations_in_breaking_versions
+    - deprecated_member_use_from_same_package
     - directives_ordering
 
 # Additional information about this file can be found at

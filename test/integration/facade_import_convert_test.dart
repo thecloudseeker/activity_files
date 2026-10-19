@@ -19,8 +19,8 @@ import '../helpers/stream_helpers.dart';
 
 void main() {
   group('Facade convenience', () {
-    test('load infers GPX format from inline content', () async {
-      final result = await ActivityFiles.load(sampleGpx, useIsolate: false);
+    test('import infers GPX format from inline content', () async {
+      final result = await ActivityFiles.import(sampleGpx, useIsolate: false);
       expect(result.format, equals(ActivityFileFormat.gpx));
       expect(result.activity.points.length, equals(3));
       expect(result.diagnostics, isEmpty);
@@ -105,10 +105,10 @@ void main() {
     });
 
     test(
-      'load detects UTF-16 GPX payloads without misclassification',
+      'import detects UTF-16 GPX payloads without misclassification',
       () async {
         final encoded = encodeUtf16LeWithBom(sampleGpx);
-        final result = await ActivityFiles.load(
+        final result = await ActivityFiles.import(
           Uint8List.fromList(encoded),
           useIsolate: false,
         );
@@ -117,8 +117,10 @@ void main() {
       },
     );
 
-    test('load decodes Latin-1 byte payloads when encoding provided', () async {
-      const gpxWithAccents = '''
+    test(
+      'import decodes Latin-1 byte payloads when encoding provided',
+      () async {
+        const gpxWithAccents = '''
 <?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Latiné Device" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
@@ -131,17 +133,18 @@ void main() {
   </trk>
 </gpx>
 ''';
-      final bytes = Uint8List.fromList(latin1.encode(gpxWithAccents));
+        final bytes = Uint8List.fromList(latin1.encode(gpxWithAccents));
 
-      final result = await ActivityFiles.load(
-        bytes,
-        useIsolate: false,
-        encoding: latin1,
-      );
+        final result = await ActivityFiles.import(
+          bytes,
+          useIsolate: false,
+          encoding: latin1,
+        );
 
-      expect(result.activity.points, isNotEmpty);
-      expect(result.activity.creator, equals('Latiné Device'));
-    });
+        expect(result.activity.points, isNotEmpty);
+        expect(result.activity.creator, equals('Latiné Device'));
+      },
+    );
 
     test('convert supports export isolation', () async {
       final conversion = await ActivityFiles.convert(
@@ -155,32 +158,13 @@ void main() {
       expect(conversion.processingStats.normalization, isNotNull);
     });
 
-    test('convertAndExport enforces mutually exclusive inputs', () async {
-      final ts = DateTime.utc(2024, 5, 1).millisecondsSinceEpoch;
-      final location = [
-        (timestamp: ts, latitude: 40.0, longitude: -105.0, elevation: 1600.0),
-      ];
-      await expectLater(
-        () => ActivityFiles.convertAndExport(
-          source: sampleGpx,
-          location: location,
-          to: ActivityFileFormat.gpx,
-        ),
-        throwsArgumentError,
-      );
-      await expectLater(
-        () => ActivityFiles.convertAndExport(to: ActivityFileFormat.gpx),
-        throwsArgumentError,
-      );
-    });
-
-    test('load and convert accept chunked stream sources', () async {
+    test('import and convert accept chunked stream sources', () async {
       final bytes = utf8.encode(sampleGpx);
       final stream = Stream<List<int>>.fromIterable([
         bytes.sublist(0, bytes.length ~/ 2),
         bytes.sublist(bytes.length ~/ 2),
       ]);
-      final loaded = await ActivityFiles.load(stream, useIsolate: false);
+      final loaded = await ActivityFiles.import(stream, useIsolate: false);
       expect(loaded.format, equals(ActivityFileFormat.gpx));
       expect(loaded.activity.points.length, equals(3));
 
@@ -198,25 +182,28 @@ void main() {
       expect(conversion.asBytes().length, greaterThan(0));
     });
 
-    test('load detects format from fragmented streams without hints', () async {
-      final bytes = utf8.encode(sampleGpx);
-      final stream = Stream<List<int>>.fromIterable([
-        bytes.sublist(0, 3),
-        bytes.sublist(3, 25),
-        bytes.sublist(25),
-      ]);
+    test(
+      'import detects format from fragmented streams without hints',
+      () async {
+        final bytes = utf8.encode(sampleGpx);
+        final stream = Stream<List<int>>.fromIterable([
+          bytes.sublist(0, 3),
+          bytes.sublist(3, 25),
+          bytes.sublist(25),
+        ]);
 
-      final loaded = await ActivityFiles.load(stream, useIsolate: false);
+        final loaded = await ActivityFiles.import(stream, useIsolate: false);
 
-      expect(loaded.format, equals(ActivityFileFormat.gpx));
-      expect(loaded.activity.points, isNotEmpty);
-    });
+        expect(loaded.format, equals(ActivityFileFormat.gpx));
+        expect(loaded.activity.points, isNotEmpty);
+      },
+    );
 
-    test('load subscribes to stream sources only once', () async {
+    test('import subscribes to stream sources only once', () async {
       final bytes = utf8.encode(sampleGpx);
       final stream = CountingStream([bytes.sublist(0, 40), bytes.sublist(40)]);
 
-      final loaded = await ActivityFiles.load(stream, useIsolate: false);
+      final loaded = await ActivityFiles.import(stream, useIsolate: false);
 
       expect(loaded.activity.points, isNotEmpty);
       expect(stream.listenCount, equals(1));
@@ -237,14 +224,14 @@ void main() {
       expect(result.activity.points, isEmpty);
     });
 
-    test('load exposes payload bytes for stream-backed sources', () async {
+    test('import exposes payload bytes for stream-backed sources', () async {
       final bytes = utf8.encode(sampleGpx);
       final stream = Stream<List<int>>.fromIterable([
         bytes.sublist(0, 15),
         bytes.sublist(15),
       ]);
 
-      final loaded = await ActivityFiles.load(stream, useIsolate: false);
+      final loaded = await ActivityFiles.import(stream, useIsolate: false);
 
       expect(loaded.bytesPayload, isNotNull);
       expect(loaded.bytesPayload, orderedEquals(bytes));
@@ -260,12 +247,15 @@ void main() {
           bytes.sublist(20, 60),
           bytes.sublist(60),
         ]);
-        final loaded = await ActivityFiles.load(stream, useIsolate: false);
+        final loaded = await ActivityFiles.import(stream, useIsolate: false);
         final payload = loaded.bytesPayload;
         expect(payload, isNotNull);
         expect(payload, orderedEquals(bytes));
 
-        final reparsed = await ActivityFiles.load(payload!, useIsolate: false);
+        final reparsed = await ActivityFiles.import(
+          payload!,
+          useIsolate: false,
+        );
         expect(reparsed.format, equals(ActivityFileFormat.gpx));
         expect(
           reparsed.activity.points.length,
@@ -274,30 +264,27 @@ void main() {
       },
     );
 
-    test(
-      'convertAndExport accepts File sources with auto-detected format',
-      () async {
-        final file = File('example/assets/sample.tcx');
-        final result = await ActivityFiles.convertAndExport(
-          source: file,
-          to: ActivityFileFormat.gpx,
-          useIsolate: false,
-          runValidation: true,
-        );
-        expect(result.targetFormat, equals(ActivityFileFormat.gpx));
-        expect(result.activity.points, isNotEmpty);
-        expect(result.validation, isNotNull);
-        expect(result.asString(), contains('<gpx'));
-      },
-    );
+    test('convert accepts File sources with auto-detected format', () async {
+      final file = File('example/assets/sample.tcx');
+      final result = await ActivityFiles.convert(
+        source: file,
+        to: ActivityFileFormat.gpx,
+        useIsolate: false,
+        runValidation: true,
+      );
+      expect(result.targetFormat, equals(ActivityFileFormat.gpx));
+      expect(result.activity.points, isNotEmpty);
+      expect(result.validation, isNotNull);
+      expect(result.asString(), contains('<gpx'));
+    });
 
-    test('load requires allowFilePaths for string paths', () async {
+    test('import requires allowFilePaths for string paths', () async {
       final path = 'example/assets/sample.gpx';
       await expectLater(
-        () => ActivityFiles.load(path, useIsolate: false),
+        () => ActivityFiles.import(path, useIsolate: false),
         throwsArgumentError,
       );
-      final allowed = await ActivityFiles.load(
+      final allowed = await ActivityFiles.import(
         path,
         useIsolate: false,
         allowFilePaths: true,
@@ -358,9 +345,9 @@ void main() {
       expect(conversion.processingStats.validationDuration, isNotNull);
     });
 
-    test('load surfaces malformed GPX payloads as diagnostics', () async {
+    test('import surfaces malformed GPX payloads as diagnostics', () async {
       const malformed = '<gpx version="1.1"><trk><trkseg></gpx';
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         malformed,
         format: ActivityFileFormat.gpx,
         useIsolate: false,
@@ -373,10 +360,10 @@ void main() {
       expect(result.activity.points, isEmpty);
     });
 
-    test('load surfaces malformed TCX payloads as diagnostics', () async {
+    test('import surfaces malformed TCX payloads as diagnostics', () async {
       const malformed =
           '<TrainingCenterDatabase><Activities></TrainingCenterDatabase';
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         malformed,
         format: ActivityFileFormat.tcx,
         useIsolate: false,
@@ -389,9 +376,9 @@ void main() {
       expect(result.activity.points, isEmpty);
     });
 
-    test('load surfaces invalid FIT binaries as diagnostics', () async {
+    test('import surfaces invalid FIT binaries as diagnostics', () async {
       final invalid = Uint8List.fromList(List<int>.filled(16, 0));
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         invalid,
         format: ActivityFileFormat.fit,
         useIsolate: false,
@@ -421,14 +408,14 @@ void main() {
       );
     });
 
-    test('convertAndExport builds activities from raw streams', () async {
+    test('buildAndExport builds activities from raw streams', () async {
       final baseTime = DateTime.utc(2024, 5, 3, 7);
       final ts0 = baseTime.millisecondsSinceEpoch;
       final device = ActivityDeviceMetadata(
         manufacturer: 'Withings',
         model: 'ScanWatch',
       );
-      final export = await ActivityFiles.convertAndExport(
+      final export = await ActivityFiles.buildAndExport(
         location: [
           (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
           (
@@ -452,9 +439,11 @@ void main() {
         gpxMetadataDescription: 'Withings export',
         includeCreatorInGpxMetadataDescription: false,
         gpxTrackType: 'Run',
-        metadataExtensions: [ActivityFiles.gpxActivityLabelNode('Morning Run')],
+        metadataExtensions: [
+          RawActivityBuilder.activityLabelNode('Morning Run'),
+        ],
         trackExtensions: [
-          ActivityFiles.gpxDeviceSummaryNode(device, extras: {'battery': 95}),
+          RawActivityBuilder.deviceSummaryNode(device, extras: {'battery': 95}),
         ],
         to: ActivityFileFormat.gpx,
         normalize: true,
@@ -481,7 +470,7 @@ void main() {
         name: 'Segment 1',
       );
 
-      final export = await ActivityFiles.convertAndExport(
+      final export = await ActivityFiles.buildAndExport(
         location: [
           (timestamp: ts0, latitude: 40.0, longitude: -105.0, elevation: 1600),
           (
@@ -715,7 +704,7 @@ void main() {
         }
       }
 
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         chunks(),
         format: ActivityFileFormat.gpx,
         useIsolate: false,
@@ -777,12 +766,12 @@ void main() {
         },
       );
 
-      test('convertStream() merges caller diagnostics too', () async {
-        final result = await ActivityFiles.convertStream(
+      test('convert() merges caller diagnostics for stream sources', () async {
+        final result = await ActivityFiles.convert(
           source: Stream.value(utf8.encode(sampleGpx)),
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.tcx,
-          parseInIsolate: false,
+          useIsolate: false,
           diagnostics: [seeded],
         );
         expect(

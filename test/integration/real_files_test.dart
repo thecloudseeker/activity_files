@@ -31,7 +31,7 @@ void main() {
         final detected = ActivityFiles.detectFormat(path, allowFilePaths: true);
         expect(detected, equals(entry.value));
 
-        final loaded = await ActivityFiles.load(
+        final loaded = await ActivityFiles.import(
           path,
           useIsolate: false,
           allowFilePaths: true,
@@ -51,18 +51,21 @@ void main() {
       }
     });
 
-    test('load handles FIT bytes and base64 payload', () async {
+    test('import handles FIT bytes and base64 payload', () async {
       final fitPath = await assetPath('sample.fit');
       final fitBytes = await File(fitPath).readAsBytes();
 
       final detectedBytes = ActivityFiles.detectFormat(fitBytes);
       expect(detectedBytes, equals(ActivityFileFormat.fit));
 
-      final bytesResult = await ActivityFiles.load(fitBytes, useIsolate: false);
+      final bytesResult = await ActivityFiles.import(
+        fitBytes,
+        useIsolate: false,
+      );
       expect(bytesResult.format, equals(ActivityFileFormat.fit));
 
       final base64Payload = base64Encode(fitBytes);
-      final base64Result = await ActivityFiles.load(
+      final base64Result = await ActivityFiles.import(
         base64Payload,
         useIsolate: false,
       );
@@ -73,10 +76,10 @@ void main() {
       );
     });
 
-    test('load enforces strict FIT integrity when requested', () async {
+    test('import enforces strict FIT integrity when requested', () async {
       final fitPath = await assetPath('sample.fit');
       final fitBytes = await File(fitPath).readAsBytes();
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         fitBytes,
         useIsolate: false,
         strictFitIntegrity: true,
@@ -86,7 +89,7 @@ void main() {
 
     test('convert can round-trip GPX fixture to FIT', () async {
       final gpxPath = await assetPath('sample.gpx');
-      final loaded = await ActivityFiles.load(
+      final loaded = await ActivityFiles.import(
         gpxPath,
         useIsolate: false,
         allowFilePaths: true,
@@ -100,7 +103,7 @@ void main() {
       );
       expect(conversion.isBinary, isTrue);
 
-      final roundTrip = await ActivityFiles.load(
+      final roundTrip = await ActivityFiles.import(
         conversion.asBytes(),
         useIsolate: false,
       );
@@ -114,12 +117,15 @@ void main() {
     test('example assets round-trip through normalization', () async {
       final gpxPath = await assetPath('sample.gpx');
       final gpxBytes = await File(gpxPath).readAsBytes();
-      final loaded = await ActivityFiles.load(
+      final loaded = await ActivityFiles.import(
         gpxBytes,
         format: ActivityFileFormat.gpx,
         useIsolate: false,
       );
-      final normalized = ActivityFiles.normalizeActivity(loaded.activity);
+      final normalized = ActivityFiles.export(
+        activity: loaded.activity,
+        to: ActivityFileFormat.gpx,
+      ).activity;
 
       expect(normalized.points, isNotEmpty);
       expect(
@@ -178,7 +184,7 @@ void main() {
         ActivityFileFormat.fit,
       ]) {
         final file = File('${dir.path}/clean_run.${format.name}');
-        final result = await ActivityFiles.load(
+        final result = await ActivityFiles.import(
           await file.readAsBytes(),
           format: format,
           useIsolate: false,
@@ -201,7 +207,7 @@ void main() {
 
         final gpxFile = File('${dir.path}/clean_run.gpx');
         final originalBytes = await gpxFile.readAsBytes();
-        final loaded = await ActivityFiles.load(
+        final loaded = await ActivityFiles.import(
           originalBytes,
           format: ActivityFileFormat.gpx,
           useIsolate: false,

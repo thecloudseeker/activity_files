@@ -366,6 +366,7 @@ class ActivityFiles {
       encoding: encoding,
       allowFilePaths: allowFilePaths,
       strictFitIntegrity: strictFitIntegrity,
+      // ignore: deprecated_member_use_from_same_package
       fitCorruptionHandling: fitCorruptionHandling,
       maxPayloadBytes: maxPayloadBytes,
     );

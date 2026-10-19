@@ -64,7 +64,7 @@ void main() {
           name: 'Bike',
         );
 
-      final merged = ActivityFiles.merge([
+      final merged = RawEditor.merge([
         swim.build(),
         bike.build(),
       ], normalize: true);
@@ -103,7 +103,7 @@ void main() {
           endTime: base.add(const Duration(minutes: 20)),
         );
 
-      final merged = ActivityFiles.merge([
+      final merged = RawEditor.merge([
         swim.build(),
         bike.build(),
       ], preserveSportPerLap: true);
@@ -118,14 +118,14 @@ void main() {
       final activity = ActivityFiles.builder()
         ..addPoint(latitude: 40.0, longitude: -105.0, time: base);
 
-      final merged = ActivityFiles.merge([activity.build()]);
+      final merged = RawEditor.merge([activity.build()]);
 
       expect(merged.points.length, equals(1));
       expect(identical(merged, activity.build()), isFalse);
     });
 
     test('merge rejects empty activity list', () {
-      expect(() => ActivityFiles.merge([]), throwsArgumentError);
+      expect(() => RawEditor.merge([]), throwsArgumentError);
     });
 
     test('merge supports custom creator and inherits first activity sport', () {
@@ -143,7 +143,7 @@ void main() {
           time: base.add(const Duration(minutes: 1)),
         );
 
-      final merged = ActivityFiles.merge([
+      final merged = RawEditor.merge([
         a1.build(),
         a2.build(),
       ], creator: 'multi-device-merger');
@@ -205,7 +205,7 @@ void main() {
         sport: Sport.other,
       );
 
-      final splits = ActivityFiles.splitBySport(triathlon);
+      final splits = RawEditor.splitBySport(triathlon);
 
       expect(splits.length, equals(2));
       expect(splits.containsKey(Sport.swimming), isTrue);
@@ -253,7 +253,7 @@ void main() {
         sport: Sport.running,
       );
 
-      final splits = ActivityFiles.splitBySport(activity);
+      final splits = RawEditor.splitBySport(activity);
 
       expect(splits.length, equals(1));
       expect(splits[Sport.running], isNotNull);
@@ -267,7 +267,7 @@ void main() {
         sport: Sport.cycling,
       );
 
-      final splits = ActivityFiles.splitBySport(activity);
+      final splits = RawEditor.splitBySport(activity);
 
       expect(splits.length, equals(1));
       expect(splits[Sport.cycling], isNotNull);
@@ -292,7 +292,7 @@ void main() {
           sport: Sport.walking,
         );
 
-        final splits = ActivityFiles.splitBySport(activity);
+        final splits = RawEditor.splitBySport(activity);
 
         expect(splits.length, equals(1));
         expect(splits.containsKey(Sport.walking), isTrue);
@@ -482,10 +482,10 @@ void main() {
       expect(result.activity.points, hasLength(1));
     });
 
-    test('load infers CSV format from inline content', () async {
+    test('import infers CSV format from inline content', () async {
       const csv =
           'timestamp,latitude,longitude,heart_rate\n2025-01-01T10:00:00Z,52.52,13.405,140';
-      final result = await ActivityFiles.load(csv, useIsolate: false);
+      final result = await ActivityFiles.import(csv, useIsolate: false);
       expect(result.format, equals(ActivityFileFormat.csv));
       expect(result.activity.points.length, equals(1));
       expect(
@@ -494,10 +494,10 @@ void main() {
       );
     });
 
-    test('load infers GeoJSON format from inline content', () async {
+    test('import infers GeoJSON format from inline content', () async {
       const geojson =
           '{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[13.405,52.52]},"properties":{"timestamp":"2025-01-01T10:00:00Z"}}]}';
-      final result = await ActivityFiles.load(geojson, useIsolate: false);
+      final result = await ActivityFiles.import(geojson, useIsolate: false);
       expect(result.format, equals(ActivityFileFormat.geojson));
       expect(result.activity.points.length, equals(1));
       expect(
@@ -521,7 +521,7 @@ void main() {
       ];
       final activity = RawActivity(points: points);
 
-      final cleaned = ActivityFiles.sortAndDedup(activity);
+      final cleaned = ActivityFiles.edit(activity).sortAndDedup().activity;
 
       expect(cleaned.points.length, equals(2));
     });
@@ -550,7 +550,9 @@ void main() {
       ];
       final activity = RawActivity(points: points);
 
-      final recomputed = ActivityFiles.recomputeDistanceAndSpeed(activity);
+      final recomputed = ActivityFiles.edit(
+        activity,
+      ).recomputeDistanceAndSpeed().activity;
 
       final distance = recomputed.channel(Channel.distance);
       expect(distance, isNotEmpty);
@@ -666,28 +668,31 @@ void main() {
   });
 
   group('FIT integrity checks', () {
-    test('load with strictFitIntegrity rejects corrupted FIT files', () async {
+    test(
+      'import with strictFitIntegrity rejects corrupted FIT files',
+      () async {
+        final bytes = await File('example/assets/sample.fit').readAsBytes();
+        final corrupted = Uint8List.fromList(bytes);
+        corrupted[corrupted.length - 1] ^= 0xFF;
+
+        await expectLater(
+          () => ActivityFiles.import(
+            corrupted,
+            format: ActivityFileFormat.fit,
+            useIsolate: false,
+            strictFitIntegrity: true,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      },
+    );
+
+    test('import without strictFitIntegrity tolerates CRC errors', () async {
       final bytes = await File('example/assets/sample.fit').readAsBytes();
       final corrupted = Uint8List.fromList(bytes);
       corrupted[corrupted.length - 1] ^= 0xFF;
 
-      await expectLater(
-        () => ActivityFiles.load(
-          corrupted,
-          format: ActivityFileFormat.fit,
-          useIsolate: false,
-          strictFitIntegrity: true,
-        ),
-        throwsA(isA<FormatException>()),
-      );
-    });
-
-    test('load without strictFitIntegrity tolerates CRC errors', () async {
-      final bytes = await File('example/assets/sample.fit').readAsBytes();
-      final corrupted = Uint8List.fromList(bytes);
-      corrupted[corrupted.length - 1] ^= 0xFF;
-
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         corrupted,
         format: ActivityFileFormat.fit,
         useIsolate: false,
@@ -697,44 +702,6 @@ void main() {
       expect(result.hasErrors, isTrue);
       expect(result.activity.points, isNotEmpty);
     });
-
-    test(
-      'load with strict fitCorruptionHandling rejects corrupted FIT files',
-      () async {
-        final bytes = await File('example/assets/sample.fit').readAsBytes();
-        final corrupted = Uint8List.fromList(bytes);
-        corrupted[corrupted.length - 1] ^= 0xFF;
-
-        await expectLater(
-          () => ActivityFiles.load(
-            corrupted,
-            format: ActivityFileFormat.fit,
-            useIsolate: false,
-            fitCorruptionHandling: FitCorruptionHandling.strict,
-          ),
-          throwsA(isA<FormatException>()),
-        );
-      },
-    );
-
-    test(
-      'load with bestEffort fitCorruptionHandling keeps parse result',
-      () async {
-        final bytes = await File('example/assets/sample.fit').readAsBytes();
-        final corrupted = Uint8List.fromList(bytes);
-        corrupted[corrupted.length - 1] ^= 0xFF;
-
-        final result = await ActivityFiles.load(
-          corrupted,
-          format: ActivityFileFormat.fit,
-          useIsolate: false,
-          fitCorruptionHandling: FitCorruptionHandling.bestEffort,
-        );
-
-        expect(result.hasErrors, isTrue);
-        expect(result.activity.points, isNotEmpty);
-      },
-    );
 
     test('convert applies auto-fix for invalid gps, drift, and gaps', () async {
       final base = DateTime.utc(2025, 1, 1, 10);
@@ -826,48 +793,6 @@ void main() {
       );
 
       expect(result.activity.laps.length, greaterThanOrEqualTo(2));
-      expect(
-        result.diagnostics.any((d) => d.code == 'autofix.laps.auto_generated'),
-        isTrue,
-      );
-    });
-
-    test('runPipeline fromActivity applies auto-lap autofix', () async {
-      final base = DateTime.utc(2025, 1, 3, 7);
-      final activity = RawActivity(
-        points: [
-          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
-          GeoPoint(
-            latitude: 40.009,
-            longitude: -105.0,
-            time: base.add(const Duration(minutes: 5)),
-          ),
-          GeoPoint(
-            latitude: 40.018,
-            longitude: -105.0,
-            time: base.add(const Duration(minutes: 10)),
-          ),
-        ],
-        sport: Sport.running,
-      );
-
-      final request = ActivityExportRequest.fromActivity(
-        activity: activity,
-        to: ActivityFileFormat.gpx,
-        runValidation: false,
-        autoFix: const ActivityAutoFixOptions(
-          fixInvalidGps: false,
-          fixChannelDrift: false,
-          fixDistanceDrift: false,
-          fixTimestampGaps: false,
-          autoLapByDistance: true,
-          runningLapDistanceMeters: 1000,
-        ),
-      );
-
-      final result = await ActivityFiles.runPipeline(request);
-
-      expect(result.activity.laps, isNotEmpty);
       expect(
         result.diagnostics.any((d) => d.code == 'autofix.laps.auto_generated'),
         isTrue,

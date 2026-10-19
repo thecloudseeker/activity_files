@@ -9,138 +9,6 @@ import 'package:test/test.dart';
 
 void main() {
   group('RawTransforms', () {
-    group('computeCumulativeDistance', () {
-      test('computes zero distance for single point', () {
-        final activity = RawActivity(
-          points: [
-            GeoPoint(
-              latitude: 40.0,
-              longitude: -105.0,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
-            ),
-          ],
-        );
-
-        final result = RawTransforms.computeCumulativeDistance(activity);
-
-        expect(result.totalDistance, equals(0.0));
-        final distChannel = result.activity.channel(Channel.distance);
-        expect(distChannel.length, equals(1));
-        expect(distChannel[0].value, equals(0.0));
-      });
-
-      test('computes distance between two points', () {
-        final activity = RawActivity(
-          points: [
-            GeoPoint(
-              latitude: 40.0,
-              longitude: -105.0,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
-            ),
-            GeoPoint(
-              latitude: 40.0005,
-              longitude: -105.0005,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
-            ),
-          ],
-        );
-
-        final result = RawTransforms.computeCumulativeDistance(activity);
-
-        expect(result.totalDistance, greaterThan(0));
-        expect(result.activity.channel(Channel.distance).length, equals(2));
-      });
-
-      test('computes cumulative distance', () {
-        final activity = RawActivity(
-          points: [
-            GeoPoint(
-              latitude: 40.0,
-              longitude: -105.0,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
-            ),
-            GeoPoint(
-              latitude: 40.0005,
-              longitude: -105.0005,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 5),
-            ),
-            GeoPoint(
-              latitude: 40.001,
-              longitude: -105.001,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
-            ),
-          ],
-        );
-
-        final result = RawTransforms.computeCumulativeDistance(activity);
-
-        final distChannel = result.activity.channel(Channel.distance);
-        expect(distChannel[0].value, equals(0.0));
-        expect(distChannel[1].value, greaterThan(0));
-        expect(distChannel[2].value, greaterThan(distChannel[1].value));
-        expect(result.totalDistance, equals(distChannel[2].value));
-      });
-
-      test('handles empty activity', () {
-        final activity = RawActivity();
-
-        final result = RawTransforms.computeCumulativeDistance(activity);
-
-        expect(result.totalDistance, equals(0.0));
-      });
-
-      test('adds distance channel to activity without existing distance', () {
-        final activity = RawActivity(
-          points: [
-            GeoPoint(
-              latitude: 40.0,
-              longitude: -105.0,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
-            ),
-            GeoPoint(
-              latitude: 40.0005,
-              longitude: -105.0005,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
-            ),
-          ],
-          channels: {
-            Channel.heartRate: [
-              Sample(time: DateTime.utc(2024, 1, 1, 10, 0, 0), value: 140),
-            ],
-          },
-        );
-
-        final result = RawTransforms.computeCumulativeDistance(activity);
-
-        expect(result.activity.channel(Channel.distance).isNotEmpty, isTrue);
-        expect(result.activity.channel(Channel.heartRate).isNotEmpty, isTrue);
-      });
-
-      test('uses haversine formula for distance', () {
-        // Denver, CO to Boulder, CO (approximate 45 km apart)
-        final activity = RawActivity(
-          points: [
-            GeoPoint(
-              latitude: 39.7392,
-              longitude: -104.9903,
-              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
-            ),
-            GeoPoint(
-              latitude: 40.0150,
-              longitude: -105.2705,
-              time: DateTime.utc(2024, 1, 1, 10, 30, 0),
-            ),
-          ],
-        );
-
-        final result = RawTransforms.computeCumulativeDistance(activity);
-
-        // Haversine formula should give approximately 45 km
-        expect(result.totalDistance, greaterThan(35000)); // at least 35 km
-        expect(result.totalDistance, lessThan(42000)); // less than 42 km
-      });
-    });
-
     group('resample', () {
       test('resamples activity to fixed time step', () {
         final activity = RawActivity(
@@ -320,6 +188,136 @@ void main() {
   });
 
   group('RawEditor', () {
+    group('recomputeDistanceAndSpeed distance', () {
+      test('writes no distance for a single point', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+        expect(result.channel(Channel.distance), isEmpty);
+      });
+
+      test('computes distance between two points', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.0005,
+              longitude: -105.0005,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+        final distance = result.channel(Channel.distance);
+        expect(distance.length, equals(2));
+        expect(distance.last.value, greaterThan(0));
+      });
+
+      test('computes cumulative distance', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.0005,
+              longitude: -105.0005,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 5),
+            ),
+            GeoPoint(
+              latitude: 40.001,
+              longitude: -105.001,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+        final distChannel = result.channel(Channel.distance);
+        expect(distChannel[0].value, equals(0.0));
+        expect(distChannel[1].value, greaterThan(0));
+        expect(distChannel[2].value, greaterThan(distChannel[1].value));
+      });
+
+      test('handles empty activity', () {
+        final activity = RawActivity();
+
+        final result = RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+        expect(result.channel(Channel.distance), isEmpty);
+      });
+
+      test('adds distance channel to activity without existing distance', () {
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 40.0,
+              longitude: -105.0,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.0005,
+              longitude: -105.0005,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 10),
+            ),
+          ],
+          channels: {
+            Channel.heartRate: [
+              Sample(time: DateTime.utc(2024, 1, 1, 10, 0, 0), value: 140),
+            ],
+          },
+        );
+
+        final result = RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+        expect(result.channel(Channel.distance).isNotEmpty, isTrue);
+        expect(result.channel(Channel.heartRate).isNotEmpty, isTrue);
+      });
+
+      test('uses haversine formula for distance', () {
+        // Denver, CO to Boulder, CO (approximate 45 km apart)
+        final activity = RawActivity(
+          points: [
+            GeoPoint(
+              latitude: 39.7392,
+              longitude: -104.9903,
+              time: DateTime.utc(2024, 1, 1, 10, 0, 0),
+            ),
+            GeoPoint(
+              latitude: 40.0150,
+              longitude: -105.2705,
+              time: DateTime.utc(2024, 1, 1, 10, 30, 0),
+            ),
+          ],
+        );
+
+        final result = RawEditor(activity).recomputeDistanceAndSpeed().activity;
+
+        // Haversine formula should give approximately 45 km
+        final total = result.channel(Channel.distance).last.value;
+        expect(total, greaterThan(35000)); // at least 35 km
+        expect(total, lessThan(42000)); // less than 42 km
+      });
+    });
+
     group('sortAndDedup', () {
       test('sorts points by time', () {
         final activity = RawActivity(

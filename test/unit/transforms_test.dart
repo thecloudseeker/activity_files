@@ -51,10 +51,12 @@ void main() {
         equals(activity.channel(Channel.heartRate).length),
       );
 
-      final (activity: withDistance, totalDistance: total) =
-          RawTransforms.computeCumulativeDistance(activity);
-      expect(withDistance.channel(Channel.distance), isNotEmpty);
-      expect(total, greaterThan(0));
+      final withDistance = RawEditor(
+        activity,
+      ).recomputeDistanceAndSpeed().activity;
+      final distance = withDistance.channel(Channel.distance);
+      expect(distance, isNotEmpty);
+      expect(distance.last.value, greaterThan(0));
     });
 
     test('markLapsByDistance computes split distances and remainder', () {

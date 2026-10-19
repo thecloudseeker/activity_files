@@ -16,7 +16,7 @@ import '../fixtures/sample_data.dart';
 
 void main() {
   group('Normalization optimization', () {
-    test('normalizeActivity short-circuits for already-normalized data', () {
+    test('normalization short-circuits for already-normalized data', () {
       final base = DateTime.utc(2024, 12, 5, 6);
       final activity = RawActivity(
         points: [
@@ -29,7 +29,10 @@ void main() {
         ],
       );
 
-      final normalized = ActivityFiles.normalizeActivity(activity);
+      final normalized = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.gpx,
+      ).activity;
 
       // Short-circuit optimization returns same object for already-normalized data
       expect(identical(normalized, activity), isTrue);
@@ -89,7 +92,7 @@ void main() {
 
   group('GPX extension helpers', () {
     test('gpxActivityLabelNode supports custom namespace', () {
-      final node = ActivityFiles.gpxActivityLabelNode(
+      final node = RawActivityBuilder.activityLabelNode(
         'Running',
         prefix: 'custom',
         namespaceUri: 'https://custom.example.com',
@@ -108,7 +111,7 @@ void main() {
         manufacturer: 'Garmin',
         model: 'Fenix 7',
       );
-      final node = ActivityFiles.gpxDeviceNode(
+      final node = RawActivityBuilder.deviceNode(
         device,
         extras: {'firmware': '12.34', 'batteryLevel': 85},
       );
@@ -133,7 +136,7 @@ void main() {
         model: 'ELEMNT BOLT',
         serialNumber: 'SN12345',
       );
-      final node = ActivityFiles.gpxDeviceSummaryNode(device);
+      final node = RawActivityBuilder.deviceSummaryNode(device);
 
       expect(node.name, equals('deviceSummary'));
       expect(
@@ -149,23 +152,23 @@ void main() {
   });
 
   group('Additional edge cases and coverage', () {
-    test('load handles File sources correctly', () async {
+    test('import handles File sources correctly', () async {
       final file = File('example/assets/sample.gpx');
-      final result = await ActivityFiles.load(file, useIsolate: false);
+      final result = await ActivityFiles.import(file, useIsolate: false);
       expect(result.format, equals(ActivityFileFormat.gpx));
       expect(result.activity.points, isNotEmpty);
     });
 
-    test('load handles Stream sources correctly', () async {
+    test('import handles Stream sources correctly', () async {
       final file = File('example/assets/sample.gpx');
       final stream = file.openRead();
-      final result = await ActivityFiles.load(stream, useIsolate: false);
+      final result = await ActivityFiles.import(stream, useIsolate: false);
       expect(result.format, equals(ActivityFileFormat.gpx));
       expect(result.activity.points, isNotEmpty);
     });
 
-    test('load with explicit format overrides detection', () async {
-      final result = await ActivityFiles.load(
+    test('import with explicit format overrides detection', () async {
+      final result = await ActivityFiles.import(
         sampleGpx,
         format: ActivityFileFormat.gpx,
         useIsolate: false,
@@ -231,47 +234,6 @@ void main() {
         unvalidated.diagnostics.where((d) => d.code.startsWith('validation.')),
         isEmpty,
       );
-    });
-
-    test('normalizeActivity with sortAndDedup=false skips sorting', () {
-      final base = DateTime.utc(2024, 12, 10, 7);
-      final activity = RawActivity(
-        points: [
-          GeoPoint(
-            latitude: 40.0,
-            longitude: -105.0,
-            time: base.add(const Duration(minutes: 1)),
-          ),
-          GeoPoint(latitude: 40.0, longitude: -105.0, time: base),
-        ],
-      );
-
-      final normalized = ActivityFiles.normalizeActivity(
-        activity,
-        sortAndDedup: false,
-        trimInvalid: false,
-      );
-
-      // Should return same object when no normalization requested
-      expect(identical(normalized, activity), isTrue);
-    });
-
-    test('normalizeActivity with trimInvalid=false skips trimming', () {
-      final base = DateTime.utc(2024, 12, 10, 8);
-      final activity = RawActivity(
-        points: [
-          GeoPoint(latitude: 200.0, longitude: -105.0, time: base), // invalid
-        ],
-      );
-
-      final normalized = ActivityFiles.normalizeActivity(
-        activity,
-        sortAndDedup: false,
-        trimInvalid: false,
-      );
-
-      expect(identical(normalized, activity), isTrue);
-      expect(normalized.points.first.latitude, equals(200.0));
     });
 
     test('validate returns structural validation result', () {
@@ -428,7 +390,7 @@ void main() {
     });
 
     test('ActivityImportResult provides payload', () async {
-      final result = await ActivityFiles.load(sampleGpx, useIsolate: false);
+      final result = await ActivityFiles.import(sampleGpx, useIsolate: false);
       expect(result.payload, isNotNull);
       expect(result.stringPayload, isNotNull);
       expect(result.stringPayload, equals(sampleGpx));
@@ -453,11 +415,11 @@ void main() {
       expect(activity.points.first.time, equals(base));
     });
 
-    test('convertAndExport from streams with all parameters', () async {
+    test('buildAndExport from streams with all parameters', () async {
       final base = DateTime.utc(2024, 12, 10, 15);
       final ts = base.millisecondsSinceEpoch;
 
-      final result = await ActivityFiles.convertAndExport(
+      final result = await ActivityFiles.buildAndExport(
         location: [
           (timestamp: ts, latitude: 40.0, longitude: -105.0, elevation: 1600),
           (
@@ -524,7 +486,7 @@ void main() {
           sport: Sport.hiking,
         );
 
-        final splits = ActivityFiles.splitBySport(activity);
+        final splits = RawEditor.splitBySport(activity);
 
         expect(splits.length, equals(1));
         expect(splits[Sport.hiking], isNotNull);
@@ -532,7 +494,7 @@ void main() {
     );
 
     test('gpxActivityLabelNode uses defaults', () {
-      final node = ActivityFiles.gpxActivityLabelNode('Test');
+      final node = RawActivityBuilder.activityLabelNode('Test');
 
       expect(
         node.namespacePrefix,
@@ -548,7 +510,7 @@ void main() {
   group('Error messages and diagnostics', () {
     test('format detection error message guides user', () {
       expect(
-        () => ActivityFiles.load('not a valid format', useIsolate: false),
+        () => ActivityFiles.import('not a valid format', useIsolate: false),
         throwsA(
           isA<ArgumentError>().having(
             (e) => e.message,
@@ -561,7 +523,7 @@ void main() {
 
     test('format detection error hints about allowFilePaths', () {
       expect(
-        () => ActivityFiles.load(
+        () => ActivityFiles.import(
           'example/assets/sample.gpx',
           allowFilePaths: false,
           useIsolate: false,
@@ -585,7 +547,7 @@ void main() {
       corrupted[corrupted.length - 1] ^= 0xFF;
 
       await expectLater(
-        () => ActivityFiles.load(
+        () => ActivityFiles.import(
           corrupted,
           format: ActivityFileFormat.fit,
           useIsolate: false,
@@ -608,7 +570,8 @@ void main() {
       'payload limit error message hints at streaming and maxPayloadBytes',
       () {
         expect(
-          () => ActivityFiles.load('x' * (65 * 1024 * 1024), useIsolate: false),
+          () =>
+              ActivityFiles.import('x' * (65 * 1024 * 1024), useIsolate: false),
           throwsA(
             isA<FormatException>().having(
               (e) => e.message,
@@ -637,7 +600,7 @@ void main() {
     test('FIT integrity and payload limit errors have actionable context', () {
       // Verify error message structure for limit exceeded
       expect(
-        () => ActivityFiles.load('x' * (65 * 1024 * 1024), useIsolate: false),
+        () => ActivityFiles.import('x' * (65 * 1024 * 1024), useIsolate: false),
         throwsA(
           isA<FormatException>().having(
             (e) => e.message,

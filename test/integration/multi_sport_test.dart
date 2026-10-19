@@ -380,7 +380,7 @@ void main() {
           sport: Sport.cycling,
         );
 
-        final merged = ActivityFiles.merge([swim, bike]);
+        final merged = RawEditor.merge([swim, bike]);
 
         expect(merged.points.length, 4);
         expect(merged.sport, Sport.swimming); // First activity's sport
@@ -434,10 +434,7 @@ void main() {
           sport: Sport.running,
         );
 
-        final merged = ActivityFiles.merge([
-          swim,
-          run,
-        ], preserveSportPerLap: true);
+        final merged = RawEditor.merge([swim, run], preserveSportPerLap: true);
 
         // Laps should now have sports from their source activities
         expect(merged.laps[0].sport, Sport.swimming);
@@ -457,7 +454,7 @@ void main() {
           sport: Sport.running,
         );
 
-        final merged = ActivityFiles.merge([activity]);
+        final merged = RawEditor.merge([activity]);
         expect(merged, same(activity));
       });
 
@@ -476,7 +473,7 @@ void main() {
           sport: Sport.running,
         );
 
-        final merged = ActivityFiles.merge([activity], normalize: true);
+        final merged = RawEditor.merge([activity], normalize: true);
 
         expect(
           merged.points.map((p) => p.time),
@@ -485,7 +482,7 @@ void main() {
       });
 
       test('merge throws on empty list', () {
-        expect(() => ActivityFiles.merge([]), throwsArgumentError);
+        expect(() => RawEditor.merge([]), throwsArgumentError);
       });
 
       test('splitBySport divides multi-sport activity', () {
@@ -535,7 +532,7 @@ void main() {
           sport: Sport.swimming,
         );
 
-        final splits = ActivityFiles.splitBySport(triathlon);
+        final splits = RawEditor.splitBySport(triathlon);
 
         expect(splits.length, 2);
         expect(splits.keys, containsAll([Sport.swimming, Sport.cycling]));
@@ -596,7 +593,7 @@ void main() {
           sport: Sport.swimming,
         );
 
-        final splits = ActivityFiles.splitBySport(triathlon, normalize: false);
+        final splits = RawEditor.splitBySport(triathlon, normalize: false);
 
         final swim = splits[Sport.swimming]!;
         final bike = splits[Sport.cycling]!;
@@ -630,7 +627,7 @@ void main() {
           sport: Sport.running,
         );
 
-        final splits = ActivityFiles.splitBySport(brick, normalize: false);
+        final splits = RawEditor.splitBySport(brick, normalize: false);
 
         final running = splits[Sport.running]!;
         final cycling = splits[Sport.cycling]!;
@@ -669,7 +666,7 @@ void main() {
           sport: Sport.running,
         );
 
-        final splits = ActivityFiles.splitBySport(activity, normalize: false);
+        final splits = RawEditor.splitBySport(activity, normalize: false);
 
         expect(
           splits[Sport.running]!.points.map((p) => p.time),
@@ -700,14 +697,14 @@ void main() {
           sport: Sport.running,
         );
 
-        final splits = ActivityFiles.splitBySport(activity);
+        final splits = RawEditor.splitBySport(activity);
 
         expect(splits.length, 1);
         expect(splits.keys.first, Sport.running);
         expect(splits[Sport.running]!.points, activity.points);
         expect(splits[Sport.running]!.laps, hasLength(1));
         expect(
-          ActivityFiles.splitBySport(activity, normalize: false)[Sport.running],
+          RawEditor.splitBySport(activity, normalize: false)[Sport.running],
           same(activity),
         );
       });
@@ -724,13 +721,13 @@ void main() {
           sport: Sport.cycling,
         );
 
-        final splits = ActivityFiles.splitBySport(activity);
+        final splits = RawEditor.splitBySport(activity);
 
         expect(splits.length, 1);
         expect(splits.keys.first, Sport.cycling);
         expect(splits[Sport.cycling]!.points, activity.points);
         expect(
-          ActivityFiles.splitBySport(activity, normalize: false)[Sport.cycling],
+          RawEditor.splitBySport(activity, normalize: false)[Sport.cycling],
           same(activity),
         );
       });
@@ -766,7 +763,7 @@ void main() {
             sport: Sport.running,
           );
 
-          final splits = ActivityFiles.splitBySport(activity);
+          final splits = RawEditor.splitBySport(activity);
 
           expect(splits.length, 2);
           expect(splits.keys, containsAll([Sport.running, Sport.cycling]));

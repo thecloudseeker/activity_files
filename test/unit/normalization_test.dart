@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/// Unit tests for activity normalization.
-///
-/// Tests the normalizeActivity() function which sorts points, removes duplicates,
-/// filters invalid coordinates, and provides optimization short-circuits.
+/// Unit tests for activity normalization: sorting, removing duplicates,
+/// filtering invalid coordinates, and the short-circuit for data that is
+/// already normalized.
 library;
 
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
+/// Normalizes [activity] the way `export` and `convert` do by default.
+RawActivity _normalized(RawActivity activity) => ActivityFiles.export(
+  activity: activity,
+  to: ActivityFileFormat.gpx,
+).activity;
+
 void main() {
   group('Normalization Short-Circuit Optimization', () {
-    test('normalizeActivity skips work on already-normalized data', () {
+    test('normalization skips work on already-normalized data', () {
       final activity = RawActivity(
         points: [
           GeoPoint(
@@ -40,7 +45,7 @@ void main() {
       );
 
       // Data is already sorted and valid
-      final normalized = ActivityFiles.normalizeActivity(activity);
+      final normalized = _normalized(activity);
 
       // Should return same structure (optimization applied)
       expect(normalized.points.length, activity.points.length);
@@ -50,7 +55,7 @@ void main() {
       );
     });
 
-    test('normalizeActivity processes unsorted data', () {
+    test('normalization processes unsorted data', () {
       final activity = RawActivity(
         points: [
           GeoPoint(
@@ -66,13 +71,13 @@ void main() {
         ],
       );
 
-      final normalized = ActivityFiles.normalizeActivity(activity);
+      final normalized = _normalized(activity);
 
       expect(normalized.points[0].time, DateTime.utc(2024, 1, 1, 10, 0, 0));
       expect(normalized.points[1].time, DateTime.utc(2024, 1, 1, 10, 1, 0));
     });
 
-    test('normalizeActivity removes duplicate timestamps', () {
+    test('normalization removes duplicate timestamps', () {
       final activity = RawActivity(
         points: [
           GeoPoint(
@@ -88,12 +93,12 @@ void main() {
         ],
       );
 
-      final normalized = ActivityFiles.normalizeActivity(activity);
+      final normalized = _normalized(activity);
 
       expect(normalized.points.length, 1);
     });
 
-    test('normalizeActivity removes invalid coordinates', () {
+    test('normalization removes invalid coordinates', () {
       final activity = RawActivity(
         points: [
           GeoPoint(
@@ -114,16 +119,13 @@ void main() {
         ],
       );
 
-      final normalized = ActivityFiles.normalizeActivity(
-        activity,
-        trimInvalid: true,
-      );
+      final normalized = _normalized(activity);
 
       expect(normalized.points.length, 2);
       expect(normalized.points.every((p) => p.latitude.abs() <= 90), true);
     });
 
-    test('normalizeActivity with stats tracks optimization', () {
+    test('normalization with stats tracks optimization', () {
       final activity = RawActivity(
         points: [
           GeoPoint(
@@ -148,28 +150,8 @@ void main() {
       );
     });
 
-    test('normalizeActivity handles edge case with no operations', () {
-      final activity = RawActivity(
-        points: [
-          GeoPoint(
-            latitude: 40.0,
-            longitude: -105.0,
-            time: DateTime.utc(2024, 1, 1, 10, 0, 0),
-          ),
-        ],
-      );
-
-      final normalized = ActivityFiles.normalizeActivity(
-        activity,
-        sortAndDedup: false,
-        trimInvalid: false,
-      );
-
-      expect(normalized.points.length, activity.points.length);
-    });
-
     test(
-      'normalizeActivity removes a Null Island point even on time-sorted input',
+      'normalization removes a Null Island point even on time-sorted input',
       () {
         final activity = RawActivity(
           points: [
@@ -186,10 +168,7 @@ void main() {
           ],
         );
 
-        final normalized = ActivityFiles.normalizeActivity(
-          activity,
-          trimInvalid: true,
-        );
+        final normalized = _normalized(activity);
 
         expect(normalized.points, hasLength(1));
         expect(normalized.points.single.latitude, equals(40.0));
@@ -209,7 +188,7 @@ void main() {
     );
 
     test(
-      'normalizeActivity clears a sentinel elevation even on time-sorted input',
+      'normalization clears a sentinel elevation even on time-sorted input',
       () {
         final activity = RawActivity(
           points: [
@@ -227,17 +206,14 @@ void main() {
           ],
         );
 
-        final normalized = ActivityFiles.normalizeActivity(
-          activity,
-          trimInvalid: true,
-        );
+        final normalized = _normalized(activity);
 
         expect(normalized.points, hasLength(2));
         expect(normalized.points.first.elevation, isNull);
       },
     );
 
-    test('normalizeActivity clips a lap extending past the point range even on '
+    test('normalization clips a lap extending past the point range even on '
         'time-sorted, coordinate-valid input', () {
       final activity = RawActivity(
         points: [
@@ -260,10 +236,7 @@ void main() {
         ],
       );
 
-      final normalized = ActivityFiles.normalizeActivity(
-        activity,
-        trimInvalid: true,
-      );
+      final normalized = _normalized(activity);
 
       expect(
         normalized.laps.single.endTime,

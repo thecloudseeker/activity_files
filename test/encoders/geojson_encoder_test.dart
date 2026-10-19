@@ -742,9 +742,13 @@ void main() {
           },
         );
 
-        final geojson = ActivityFiles.exportToGeojsonPoints(
+        final geojson = ActivityEncoder.encode(
           activity,
-          includeChannels: true,
+          ActivityFileFormat.geojson,
+          options: const EncoderOptions(
+            geojsonGeometry: GeojsonGeometry.points,
+            geojsonIncludeChannels: true,
+          ),
         );
         final decoded = jsonDecode(geojson);
         final properties = decoded['features'][0]['properties'];

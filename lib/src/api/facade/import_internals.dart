@@ -571,8 +571,10 @@ bool _shouldFailFitIntegrity(
 
 bool _resolveStrictFitHandling({
   required bool strictFitIntegrity,
+  // ignore: deprecated_member_use_from_same_package
   required FitCorruptionHandling fitCorruptionHandling,
 }) =>
+    // ignore: deprecated_member_use_from_same_package
     strictFitIntegrity || fitCorruptionHandling == FitCorruptionHandling.strict;
 
 FormatException _fitIntegrityFailure(Iterable<ParseDiagnostic> diagnostics) {
