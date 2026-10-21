@@ -5,6 +5,10 @@
 /// Defines how the FIT parser handles integrity issues (CRC mismatches,
 /// truncated files, invalid structure). Only `FitParser` accepts an
 /// [IntegrityConfig]; the text formats have no checksums to verify.
+@Deprecated(
+  'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse damaged '
+  'FIT files. Will be removed in 0.10.0.',
+)
 enum IntegrityMode {
   /// Fail-fast mode: throws FormatException on ANY integrity issue.
   /// Use for trusted/production data where 100% compliance is mandatory.
@@ -15,13 +19,16 @@ enum IntegrityMode {
   /// Returns best-effort data with detailed diagnostics.
   report,
 
-  /// Silent mode: ignores all integrity issues.
-  /// Use for best-effort recovery from heavily damaged files.
-  /// Note: May produce incorrect/incomplete data.
+  /// Silent mode: the same data as [report], without the `fit.header.*`
+  /// and `fit.trailer.*` diagnostics. It recovers nothing extra.
   silent,
 }
 
 /// Integrity validation configuration for parsers.
+@Deprecated(
+  'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse damaged '
+  'FIT files. Will be removed in 0.10.0.',
+)
 class IntegrityConfig {
   const IntegrityConfig({
     this.mode = IntegrityMode.report,
@@ -33,11 +40,9 @@ class IntegrityConfig {
 
   /// Whether to collect and expose integrity statistics.
   ///
-  /// When true, parsers will track:
-  /// - CRC mismatches (count, hex values)
-  /// - Truncated sections
-  /// - Invalid message counts
-  /// - Recovery attempts
+  /// When true, the FIT parser counts header and trailer CRC mismatches and
+  /// truncated sections in [ActivityParseResult.integrityStats]; the same
+  /// problems are reported one by one as diagnostics.
   final bool collectStats;
 
   /// Creates a strict integrity config (fail-fast).
@@ -56,6 +61,9 @@ class IntegrityConfig {
 }
 
 /// Statistics about integrity issues encountered during parsing.
+@Deprecated(
+  'Use the fit.header.* and fit.trailer.* diagnostics instead. Will be removed in 0.10.0.',
+)
 class IntegrityStats {
   IntegrityStats({
     this.crcMismatches = 0,

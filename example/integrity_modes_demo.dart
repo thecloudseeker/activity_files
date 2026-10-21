@@ -4,114 +4,53 @@ import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
 
-/// Demo: Smart Integrity Handling for Damaged Activity Files
+/// Demo: reading a damaged FIT file.
 ///
-/// This example shows how the new IntegrityMode system allows flexible
-/// handling of corrupted or partially damaged activity files.
+/// By default `ActivityFiles.import` keeps whatever it can read from a damaged
+/// file and reports each problem as a diagnostic. `strictFitIntegrity: true`
+/// refuses the file instead.
 Future<void> main() async {
-  await _demoReportMode();
-  await _demoSilentMode();
-  await _demoIntegrityStats();
+  final damaged = _buildCorruptedSample();
+  await _demoDefault(damaged);
+  await _demoStrict(damaged);
 }
 
-/// Report Mode: Log issues, continue parsing (default for user uploads)
-Future<void> _demoReportMode() async {
-  print('═══ REPORT MODE: Collect Diagnostics ═══');
-  print('');
-
-  // Parse with diagnostic collection enabled
-  final fitParser = FitParser();
-
-  // Simulated corrupted file for demo
-  final corruptedBytes = _buildCorruptedSample();
-
-  final result = fitParser.parseBytesWithIntegrity(
-    corruptedBytes,
-    integrityConfig: const IntegrityConfig.report(collectStats: true),
+/// Default: keep what can be read, report every problem.
+Future<void> _demoDefault(Uint8List bytes) async {
+  print('=== Default: keep what can be read, report the problems ===');
+  final result = await ActivityFiles.import(
+    bytes,
+    format: ActivityFileFormat.fit,
+    useIsolate: false,
   );
-
-  // Always check diagnostics in report mode
-  if (result.diagnostics.isNotEmpty) {
-    print('⚠ File has integrity issues:');
-    for (final diag in result.diagnostics) {
-      if (diag.severity == ParseSeverity.error) {
-        print('  • ${diag.code}: ${diag.message}');
-      }
+  for (final diagnostic in result.diagnostics) {
+    if (diagnostic.severity == ParseSeverity.error) {
+      print('  ${diagnostic.code}: ${diagnostic.message}');
     }
-    print('');
   }
-
-  // But we got data despite the issues
-  print('✓ Partial data recovered:');
-  print('  Points: ${result.activity.points.length}');
-  print('  Channels: ${result.activity.channels.length}');
+  print('  Points recovered: ${result.activity.points.length}');
   print('');
+}
 
-  // New: Integrity statistics
-  if (result.integrityStats != null) {
-    print('Integrity Statistics:');
-    print('  ${result.integrityStats!.summary()}');
+/// Strict: refuse a file with integrity errors.
+Future<void> _demoStrict(Uint8List bytes) async {
+  print('=== strictFitIntegrity: refuse a damaged file ===');
+  try {
+    await ActivityFiles.import(
+      bytes,
+      format: ActivityFileFormat.fit,
+      strictFitIntegrity: true,
+      useIsolate: false,
+    );
+    print('  Accepted');
+  } on FormatException catch (error) {
+    print('  Refused: ${error.message}');
   }
   print('');
 }
 
-/// Silent Mode: Best-effort recovery, ignore all issues
-Future<void> _demoSilentMode() async {
-  print('═══ SILENT MODE: Best-Effort Recovery ═══');
-  print('');
-
-  // For heavily damaged files where any data is valuable
-  final fitParser = FitParser();
-  final corruptedBytes = _buildCorruptedSample();
-
-  final result = fitParser.parseBytesWithIntegrity(
-    corruptedBytes,
-    integrityConfig: const IntegrityConfig.silent(),
-  );
-
-  print('✓ Recovered data in silent mode:');
-  print('  Points: ${result.activity.points.length}');
-  print('  Mode: ${result.integrityMode.name}');
-  print('  No diagnostics logged');
-  print('');
-}
-
-/// Full Statistics Tracking
-Future<void> _demoIntegrityStats() async {
-  print('═══ INTEGRITY STATISTICS ═══');
-  print('');
-
-  // Create sample stats showing what can be tracked
-  final stats = IntegrityStats(
-    crcMismatches: 3,
-    headerCrcMismatches: 1,
-    trailerCrcMismatches: 1,
-    truncatedSections: 2,
-    invalidMessages: 5,
-    recoveryAttempts: 8,
-    formatSpecificIssues: {
-      'fit.developer_fields_skipped': 2,
-      'fit.unknown_message_types': 3,
-    },
-  );
-
-  print('Tracked Issues:');
-  print('  CRC Mismatches: ${stats.crcMismatches}');
-  print('    - Header: ${stats.headerCrcMismatches}');
-  print('    - Trailer: ${stats.trailerCrcMismatches}');
-  print('  Truncated sections: ${stats.truncatedSections}');
-  print('  Invalid messages: ${stats.invalidMessages}');
-  print('  Recovery attempts: ${stats.recoveryAttempts}');
-  print('');
-
-  print('Formatted Summary:');
-  print(stats.summary());
-  print('');
-}
-
-/// Helper: Build corrupted FIT sample for testing
+/// A minimal FIT file whose header CRC is wrong.
 Uint8List _buildCorruptedSample() {
-  // Minimal valid FIT header with corrupted CRC
   final header = Uint8List(14);
   final bd = ByteData.view(header.buffer);
   header[0] = 14;
@@ -119,11 +58,9 @@ Uint8List _buildCorruptedSample() {
   bd.setUint16(2, 0, Endian.little);
   bd.setUint32(4, 4, Endian.little);
   header.setRange(8, 12, '.FIT'.codeUnits);
-  // Corrupt CRC
   header[12] = 0xFF;
   header[13] = 0xFF;
 
-  // Minimal data
   final data = Uint8List.fromList([0x40, 0x00, 0x00, 0x14, 0x00, 0x00]);
 
   return Uint8List.fromList([...header, ...data, 0x00, 0x00]);
