@@ -61,6 +61,27 @@ class TcxParser implements ActivityFormatParser {
         diagnostics: diagnostics,
       );
     }
+    final root = document.rootElement;
+    if (root.name.local != 'TrainingCenterDatabase') {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'tcx.document.unexpected_root',
+          message:
+              'The root element is <${root.name.local}>, not '
+              '<TrainingCenterDatabase>; this is not a TCX file.',
+          node: const ParseNodeReference(path: 'tcx.document'),
+          suggestedFix:
+              'Read the file as the format it is in, or leave the format out '
+              'so it is detected.',
+          priority: 0,
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    }
     final activities = document.findAllElements('Activity');
     if (activities.isEmpty) {
       return ActivityParseResult(

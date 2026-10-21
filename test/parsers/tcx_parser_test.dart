@@ -5,6 +5,8 @@
 /// like trackpoints, laps, and heart rate data.
 library;
 
+import 'dart:io';
+
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
@@ -922,6 +924,39 @@ void main() {
           isNot(contains('lossy.tcx_activity_metadata_dropped')),
         );
       });
+    });
+  });
+
+  group('a document that is not TCX', () {
+    Future<ActivityImportResult> read(String content) => ActivityFiles.import(
+      content,
+      format: ActivityFileFormat.tcx,
+      useIsolate: false,
+    );
+
+    for (final (label, content) in [
+      ('a GPX file', File('example/assets/sample.gpx').readAsStringSync()),
+      ('an HTML page', '<html><body>not an activity</body></html>'),
+    ]) {
+      test('reports $label as tcx.document.unexpected_root', () async {
+        final result = await read(content);
+        final errors = result.diagnostics
+            .where((d) => d.severity == ParseSeverity.error)
+            .map((d) => d.code);
+        expect(errors, contains('tcx.document.unexpected_root'));
+        expect(result.activity.points, isEmpty);
+      });
+    }
+
+    test('its own format reads without that error', () async {
+      final result = await read(
+        File('example/assets/sample.tcx').readAsStringSync(),
+      );
+      expect(
+        result.diagnostics.map((d) => d.code),
+        isNot(contains('tcx.document.unexpected_root')),
+      );
+      expect(result.activity.points, isNotEmpty);
     });
   });
 }
