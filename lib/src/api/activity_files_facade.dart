@@ -79,7 +79,8 @@ class ActivityFiles {
   /// is ambiguous (e.g. a FIT payload provided as a base64 string).
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
+  /// strings/bytes, files and buffered streams; a file is measured before it
+  /// is read. Pass `null` to disable the limit.
   static Future<ActivityImportResult> import(
     Object source, {
     ActivityFileFormat? format,
@@ -97,37 +98,45 @@ class ActivityFiles {
       allowFilePaths: allowFilePaths,
       maxPayloadBytes: maxPayloadBytes,
     );
-    if (maxPayloadBytes != null) {
-      _enforcePayloadLimit(
-        resolved.detectionBytes ?? resolved.payload,
-        encoding: encoding,
-        limit: maxPayloadBytes,
-      );
-    }
-    final detected =
-        format ??
-        _detectFormat(
-          resolved,
+    final ActivityFileFormat detected;
+    try {
+      if (maxPayloadBytes != null) {
+        _enforcePayloadLimit(
+          resolved.detectionBytes ?? resolved.payload,
           encoding: encoding,
-          maxPayloadBytes: maxPayloadBytes,
+          limit: maxPayloadBytes,
         );
-    if (detected == null) {
-      throw ArgumentError(
-        'Unable to infer activity format from source. The format must be specified explicitly.\n'
-        '\n'
-        'To fix this, try one of the following:\n'
-        '  1. Provide the format parameter: import(source, format: ActivityFileFormat.gpx)\n'
-        '  2. Use a file with a recognized extension (.gpx, .tcx, .fit, .csv, .geojson)\n'
-        '  3. If passing a filesystem path as a String, enable: import(source, allowFilePaths: true)\n'
-        '\n'
-        'Tips for common formats:\n'
-        '  • GPX/TCX: Usually detected automatically from file extension\n'
-        '  • FIT (binary): For base64-encoded FIT data, use import(bytes, format: ActivityFileFormat.fit)\n'
-        '  • CSV/GeoJSON: Detectable from extension or content sniffing\n'
-        '  • Inline content: Always specify format for text passed as a String\n'
-        '\n'
-        'Received: ${resolved.description} (extension: ${resolved.fileExtension ?? "none"})',
-      );
+      }
+      final found =
+          format ??
+          _detectFormat(
+            resolved,
+            encoding: encoding,
+            maxPayloadBytes: maxPayloadBytes,
+          );
+      if (found == null) {
+        throw ArgumentError(
+          'Unable to infer activity format from source. The format must be specified explicitly.\n'
+          '\n'
+          'To fix this, try one of the following:\n'
+          '  1. Provide the format parameter: import(source, format: ActivityFileFormat.gpx)\n'
+          '  2. Use a file with a recognized extension (.gpx, .tcx, .fit, .csv, .geojson)\n'
+          '  3. If passing a filesystem path as a String, enable: import(source, allowFilePaths: true)\n'
+          '\n'
+          'Tips for common formats:\n'
+          '  • GPX/TCX: Usually detected automatically from file extension\n'
+          '  • FIT (binary): For base64-encoded FIT data, use import(bytes, format: ActivityFileFormat.fit)\n'
+          '  • CSV/GeoJSON: Detectable from extension or content sniffing\n'
+          '  • Inline content: Always specify format for text passed as a String\n'
+          '\n'
+          'Received: ${resolved.description} (extension: ${resolved.fileExtension ?? "none"})',
+        );
+      }
+      detected = found;
+    } catch (_) {
+      // A stream that was only sniffed is let go, so its source closes.
+      await resolved.release?.call();
+      rethrow;
     }
     ActivityParseResult parseResult;
     try {
@@ -339,7 +348,8 @@ class ActivityFiles {
   /// disable it when conversion throughput matters more than validation output.
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
+  /// strings/bytes, files and buffered streams; a file is measured before it
+  /// is read. Pass `null` to disable the limit.
   static Future<ActivityConversionResult> convert({
     required Object source,
     required ActivityFileFormat to,
@@ -563,7 +573,8 @@ class ActivityFiles {
   /// matching [convert].
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes and buffered streams. Pass `null` to disable the limit.
+  /// strings/bytes, files and buffered streams; a file is measured before it
+  /// is read. Pass `null` to disable the limit.
   ///
   /// This method dispatches to one of two unrelated code paths depending on
   /// which argument is given: for new code, prefer calling the specific one

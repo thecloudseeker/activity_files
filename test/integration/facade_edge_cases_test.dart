@@ -5,6 +5,7 @@
 /// exporting activity files.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -584,6 +585,60 @@ void main() {
             ),
           ),
         );
+      },
+    );
+
+    test('a file over maxPayloadBytes is refused before it is read', () async {
+      if (Platform.isWindows) {
+        markTestSkipped('file permissions do not stop reading here');
+        return;
+      }
+      final dir = Directory.systemTemp.createTempSync('payload_limit');
+      final file = File('${dir.path}/big.gpx')..writeAsStringSync('x' * 2048);
+      // A file that cannot be read shows its size is checked first.
+      Process.runSync('chmod', ['000', file.path]);
+      addTearDown(() {
+        Process.runSync('chmod', ['644', file.path]);
+        dir.deleteSync(recursive: true);
+      });
+      try {
+        file.readAsBytesSync();
+        markTestSkipped('file permissions do not stop reading here');
+        return;
+      } on FileSystemException {
+        // Expected: the file is unreadable.
+      }
+      await expectLater(
+        ActivityFiles.import(file, maxPayloadBytes: 1024, useIsolate: false),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('exceeds 1024 bytes'),
+          ),
+        ),
+      );
+    });
+
+    test(
+      'a stream over maxPayloadBytes is let go once it is refused',
+      () async {
+        var cancelled = false;
+        final controller = StreamController<List<int>>(
+          onCancel: () => cancelled = true,
+        );
+        // More than the sniffing window, and the stream never ends.
+        controller.add(List.filled(70 * 1024, 0x20));
+        await expectLater(
+          ActivityFiles.import(
+            controller.stream,
+            format: ActivityFileFormat.gpx,
+            maxPayloadBytes: 1024,
+            useIsolate: false,
+          ),
+          throwsA(isA<FormatException>()),
+        );
+        expect(cancelled, isTrue);
       },
     );
 

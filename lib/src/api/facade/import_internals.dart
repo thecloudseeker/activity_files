@@ -57,6 +57,7 @@ Future<_ResolvedSource> _resolveSource(
       payload: _ReplayableStreamPayload(replay(), bufferLimit: maxPayloadBytes),
       description: 'stream',
       detectionBytes: sniffBytes,
+      release: iterator.cancel,
     );
   }
   if (source is List<int>) {
@@ -64,6 +65,14 @@ Future<_ResolvedSource> _resolveSource(
       payload: Uint8List.fromList(source),
       description: 'bytes',
     );
+  }
+  // A file is measured before it is read, so an oversized one is refused
+  // without loading it.
+  final fileLength = await file_system.platformFileLength(source);
+  if (maxPayloadBytes != null &&
+      fileLength != null &&
+      fileLength > maxPayloadBytes) {
+    throw _payloadTooLarge(maxPayloadBytes);
   }
   final fileRead = await file_system.readPlatformFile(source);
   if (fileRead != null) {
@@ -75,6 +84,10 @@ Future<_ResolvedSource> _resolveSource(
   }
   if (source is String) {
     if (allowFilePaths && file_system.platformPathExists(source)) {
+      if (maxPayloadBytes != null &&
+          await file_system.platformPathLength(source) > maxPayloadBytes) {
+        throw _payloadTooLarge(maxPayloadBytes);
+      }
       final bytes = await file_system.readPlatformPath(source);
       return _ResolvedSource(
         payload: bytes,
@@ -600,12 +613,16 @@ class _ResolvedSource {
     required this.description,
     this.fileExtension,
     this.detectionBytes,
+    this.release,
   });
 
   final Object payload;
   final String description;
   final String? fileExtension;
   final Uint8List? detectionBytes;
+
+  /// Cancels a stream source that will not be read further.
+  final Future<void> Function()? release;
 }
 
 /// A payload larger than the caller's limit. A subtype so the import path can
@@ -751,9 +768,9 @@ void _enforcePayloadLimit(
   } else {
     return;
   }
-  if (sizeBytes > limit) {
-    throw FormatException(
-      'Payload exceeds $limit bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit if you fully trust the input size.',
-    );
-  }
+  if (sizeBytes > limit) throw _payloadTooLarge(limit);
 }
+
+FormatException _payloadTooLarge(int limit) => FormatException(
+  'Payload exceeds $limit bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit if you fully trust the input size.',
+);

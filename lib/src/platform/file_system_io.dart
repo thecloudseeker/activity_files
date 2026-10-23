@@ -8,6 +8,11 @@ bool isPlatformFile(Object? value) => value is File;
 /// Returns the file path when [file] is a `File`.
 String? platformFilePath(Object? file) => file is File ? file.path : null;
 
+/// The size of [file] in bytes when [file] is a `File`, read without
+/// reading its content.
+Future<int?> platformFileLength(Object? file) async =>
+    file is File ? await file.length() : null;
+
 /// Reads [file] bytes when [file] is a `File`.
 ///
 /// Returns `null` for non-`File` inputs to simplify conditional call sites.
@@ -22,6 +27,9 @@ Future<({Uint8List bytes, String path})?> readPlatformFile(Object? file) async {
 
 /// Determines whether [path] refers to an existing file.
 bool platformPathExists(String path) => File(path).existsSync();
+
+/// The size of the file at [path] in bytes.
+Future<int> platformPathLength(String path) async => await File(path).length();
 
 /// Reads bytes from [path].
 Future<Uint8List> readPlatformPath(String path) async =>
