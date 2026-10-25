@@ -1,4 +1,22 @@
 # Changelog
+## 0.8.5
+### Added
+- The `activity_files` command line now covers every library task: `edit`, `merge`, `split` and `inspect` join `convert` and `validate`, and a test fails whenever a library feature has no command.
+- The command line now takes several inputs or whole folders per run (`--recursive`), reads stdin and writes stdout with `-`, prints JSON lines with `--json`, and detects the format without `--from`.
+
+### Changed
+- The command line now writes its messages to stderr; stdout carries only the result, so it can be piped.
+
+### Deprecated
+- `validate --format` is replaced by `--from`, and `--hr-max-delta`/`--cadence-max-delta`/`--power-max-delta`/`--temp-max-delta` by `--channel-max-delta <channel>=<seconds>`. The old options still work, print a warning, and are removed in 0.10.0.
+- `FitParser.parseBytesWithIntegrity` and the `Integrity*` types are replaced by `ActivityFiles.import(..., strictFitIntegrity: true)`; removed in 0.10.0.
+
+### Fixed
+- A GPX file read as TCX, or the reverse, no longer comes back empty without an error; it reports `gpx.document.unexpected_root`/`tcx.document.unexpected_root` now.
+- The command line no longer refuses a FIT file with a bad checksum but readable data; it keeps the data like the library does, and `--strict-fit` refuses such files.
+- `ActivityFiles.import` no longer reads a whole file into memory before checking `maxPayloadBytes`; it checks the file's size first now.
+- `ActivityFiles.import` no longer leaves a stream over `maxPayloadBytes` open; reading stdin no longer hangs.
+
 ## 0.8.4
 ### Changed
 - Requires Dart 3.10.1, which `csv` 8 already needed; the previous `^3.9.0` could never resolve.

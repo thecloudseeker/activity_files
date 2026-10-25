@@ -190,7 +190,9 @@ class ActivityParseResult {
     required this.activity,
     Iterable<ParseDiagnostic>? diagnostics,
     @Deprecated('Use diagnostics instead.') Iterable<String>? warnings,
+    @Deprecated('Use diagnostics instead. Will be removed in 0.10.0.')
     this.integrityStats,
+    @Deprecated('Use diagnostics instead. Will be removed in 0.10.0.')
     this.integrityMode = IntegrityMode.report,
   }) : diagnostics = List.unmodifiable(
          _mergeDiagnostics(diagnostics, warnings),
@@ -207,13 +209,16 @@ class ActivityParseResult {
   /// This is only populated when [IntegrityConfig.collectStats] is true.
   /// Use this to understand what kind of data issues were found and how many
   /// recovery attempts were made.
+  @Deprecated('Use diagnostics instead. Will be removed in 0.10.0.')
   final IntegrityStats? integrityStats;
 
   /// The integrity validation mode that was used for parsing.
   ///
   /// * [IntegrityMode.strict]: Parsing would have failed on first error
   /// * [IntegrityMode.report]: Issues logged but parsing continued (default)
-  /// * [IntegrityMode.silent]: All issues silently ignored
+  /// * [IntegrityMode.silent]: Report mode without the `fit.header.*` and
+  ///   `fit.trailer.*` diagnostics
+  @Deprecated('Use diagnostics instead. Will be removed in 0.10.0.')
   final IntegrityMode integrityMode;
 
   /// Diagnostics encountered during parsing. Errors are still non-fatal.

@@ -96,6 +96,26 @@ class GpxParser implements ActivityFormatParser {
       );
     }
     final root = document.rootElement;
+    if (root.name.local != 'gpx') {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.error,
+          code: 'gpx.document.unexpected_root',
+          message:
+              'The root element is <${root.name.local}>, not <gpx>; this is '
+              'not a GPX file.',
+          node: const ParseNodeReference(path: 'gpx.document'),
+          suggestedFix:
+              'Read the file as the format it is in, or leave the format out '
+              'so it is detected.',
+          priority: 0,
+        ),
+      );
+      return ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: diagnostics,
+      );
+    }
     final creator = root.getAttribute('creator');
     var metadataName = _firstText(root, 'name');
     var metadataDescription = _firstText(root, 'desc');

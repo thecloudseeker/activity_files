@@ -67,7 +67,7 @@ void main() {
         if (gpxRoots > 1) continue;
       }
 
-      final loaded = await ActivityFiles.load(
+      final loaded = await ActivityFiles.import(
         bytes,
         format: format,
         useIsolate: false,

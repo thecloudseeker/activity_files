@@ -13,8 +13,8 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
 
 - Format-agnostic `RawActivity` model covering GPS points, laps, sensor
   channels, and device metadata.
-- `ActivityFiles` facade and CLI: load, normalize, validate, and convert
-  between all five formats in a few calls.
+- `ActivityFiles` facade and an `activity_files` command line, kept on par:
+  load, normalize, validate, edit, and convert between all five formats.
 - Stream-aware builders (`builderFromStreams`, `buildAndExport`) accept raw
   timestamp/value tuples, so servers can skip manual model assembly.
 - Parsers never throw on malformed files; every issue is reported as a
@@ -41,7 +41,7 @@ A pure Dart toolkit for parsing, editing, validating, and converting workout act
 
 [Open an issue](https://github.com/thecloudseeker/activity_files/issues/new/choose) with a sample file and what you expected vs. got. 
 
-Real-world GPX, TCX, FIT, GeoJSON, and CSV files are also highly appreciated. (I only have one device to test against). Used for local testing only, never published or committed.
+Real-world GPX, TCX, FIT, GeoJSON, and CSV files are also highly appreciated. The library is validated against a private testbed of 692 real-world GPX, TCX, FIT and GeoJSON files from 4 device makers (e.g. Garmin, Coros, Wahoo) and 23 tools (e.g. Strava, Garmin Connect, MapMyRun), and every new file widens it. Used for local testing only, never published or committed.
 Send to: `packages@eikedreier.com`
 
 ## Quick links
@@ -58,7 +58,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.8.4
+  activity_files: ^0.8.5
 ```
 
 Then install dependencies:
@@ -106,6 +106,34 @@ Future<void> convertGpxToFit(Uint8List bytes) async {
 For the detailed Flutter, streaming, CLI, and isolate walkthroughs, see the
 [usage guide](doc/usage_guide.md); for a complete runnable program
 (load → normalize → validate → export), see `example/main.dart`.
+
+## Command line
+
+Everything the library does with a file, the bundled `activity_files` tool
+does too. Install it once:
+
+```shell
+dart pub global activate activity_files
+```
+
+Then convert, edit, or check files without writing code:
+
+```shell
+# Convert a ride to GPX.
+activity_files convert --to gpx -i ride.fit -o ride.gpx
+
+# Cut the warm-up and the café stop, then recompute distance.
+activity_files edit -i ride.fit -o ride.gpx --to gpx \
+  --crop 5m..end-20m --recompute-distance-and-speed
+
+# Check a whole folder of exports; exit code 65 if any file fails.
+activity_files validate -i exports/ --recursive
+```
+
+Every task in the [usage guide](doc/usage_guide.md) shows the Dart code and
+the command side by side, and its
+[command line reference](doc/usage_guide.md#command-line-reference) lists every
+option, the exit codes, and the JSON output for scripts.
 
 ## Working with large or malformed files
 

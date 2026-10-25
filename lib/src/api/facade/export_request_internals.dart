@@ -37,7 +37,9 @@ class _ExportRequest {
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     ValidationResult? validation,
     bool strictFitIntegrity = false,
+    // ignore: deprecated_member_use_from_same_package
     FitCorruptionHandling fitCorruptionHandling =
+        // ignore: deprecated_member_use_from_same_package
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
   }) => _ExportRequest._(
@@ -72,7 +74,9 @@ class _ExportRequest {
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
+    // ignore: deprecated_member_use_from_same_package
     FitCorruptionHandling fitCorruptionHandling =
+        // ignore: deprecated_member_use_from_same_package
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
@@ -108,7 +112,9 @@ class _ExportRequest {
     Encoding encoding = utf8,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
     bool strictFitIntegrity = false,
+    // ignore: deprecated_member_use_from_same_package
     FitCorruptionHandling fitCorruptionHandling =
+        // ignore: deprecated_member_use_from_same_package
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
@@ -144,6 +150,7 @@ class _ExportRequest {
   final Encoding encoding;
   final bool allowFilePaths;
   final bool strictFitIntegrity;
+  // ignore: deprecated_member_use_from_same_package
   final FitCorruptionHandling fitCorruptionHandling;
   final ActivityAutoFixOptions autoFix;
   final int? maxPayloadBytes;

@@ -16,6 +16,7 @@ Future<ActivityExportResult> _convertAndExportFromSource({
   required bool runValidation,
   required bool exportInIsolate,
   required bool strictFitIntegrity,
+  // ignore: deprecated_member_use_from_same_package
   required FitCorruptionHandling fitCorruptionHandling,
   required ActivityAutoFixOptions autoFix,
   required int? maxPayloadBytes,
@@ -128,6 +129,7 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
       exportInIsolate: request.exportInIsolate,
       runValidation: request.runValidation,
       strictFitIntegrity: request.strictFitIntegrity,
+      // ignore: deprecated_member_use_from_same_package
       fitCorruptionHandling: request.fitCorruptionHandling,
       autoFix: request.autoFix,
       maxPayloadBytes: request.maxPayloadBytes,

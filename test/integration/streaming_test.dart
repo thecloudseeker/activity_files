@@ -69,7 +69,7 @@ void main() {
     });
 
     test(
-      'ActivityFiles.load(stream) works with the default useIsolate:true',
+      'ActivityFiles.import(stream) works with the default useIsolate:true',
       () async {
         Stream<List<int>> csvStream() async* {
           yield utf8.encode('timestamp,latitude,longitude\n');
@@ -77,7 +77,7 @@ void main() {
           yield utf8.encode('2024-01-01T00:00:10Z,40.001,-105.001\n');
         }
 
-        final result = await ActivityFiles.load(
+        final result = await ActivityFiles.import(
           csvStream(),
           format: ActivityFileFormat.csv,
         );

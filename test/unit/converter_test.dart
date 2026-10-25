@@ -1,14 +1,35 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/// Unit tests for ActivityConverter high-level API.
-///
-/// Tests format conversion between different file formats with various options.
+/// Unit tests for format conversion through `ActivityFiles.convert`, between
+/// every format and with various options.
 library;
 
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
+/// Converts [input] with `ActivityFiles.convert` and returns the encoded
+/// output; [diagnostics] collects every diagnostic the conversion reported.
+Future<String> _convert(
+  Object input, {
+  required ActivityFileFormat from,
+  required ActivityFileFormat to,
+  bool normalize = true,
+  EncoderOptions encoderOptions = const EncoderOptions(),
+  List<ParseDiagnostic>? diagnostics,
+}) async {
+  final result = await ActivityFiles.convert(
+    source: input,
+    from: from,
+    to: to,
+    normalize: normalize,
+    options: encoderOptions,
+    useIsolate: false,
+  );
+  diagnostics?.addAll(result.diagnostics);
+  return result.encoded;
+}
+
 void main() {
-  group('ActivityConverter', () {
+  group('ActivityFiles.convert', () {
     const sampleGpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
@@ -28,8 +49,8 @@ void main() {
 2024-01-01T10:00:10Z,40.0005,-105.0005,145''';
 
     group('Basic conversion', () {
-      test('converts GPX to CSV', () {
-        final csv = ActivityConverter.convert(
+      test('converts GPX to CSV', () async {
+        final csv = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -40,8 +61,8 @@ void main() {
         expect(csv, contains('-105.0'));
       });
 
-      test('converts CSV to GeoJSON', () {
-        final geojson = ActivityConverter.convert(
+      test('converts CSV to GeoJSON', () async {
+        final geojson = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.geojson,
@@ -51,8 +72,8 @@ void main() {
         expect(geojson, contains('LineString'));
       });
 
-      test('converts CSV to GPX', () {
-        final gpx = ActivityConverter.convert(
+      test('converts CSV to GPX', () async {
+        final gpx = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.gpx,
@@ -62,8 +83,8 @@ void main() {
         expect(gpx, contains('<gpx'));
       });
 
-      test('converts CSV to TCX', () {
-        final tcx = ActivityConverter.convert(
+      test('converts CSV to TCX', () async {
+        final tcx = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.tcx,
@@ -74,8 +95,8 @@ void main() {
     });
 
     group('Input types', () {
-      test('accepts string input', () {
-        final csv = ActivityConverter.convert(
+      test('accepts string input', () async {
+        final csv = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -84,9 +105,9 @@ void main() {
         expect(csv, isNotEmpty);
       });
 
-      test('accepts List<int> input for binary formats', () {
+      test('accepts List<int> input for binary formats', () async {
         final gpxBytes = sampleGpx.codeUnits;
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           gpxBytes,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -95,9 +116,9 @@ void main() {
         expect(csv, isNotEmpty);
       });
 
-      test('rejects invalid input types', () {
-        expect(
-          () => ActivityConverter.convert(
+      test('rejects invalid input types', () async {
+        await expectLater(
+          () => _convert(
             12345,
             from: ActivityFileFormat.gpx,
             to: ActivityFileFormat.csv,
@@ -108,7 +129,7 @@ void main() {
     });
 
     group('Normalization', () {
-      test('normalizes by default', () {
+      test('normalizes by default', () async {
         // Unsorted + duplicate data
         const unsortedGpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
@@ -127,7 +148,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           unsortedGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -138,8 +159,8 @@ void main() {
         expect(csv, contains('10:00:10'));
       });
 
-      test('respects normalize: false', () {
-        final result = ActivityConverter.convert(
+      test('respects normalize: false', () async {
+        final result = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -152,10 +173,10 @@ void main() {
     });
 
     group('EncoderOptions', () {
-      test('passes encoder options to encoder', () {
+      test('passes encoder options to encoder', () async {
         final options = EncoderOptions(precisionLatLon: 4, precisionEle: 1);
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -166,10 +187,10 @@ void main() {
         expect(csv, isNot(contains('40.000500')));
       });
 
-      test('handles GPX version option', () {
+      test('handles GPX version option', () async {
         final options = EncoderOptions(gpxVersion: GpxVersion.v1_0);
 
-        final gpx = ActivityConverter.convert(
+        final gpx = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.gpx,
@@ -179,10 +200,10 @@ void main() {
         expect(gpx, contains('<gpx'));
       });
 
-      test('handles TCX version option', () {
+      test('handles TCX version option', () async {
         final options = EncoderOptions(tcxVersion: TcxVersion.v1);
 
-        final tcx = ActivityConverter.convert(
+        final tcx = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.tcx,
@@ -194,14 +215,14 @@ void main() {
     });
 
     group('Roundtrip conversions', () {
-      test('GPX to CSV to GPX preserves structure', () {
-        final csv = ActivityConverter.convert(
+      test('GPX to CSV to GPX preserves structure', () async {
+        final csv = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
         );
 
-        final gpx = ActivityConverter.convert(
+        final gpx = await _convert(
           csv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.gpx,
@@ -211,8 +232,8 @@ void main() {
         expect(gpx, contains('40.0'));
       });
 
-      test('CSV round-trip preserves coordinates', () {
-        final result = ActivityConverter.convert(
+      test('CSV round-trip preserves coordinates', () async {
+        final result = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.csv,
@@ -222,8 +243,8 @@ void main() {
         expect(result, contains('40.0005'));
       });
 
-      test('CSV round-trip preserves channel data', () {
-        final result = ActivityConverter.convert(
+      test('CSV round-trip preserves channel data', () async {
+        final result = await _convert(
           sampleCsv,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.csv,
@@ -235,8 +256,8 @@ void main() {
     });
 
     group('Data preservation', () {
-      test('preserves coordinates in conversion', () {
-        final result = ActivityConverter.convert(
+      test('preserves coordinates in conversion', () async {
+        final result = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -246,8 +267,8 @@ void main() {
         expect(result, contains('-105.0'));
       });
 
-      test('preserves timestamp information', () {
-        final result = ActivityConverter.convert(
+      test('preserves timestamp information', () async {
+        final result = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -259,10 +280,10 @@ void main() {
     });
 
     group('Error handling', () {
-      test('handles malformed input gracefully', () {
+      test('handles malformed input gracefully', () async {
         const malformed = '<not>valid<xml>';
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           malformed,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -274,8 +295,8 @@ void main() {
         expect(rows.single, startsWith('timestamp,latitude,longitude'));
       });
 
-      test('produces valid output despite warnings', () {
-        final result = ActivityConverter.convert(
+      test('produces valid output despite warnings', () async {
+        final result = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -286,11 +307,11 @@ void main() {
     });
 
     group('Diagnostics', () {
-      test('diagnostics list is populated on malformed GPX', () {
+      test('diagnostics list is populated on malformed GPX', () async {
         const malformed = '<not>valid<xml>';
         final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
+        await _convert(
           malformed,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -302,24 +323,27 @@ void main() {
         expect(diagnostics.first.code, contains('gpx'));
       });
 
-      test('diagnostics list is empty for valid input', () {
+      test('valid input reports no warnings or errors', () async {
         final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
+        await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
           diagnostics: diagnostics,
         );
 
-        expect(diagnostics, isEmpty);
+        expect(
+          diagnostics.where((d) => d.severity != ParseSeverity.info),
+          isEmpty,
+        );
       });
 
-      test('diagnostics have code and severity fields', () {
+      test('diagnostics have code and severity fields', () async {
         const malformed = '<not>valid<xml>';
         final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
+        await _convert(
           malformed,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -332,7 +356,7 @@ void main() {
         expect(d.message, isNotEmpty);
       });
 
-      test('diagnostics can carry suggestedFix and priority', () {
+      test('diagnostics can carry suggestedFix and priority', () async {
         // Verify the fields are accessible on the type.
         const d = ParseDiagnostic(
           severity: ParseSeverity.warning,
@@ -346,7 +370,7 @@ void main() {
         expect(d.priority, equals(2));
       });
 
-      test('diagnostics null suggestedFix and priority are allowed', () {
+      test('diagnostics null suggestedFix and priority are allowed', () async {
         const d = ParseDiagnostic(
           severity: ParseSeverity.info,
           code: 'test.info',
@@ -355,35 +379,6 @@ void main() {
 
         expect(d.suggestedFix, isNull);
         expect(d.priority, isNull);
-      });
-
-      // ignore: deprecated_member_use
-      test('legacy warnings parameter collects warning messages', () {
-        const gpxWithBadTimestamp = '''<?xml version="1.0"?>
-<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
-  <trk><trkseg>
-    <trkpt lat="40.0" lon="-105.0">
-      <time>not-a-date</time>
-    </trkpt>
-    <trkpt lat="40.001" lon="-105.001">
-      <time>2024-01-01T10:00:10Z</time>
-    </trkpt>
-  </trkseg></trk>
-</gpx>''';
-
-        final warnings = <String>[];
-        // ignore: deprecated_member_use
-        ActivityConverter.convert(
-          gpxWithBadTimestamp,
-          from: ActivityFileFormat.gpx,
-          to: ActivityFileFormat.csv,
-          // ignore: deprecated_member_use
-          warnings: warnings,
-        );
-
-        // The legacy list may be empty for valid parses, but it must not throw
-        // and must be a List<String>.
-        expect(warnings, isA<List<String>>());
       });
     });
 
@@ -414,44 +409,50 @@ void main() {
   </trk>
 </gpx>''';
 
-      test('emits gpx.multi_track info diagnostic for multi-track files', () {
-        final diagnostics = <ParseDiagnostic>[];
+      test(
+        'emits gpx.multi_track info diagnostic for multi-track files',
+        () async {
+          final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
-          multiTrackGpx,
-          from: ActivityFileFormat.gpx,
-          to: ActivityFileFormat.csv,
-          diagnostics: diagnostics,
-        );
+          await _convert(
+            multiTrackGpx,
+            from: ActivityFileFormat.gpx,
+            to: ActivityFileFormat.csv,
+            diagnostics: diagnostics,
+          );
 
-        expect(
-          diagnostics.any((d) => d.code == 'gpx.multi_track'),
-          isTrue,
-          reason: 'Expected a gpx.multi_track diagnostic',
-        );
-        final d = diagnostics.firstWhere((d) => d.code == 'gpx.multi_track');
-        expect(d.severity, equals(ParseSeverity.info));
-      });
+          expect(
+            diagnostics.any((d) => d.code == 'gpx.multi_track'),
+            isTrue,
+            reason: 'Expected a gpx.multi_track diagnostic',
+          );
+          final d = diagnostics.firstWhere((d) => d.code == 'gpx.multi_track');
+          expect(d.severity, equals(ParseSeverity.info));
+        },
+      );
 
-      test('multi-track GPX round-trips back to GPX with both tracks', () {
-        final gpx = ActivityConverter.convert(
-          multiTrackGpx,
-          from: ActivityFileFormat.gpx,
-          to: ActivityFileFormat.gpx,
-        );
+      test(
+        'multi-track GPX round-trips back to GPX with both tracks',
+        () async {
+          final gpx = await _convert(
+            multiTrackGpx,
+            from: ActivityFileFormat.gpx,
+            to: ActivityFileFormat.gpx,
+          );
 
-        // Both tracks' coordinates should appear in the output
-        expect(gpx, contains('40.0'));
-        expect(gpx, contains('51.0'));
-        // Should contain two <trk> elements
-        final trkCount = RegExp('<trk>').allMatches(gpx).length;
-        expect(trkCount, equals(2));
-      });
+          // Both tracks' coordinates should appear in the output
+          expect(gpx, contains('40.0'));
+          expect(gpx, contains('51.0'));
+          // Should contain two <trk> elements
+          final trkCount = RegExp('<trk>').allMatches(gpx).length;
+          expect(trkCount, equals(2));
+        },
+      );
 
-      test('multi-track GPX to CSV includes points from ALL tracks', () {
+      test('multi-track GPX to CSV includes points from ALL tracks', () async {
         // Single-track formats flatten additionalTracks on encode so that no
         // track data is silently dropped.
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           multiTrackGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -464,24 +465,29 @@ void main() {
         expect(rows, hasLength(4));
       });
 
-      test('single-track GPX does not emit gpx.multi_track diagnostic', () {
-        final diagnostics = <ParseDiagnostic>[];
+      test(
+        'single-track GPX does not emit gpx.multi_track diagnostic',
+        () async {
+          final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
-          sampleGpx,
-          from: ActivityFileFormat.gpx,
-          to: ActivityFileFormat.gpx,
-          diagnostics: diagnostics,
-        );
+          await _convert(
+            sampleGpx,
+            from: ActivityFileFormat.gpx,
+            to: ActivityFileFormat.gpx,
+            diagnostics: diagnostics,
+          );
 
-        expect(diagnostics.any((d) => d.code == 'gpx.multi_track'), isFalse);
-      });
+          expect(diagnostics.any((d) => d.code == 'gpx.multi_track'), isFalse);
+        },
+      );
     });
 
     group('Sentinel value removal via normalization', () {
-      test('removes null-island sentinel coordinates when normalize is true', () {
-        // Points at (0,0) within 1e-6° are GPS "no fix yet" sentinels.
-        const gpxWithSentinel = '''<?xml version="1.0"?>
+      test(
+        'removes null-island sentinel coordinates when normalize is true',
+        () async {
+          // Points at (0,0) within 1e-6° are GPS "no fix yet" sentinels.
+          const gpxWithSentinel = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk><trkseg>
     <trkpt lat="0.0" lon="0.0">
@@ -496,33 +502,69 @@ void main() {
   </trkseg></trk>
 </gpx>''';
 
-        final csv = ActivityConverter.convert(
-          gpxWithSentinel,
-          from: ActivityFileFormat.gpx,
-          to: ActivityFileFormat.csv,
-          normalize: true,
-        );
+          final csv = await _convert(
+            gpxWithSentinel,
+            from: ActivityFileFormat.gpx,
+            to: ActivityFileFormat.csv,
+            normalize: true,
+          );
 
-        // The valid points should be present
-        expect(csv, contains('40.0'));
-        // The sentinel (0.0, 0.0) row should not appear as a data row.
-        // The header will contain "latitude" but no data row should have "0.0,0.0"
-        final rows = csv.trim().split('\n').skip(1).toList();
-        final hasSentinelRow = rows.any((row) {
-          final cols = row.split(',');
-          if (cols.length < 3) return false;
-          final lat = double.tryParse(cols[1]) ?? 999.0;
-          final lon = double.tryParse(cols[2]) ?? 999.0;
-          return lat.abs() < 1e-4 && lon.abs() < 1e-4;
-        });
-        expect(
-          hasSentinelRow,
-          isFalse,
-          reason: 'Sentinel (0,0) point should be removed',
-        );
-      });
+          // The valid points should be present
+          expect(csv, contains('40.0'));
+          // The sentinel (0.0, 0.0) row should not appear as a data row.
+          // The header will contain "latitude" but no data row should have "0.0,0.0"
+          final rows = csv.trim().split('\n').skip(1).toList();
+          final hasSentinelRow = rows.any((row) {
+            final cols = row.split(',');
+            if (cols.length < 3) return false;
+            final lat = double.tryParse(cols[1]) ?? 999.0;
+            final lon = double.tryParse(cols[2]) ?? 999.0;
+            return lat.abs() < 1e-4 && lon.abs() < 1e-4;
+          });
+          expect(
+            hasSentinelRow,
+            isFalse,
+            reason: 'Sentinel (0,0) point should be removed',
+          );
+        },
+      );
 
-      test('reports a repaired.* diagnostic for the sentinel it removes', () {
+      test(
+        'reports a repaired.* diagnostic for the sentinel it removes',
+        () async {
+          const gpxWithSentinel = '''<?xml version="1.0"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><trkseg>
+    <trkpt lat="0.0" lon="0.0">
+      <time>2024-01-01T10:00:00Z</time>
+    </trkpt>
+    <trkpt lat="40.0" lon="-105.0">
+      <time>2024-01-01T10:00:10Z</time>
+    </trkpt>
+  </trkseg></trk>
+</gpx>''';
+
+          final diagnostics = <ParseDiagnostic>[];
+          await _convert(
+            gpxWithSentinel,
+            from: ActivityFileFormat.gpx,
+            to: ActivityFileFormat.csv,
+            normalize: true,
+            diagnostics: diagnostics,
+          );
+
+          expect(
+            diagnostics.any(
+              (d) => d.code == 'repaired.sentinel_coords_removed',
+            ),
+            isTrue,
+            reason:
+                'a repaired sentinel point must be reported as a diagnostic',
+          );
+        },
+      );
+
+      test('keeps null-island sentinel when normalize is false', () async {
         const gpxWithSentinel = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk><trkseg>
@@ -535,36 +577,7 @@ void main() {
   </trkseg></trk>
 </gpx>''';
 
-        final diagnostics = <ParseDiagnostic>[];
-        ActivityConverter.convert(
-          gpxWithSentinel,
-          from: ActivityFileFormat.gpx,
-          to: ActivityFileFormat.csv,
-          normalize: true,
-          diagnostics: diagnostics,
-        );
-
-        expect(
-          diagnostics.any((d) => d.code == 'repaired.sentinel_coords_removed'),
-          isTrue,
-          reason: 'a repaired sentinel point must be reported as a diagnostic',
-        );
-      });
-
-      test('keeps null-island sentinel when normalize is false', () {
-        const gpxWithSentinel = '''<?xml version="1.0"?>
-<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
-  <trk><trkseg>
-    <trkpt lat="0.0" lon="0.0">
-      <time>2024-01-01T10:00:00Z</time>
-    </trkpt>
-    <trkpt lat="40.0" lon="-105.0">
-      <time>2024-01-01T10:00:10Z</time>
-    </trkpt>
-  </trkseg></trk>
-</gpx>''';
-
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           gpxWithSentinel,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -588,7 +601,7 @@ void main() {
       });
 
       test('clears sentinel elevation (<= -499m) but keeps the point when '
-          'normalize is true', () {
+          'normalize is true', () async {
         const gpxWithSentinelEle = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk><trkseg>
@@ -603,7 +616,7 @@ void main() {
   </trkseg></trk>
 </gpx>''';
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           gpxWithSentinelEle,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,

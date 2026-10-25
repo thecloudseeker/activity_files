@@ -1,14 +1,35 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/// Unit tests for ActivityConverter high-level API.
-///
-/// Tests format conversion between different file formats with various options.
+/// Unit tests for format conversion through `ActivityFiles.convert`, between
+/// every format and with various options.
 library;
 
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
+/// Converts [input] with `ActivityFiles.convert` and returns the encoded
+/// output; [diagnostics] collects every diagnostic the conversion reported.
+Future<String> _convert(
+  Object input, {
+  required ActivityFileFormat from,
+  required ActivityFileFormat to,
+  bool normalize = true,
+  EncoderOptions encoderOptions = const EncoderOptions(),
+  List<ParseDiagnostic>? diagnostics,
+}) async {
+  final result = await ActivityFiles.convert(
+    source: input,
+    from: from,
+    to: to,
+    normalize: normalize,
+    options: encoderOptions,
+    useIsolate: false,
+  );
+  diagnostics?.addAll(result.diagnostics);
+  return result.encoded;
+}
+
 void main() {
-  group('ActivityConverter (continued)', () {
+  group('ActivityFiles.convert (continued)', () {
     const sampleGpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
@@ -60,8 +81,8 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-      test('converts TCX to GPX', () {
-        final gpx = ActivityConverter.convert(
+      test('converts TCX to GPX', () async {
+        final gpx = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.gpx,
@@ -72,8 +93,8 @@ void main() {
         expect(gpx, contains('-105.0'));
       });
 
-      test('converts TCX to CSV', () {
-        final csv = ActivityConverter.convert(
+      test('converts TCX to CSV', () async {
+        final csv = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.csv,
@@ -84,8 +105,8 @@ void main() {
         expect(csv, contains('140'));
       });
 
-      test('converts TCX to GeoJSON', () {
-        final geojson = ActivityConverter.convert(
+      test('converts TCX to GeoJSON', () async {
+        final geojson = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.geojson,
@@ -95,8 +116,8 @@ void main() {
         expect(geojson, contains('40.0'));
       });
 
-      test('TCX to TCX round-trip preserves coordinates', () {
-        final tcx = ActivityConverter.convert(
+      test('TCX to TCX round-trip preserves coordinates', () async {
+        final tcx = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.tcx,
@@ -107,8 +128,8 @@ void main() {
         expect(tcx, contains('-105.0'));
       });
 
-      test('TCX to TCX round-trip preserves heart rate', () {
-        final tcx = ActivityConverter.convert(
+      test('TCX to TCX round-trip preserves heart rate', () async {
+        final tcx = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.tcx,
@@ -119,8 +140,8 @@ void main() {
         expect(tcx, contains('145'));
       });
 
-      test('TCX to CSV preserves heart rate channel', () {
-        final csv = ActivityConverter.convert(
+      test('TCX to CSV preserves heart rate channel', () async {
+        final csv = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.csv,
@@ -131,8 +152,8 @@ void main() {
         expect(csv, contains('145'));
       });
 
-      test('TCX preserves sport through to GPX', () {
-        final gpx = ActivityConverter.convert(
+      test('TCX preserves sport through to GPX', () async {
+        final gpx = await _convert(
           sampleTcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.gpx,
@@ -143,11 +164,11 @@ void main() {
         expect(gpx, contains('<gpx'));
       });
 
-      test('malformed TCX emits tcx error diagnostic', () {
+      test('malformed TCX emits tcx error diagnostic', () async {
         const bad = '<TrainingCenterDatabase><garbage';
         final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
+        await _convert(
           bad,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.csv,
@@ -193,8 +214,8 @@ void main() {
   ]
 }''';
 
-      test('converts GeoJSON LineString to GPX', () {
-        final gpx = ActivityConverter.convert(
+      test('converts GeoJSON LineString to GPX', () async {
+        final gpx = await _convert(
           sampleGeojsonLineString,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.gpx,
@@ -204,8 +225,8 @@ void main() {
         expect(gpx, contains('40.0'));
       });
 
-      test('converts GeoJSON LineString to CSV', () {
-        final csv = ActivityConverter.convert(
+      test('converts GeoJSON LineString to CSV', () async {
+        final csv = await _convert(
           sampleGeojsonLineString,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.csv,
@@ -215,8 +236,8 @@ void main() {
         expect(csv, contains('40.0'));
       });
 
-      test('converts GeoJSON FeatureCollection to CSV', () {
-        final csv = ActivityConverter.convert(
+      test('converts GeoJSON FeatureCollection to CSV', () async {
+        final csv = await _convert(
           sampleGeojsonCollection,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.csv,
@@ -226,8 +247,8 @@ void main() {
         expect(csv, contains('40.0005'));
       });
 
-      test('GeoJSON FeatureCollection preserves heart rate to CSV', () {
-        final csv = ActivityConverter.convert(
+      test('GeoJSON FeatureCollection preserves heart rate to CSV', () async {
+        final csv = await _convert(
           sampleGeojsonCollection,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.csv,
@@ -238,8 +259,8 @@ void main() {
         expect(csv, contains('145'));
       });
 
-      test('converts GeoJSON to TCX', () {
-        final tcx = ActivityConverter.convert(
+      test('converts GeoJSON to TCX', () async {
+        final tcx = await _convert(
           sampleGeojsonCollection,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.tcx,
@@ -249,8 +270,8 @@ void main() {
         expect(tcx, contains('40.0'));
       });
 
-      test('GeoJSON round-trip preserves coordinates', () {
-        final geojson = ActivityConverter.convert(
+      test('GeoJSON round-trip preserves coordinates', () async {
+        final geojson = await _convert(
           sampleGeojsonCollection,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.geojson,
@@ -260,11 +281,11 @@ void main() {
         expect(geojson, contains('40.0005'));
       });
 
-      test('malformed GeoJSON emits geojson error diagnostic', () {
+      test('malformed GeoJSON emits geojson error diagnostic', () async {
         const bad = '{ not valid json ';
         final diagnostics = <ParseDiagnostic>[];
 
-        ActivityConverter.convert(
+        await _convert(
           bad,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.csv,
@@ -281,8 +302,8 @@ void main() {
     // Format cross-matrix (filling obvious gaps)
     // ---------------------------------------------------------------------------
     group('Format cross-matrix', () {
-      test('GPX to TCX', () {
-        final tcx = ActivityConverter.convert(
+      test('GPX to TCX', () async {
+        final tcx = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.tcx,
@@ -293,7 +314,7 @@ void main() {
         expect(tcx, contains('-105.0'));
       });
 
-      test('TCX to GPX', () {
+      test('TCX to GPX', () async {
         const tcx = '''<?xml version="1.0" encoding="UTF-8"?>
 <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
   <Activities><Activity Sport="Running"><Id>2024-01-01T10:00:00Z</Id>
@@ -312,7 +333,7 @@ void main() {
   </Activity></Activities>
 </TrainingCenterDatabase>''';
 
-        final gpx = ActivityConverter.convert(
+        final gpx = await _convert(
           tcx,
           from: ActivityFileFormat.tcx,
           to: ActivityFileFormat.gpx,
@@ -323,8 +344,8 @@ void main() {
         expect(gpx, contains('-105.0'));
       });
 
-      test('GPX to GPX round-trip', () {
-        final gpx = ActivityConverter.convert(
+      test('GPX to GPX round-trip', () async {
+        final gpx = await _convert(
           sampleGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.gpx,
@@ -335,7 +356,7 @@ void main() {
         expect(gpx, contains('-105.0'));
       });
 
-      test('GeoJSON to GPX to CSV chain preserves coordinates', () {
+      test('GeoJSON to GPX to CSV chain preserves coordinates', () async {
         const geojson = '''
 {
   "type": "FeatureCollection",
@@ -353,13 +374,13 @@ void main() {
   ]
 }''';
 
-        final gpx = ActivityConverter.convert(
+        final gpx = await _convert(
           geojson,
           from: ActivityFileFormat.geojson,
           to: ActivityFileFormat.gpx,
         );
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           gpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -397,8 +418,8 @@ void main() {
   </trkseg></trk>
 </gpx>''';
 
-      test('GPX with HR extensions to CSV preserves heart rate', () {
-        final csv = ActivityConverter.convert(
+      test('GPX with HR extensions to CSV preserves heart rate', () async {
+        final csv = await _convert(
           gpxWithHr,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -409,8 +430,8 @@ void main() {
         expect(csv, contains('145'));
       });
 
-      test('GPX with HR to TCX preserves heart rate', () {
-        final tcx = ActivityConverter.convert(
+      test('GPX with HR to TCX preserves heart rate', () async {
+        final tcx = await _convert(
           gpxWithHr,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.tcx,
@@ -421,13 +442,13 @@ void main() {
         expect(tcx, contains('145'));
       });
 
-      test('CSV with multiple channels to TCX preserves heart rate', () {
+      test('CSV with multiple channels to TCX preserves heart rate', () async {
         const csvWithChannels =
             '''timestamp,latitude,longitude,heart_rate,cadence
 2024-01-01T10:00:00Z,40.0,-105.0,140,85
 2024-01-01T10:00:10Z,40.0005,-105.0005,145,88''';
 
-        final tcx = ActivityConverter.convert(
+        final tcx = await _convert(
           csvWithChannels,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.tcx,
@@ -437,12 +458,12 @@ void main() {
         expect(tcx, contains('140'));
       });
 
-      test('CSV with elevation round-trips through GPX', () {
+      test('CSV with elevation round-trips through GPX', () async {
         const csvWithEle = '''timestamp,latitude,longitude,elevation
 2024-01-01T10:00:00Z,40.0,-105.0,1600.0
 2024-01-01T10:00:10Z,40.0005,-105.0005,1605.0''';
 
-        final gpx = ActivityConverter.convert(
+        final gpx = await _convert(
           csvWithEle,
           from: ActivityFileFormat.csv,
           to: ActivityFileFormat.gpx,
@@ -457,13 +478,13 @@ void main() {
     // Edge cases
     // ---------------------------------------------------------------------------
     group('Edge cases', () {
-      test('activity with no points produces valid empty output', () {
+      test('activity with no points produces valid empty output', () async {
         const emptyGpx = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk><trkseg></trkseg></trk>
 </gpx>''';
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           emptyGpx,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,
@@ -475,7 +496,7 @@ void main() {
         expect(rows.single, startsWith('timestamp,latitude,longitude'));
       });
 
-      test('single-point activity produces valid output', () {
+      test('single-point activity produces valid output', () async {
         const onePoint = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk><trkseg>
@@ -491,7 +512,7 @@ void main() {
           ActivityFileFormat.tcx,
           ActivityFileFormat.geojson,
         ]) {
-          final result = ActivityConverter.convert(
+          final result = await _convert(
             onePoint,
             from: ActivityFileFormat.gpx,
             to: to,
@@ -507,15 +528,15 @@ void main() {
 
       test(
         'normalization is idempotent: running it twice yields same result',
-        () {
-          final first = ActivityConverter.convert(
+        () async {
+          final first = await _convert(
             sampleGpx,
             from: ActivityFileFormat.gpx,
             to: ActivityFileFormat.csv,
             normalize: true,
           );
 
-          final second = ActivityConverter.convert(
+          final second = await _convert(
             first,
             from: ActivityFileFormat.csv,
             to: ActivityFileFormat.csv,
@@ -529,7 +550,7 @@ void main() {
         },
       );
 
-      test('exact point count after deduplication', () {
+      test('exact point count after deduplication', () async {
         const threePtsOneDup = '''<?xml version="1.0"?>
 <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
   <trk><trkseg>
@@ -539,7 +560,7 @@ void main() {
   </trkseg></trk>
 </gpx>''';
 
-        final csv = ActivityConverter.convert(
+        final csv = await _convert(
           threePtsOneDup,
           from: ActivityFileFormat.gpx,
           to: ActivityFileFormat.csv,

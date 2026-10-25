@@ -11,6 +11,11 @@ bool isPlatformFile(Object? value) => false;
 /// Stub implementation always returns `null`.
 String? platformFilePath(Object? file) => null;
 
+/// The size of [file] in bytes, or `null` when unsupported.
+///
+/// Stub implementation for platforms without `dart:io`; always returns `null`.
+Future<int?> platformFileLength(Object? file) async => null;
+
 /// Attempts to read [file] bytes, returning `null` when unsupported.
 ///
 /// Stub implementation for platforms without `dart:io`; always returns `null`.
@@ -22,6 +27,13 @@ Future<({Uint8List bytes, String path})?> readPlatformFile(
 ///
 /// Stub implementation for platforms without `dart:io`; always `false`.
 bool platformPathExists(String path) => false;
+
+/// The size of the file at [path] in bytes.
+///
+/// Stub implementation for platforms without `dart:io`; throws
+/// [UnsupportedError] to signal the lack of file system access.
+Future<int> platformPathLength(String path) async =>
+    throw UnsupportedError('File system not available on this platform.');
 
 /// Reads bytes from a platform path when available.
 ///

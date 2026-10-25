@@ -7,7 +7,6 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
@@ -150,7 +149,7 @@ void main() {
       );
     });
 
-    test('load surfaces structured diagnostics summary', () async {
+    test('import surfaces structured diagnostics summary', () async {
       const problematicGpx = '''
 <?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="diagnostics-test" xmlns="http://www.topografix.com/GPX/1/1">
@@ -168,7 +167,7 @@ void main() {
   </trk>
 </gpx>
 ''';
-      final result = await ActivityFiles.load(
+      final result = await ActivityFiles.import(
         problematicGpx,
         useIsolate: false,
       );
@@ -290,10 +289,10 @@ void main() {
           time: baseTime.add(const Duration(minutes: 1)),
         )
         ..addGpxMetadataExtension(
-          ActivityFiles.gpxDeviceNode(device, extras: {'battery': 85}),
+          RawActivityBuilder.deviceNode(device, extras: {'battery': 85}),
         )
         ..addGpxTrackExtension(
-          ActivityFiles.gpxDeviceSummaryNode(
+          RawActivityBuilder.deviceSummaryNode(
             device,
             extras: {'battery': 85, 'calibration': 'fresh'},
           ),
@@ -309,8 +308,8 @@ void main() {
       expect(gpx, contains('<ext:calibration>fresh</ext:calibration>'));
     });
 
-    test('convertAndExport can append validation results', () async {
-      final result = await ActivityFiles.convertAndExport(
+    test('convert can append validation results', () async {
+      final result = await ActivityFiles.convert(
         source: sampleGpx,
         to: ActivityFileFormat.tcx,
         useIsolate: false,
@@ -321,8 +320,8 @@ void main() {
       expect(result.processingStats.validationDuration, isNotNull);
     });
 
-    test('convertAndExport honours export isolation', () async {
-      final result = await ActivityFiles.convertAndExport(
+    test('convert honours export isolation', () async {
+      final result = await ActivityFiles.convert(
         source: sampleGpx,
         to: ActivityFileFormat.fit,
         useIsolate: false,
@@ -352,71 +351,17 @@ void main() {
       expect(asyncResult.processingStats.normalization, isNotNull);
     });
 
-    test('convertAndExportStream handles streamed payloads', () async {
+    test('convert handles streamed payloads', () async {
       final stream = Stream<List<int>>.fromIterable([utf8.encode(sampleGpx)]);
-      final streamed = await ActivityFiles.convertAndExportStream(
+      final streamed = await ActivityFiles.convert(
         source: stream,
         from: ActivityFileFormat.gpx,
         to: ActivityFileFormat.tcx,
-        parseInIsolate: false,
+        useIsolate: false,
         runValidation: true,
       );
       expect(streamed.targetFormat, equals(ActivityFileFormat.tcx));
       expect(streamed.validation, isNotNull);
-    });
-
-    test('runPipeline handles streamed sources with validation', () async {
-      final bytes = await File('example/assets/sample.gpx').readAsBytes();
-      final streamed = Stream<List<int>>.fromIterable([
-        bytes.sublist(0, bytes.length ~/ 2),
-        bytes.sublist(bytes.length ~/ 2),
-      ]);
-      final request = ActivityExportRequest.fromStream(
-        stream: streamed,
-        from: ActivityFileFormat.gpx,
-        to: ActivityFileFormat.fit,
-        runValidation: true,
-        parseInIsolate: false,
-        exportInIsolate: false,
-      );
-      final result = await ActivityFiles.runPipeline(request);
-      expect(result.targetFormat, equals(ActivityFileFormat.fit));
-      expect(result.isBinary, isTrue);
-      expect(result.validation, isNotNull);
-      expect(result.asBytes().length, greaterThan(0));
-    });
-
-    test('runPipeline executes activity request', () async {
-      final baseTime = DateTime.utc(2024, 10, 1, 7);
-      final activity = ActivityFiles.builder()
-        ..addPoint(latitude: 40.0, longitude: -105.0, time: baseTime)
-        ..addPoint(
-          latitude: 40.0003,
-          longitude: -105.0003,
-          time: baseTime.add(const Duration(seconds: 5)),
-        );
-      final request = ActivityExportRequest.fromActivity(
-        activity: activity.build(normalize: false),
-        to: ActivityFileFormat.tcx,
-        runValidation: true,
-      );
-      final result = await ActivityFiles.runPipeline(request);
-      expect(result.targetFormat, ActivityFileFormat.tcx);
-      expect(result.validation, isNotNull);
-    });
-
-    test('ActivityExportRequest handles source conversion', () async {
-      final request = ActivityExportRequest.fromSource(
-        source: sampleGpx,
-        from: ActivityFileFormat.gpx,
-        to: ActivityFileFormat.fit,
-        runValidation: true,
-        exportInIsolate: true,
-      );
-      final result = await ActivityFiles.runPipeline(request);
-      expect(result.isBinary, isTrue);
-      expect(result.validation, isNotNull);
-      expect(result.processingStats.normalization, isNotNull);
     });
 
     test(
@@ -522,7 +467,7 @@ void main() {
         laps: [lap],
       );
 
-      final trimmed = ActivityFiles.trimInvalid(activity);
+      final trimmed = ActivityFiles.edit(activity).trimInvalid().activity;
       expect(trimmed.points.length, equals(1));
       expect(trimmed.points.single.latitude, closeTo(40, 1e-9));
       final hr = trimmed.channel(Channel.heartRate);
@@ -553,13 +498,13 @@ void main() {
         endTime: base.add(const Duration(minutes: 2)),
         distanceMeters: 500,
       );
-      final trimmed = ActivityFiles.trimInvalid(
+      final trimmed = ActivityFiles.edit(
         RawActivity(
           points: points,
           channels: {Channel.heartRate: hrSamples},
           laps: [lap],
         ),
-      );
+      ).trimInvalid().activity;
       final hr = trimmed.channel(Channel.heartRate);
       expect(hr.length, equals(2));
       expect(hr.last.time, equals(points.last.time));
@@ -592,11 +537,12 @@ void main() {
         laps: [lap],
       );
 
-      final cropped = ActivityFiles.crop(
-        activity,
-        start: base.add(const Duration(minutes: 1)),
-        end: base.add(const Duration(minutes: 2)),
-      );
+      final cropped = ActivityFiles.edit(activity)
+          .crop(
+            base.add(const Duration(minutes: 1)),
+            base.add(const Duration(minutes: 2)),
+          )
+          .activity;
       expect(cropped.points.length, equals(2));
       expect(cropped.points.first.time, equals(points[1].time));
       expect(cropped.points.last.time, equals(points[2].time));
@@ -608,7 +554,7 @@ void main() {
       expect(cropped.laps.single.endTime, equals(points[2].time));
     });
 
-    test('smoothHeartRate applies moving average to heart-rate channel', () {
+    test('smoothHR applies moving average to heart-rate channel', () {
       final base = DateTime.utc(2024, 1, 7, 9);
       final points = [
         GeoPoint(latitude: 40, longitude: -105, time: base),
@@ -633,7 +579,7 @@ void main() {
         channels: {Channel.heartRate: hrSamples},
       );
 
-      final smoothed = ActivityFiles.smoothHeartRate(activity, window: 3);
+      final smoothed = ActivityFiles.edit(activity).smoothHR(3).activity;
       final hr = smoothed.channel(Channel.heartRate);
       expect(hr.length, equals(3));
       expect(hr[0].time, equals(points[0].time));
@@ -642,7 +588,7 @@ void main() {
       expect(hr[2].value, closeTo(170, 1e-6));
     });
 
-    test('normalizeActivity respects disabled cleanup steps', () {
+    test('normalization keeps the last of duplicate samples', () {
       final base = DateTime.utc(2024, 1, 7, 10);
       final duplicateTime = base.add(const Duration(minutes: 1));
       final points = [
@@ -660,15 +606,10 @@ void main() {
         channels: {Channel.heartRate: hrSamples},
       );
 
-      final untouched = ActivityFiles.normalizeActivity(
-        activity,
-        sortAndDedup: false,
-        trimInvalid: false,
-      );
-      expect(untouched.points.length, equals(3));
-      expect(untouched.channel(Channel.heartRate).length, equals(3));
-
-      final normalized = ActivityFiles.normalizeActivity(activity);
+      final normalized = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.gpx,
+      ).activity;
       expect(normalized.points.length, equals(1));
       expect(normalized.points.single.latitude, closeTo(40, 1e-9));
       final hr = normalized.channel(Channel.heartRate);

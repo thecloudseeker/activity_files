@@ -43,10 +43,16 @@ class FitParser implements ActivityFormatParser {
   /// are handled:
   /// * [IntegrityMode.strict]: Throws on any issue (fail-fast)
   /// * [IntegrityMode.report]: Logs issues as diagnostics, continues (default)
-  /// * [IntegrityMode.silent]: Ignores all issues silently
+  /// * [IntegrityMode.silent]: Report mode without the `fit.header.*` and
+  ///   `fit.trailer.*` diagnostics
   ///
-  /// When [IntegrityConfig.collectStats] is true, detailed statistics about
-  /// issues are collected and exposed in the result.
+  /// When [IntegrityConfig.collectStats] is true, the result's
+  /// [ActivityParseResult.integrityStats] counts the CRC mismatches and
+  /// truncated sections that the diagnostics report.
+  @Deprecated(
+    'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse '
+    'damaged files. Will be removed in 0.10.0.',
+  )
   ActivityParseResult parseBytesWithIntegrity(
     Uint8List payload, {
     IntegrityConfig integrityConfig = const IntegrityConfig(),
@@ -117,7 +123,7 @@ class FitParser implements ActivityFormatParser {
                 "FIT header CRC 0x${storedHeaderCrc.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computedHeaderCrc.toRadixString(16).padLeft(4, '0')}.",
             node: const ParseNodeReference(path: 'fit.header'),
             suggestedFix:
-                'Re-download or re-export the FIT file from the source device. If the file is otherwise valid, try parsing with IntegrityMode.silent to recover data.',
+                'Re-download or re-export the FIT file from the source device. The data that could be read is already in the result; pass strictFitIntegrity: true to refuse such files instead.',
             priority: 1,
           ),
         );
@@ -257,7 +263,7 @@ class FitParser implements ActivityFormatParser {
                 "FIT trailer CRC 0x${storedCrc.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computedCrc.toRadixString(16).padLeft(4, '0')}.",
             node: const ParseNodeReference(path: 'fit.trailer'),
             suggestedFix:
-                'The data may be corrupted. Re-download the file from the device; if recovery is needed, parse with IntegrityMode.silent.',
+                'The data may be corrupted. Re-download the file from the device. The data that could be read is already in the result; pass strictFitIntegrity: true to refuse such files instead.',
             priority: 1,
           ),
         );
@@ -316,7 +322,7 @@ class FitParser implements ActivityFormatParser {
                   "FIT header CRC 0x${stored.toRadixString(16).padLeft(4, '0')} does not match computed 0x${computed.toRadixString(16).padLeft(4, '0')} in chained segment $segmentCount.",
               node: segmentNode,
               suggestedFix:
-                  'Re-download or re-export the FIT file from the source device. If the file is otherwise valid, try parsing with IntegrityMode.silent to recover data.',
+                  'Re-download or re-export the FIT file from the source device. The data that could be read is already in the result; pass strictFitIntegrity: true to refuse such files instead.',
               priority: 1,
             ),
           );
@@ -358,7 +364,7 @@ class FitParser implements ActivityFormatParser {
                 description: 'segment=$segmentCount',
               ),
               suggestedFix:
-                  'The data may be corrupted. Re-download the file from the device; if recovery is needed, parse with IntegrityMode.silent.',
+                  'The data may be corrupted. Re-download the file from the device. The data that could be read is already in the result; pass strictFitIntegrity: true to refuse such files instead.',
               priority: 1,
             ),
           );
@@ -1266,9 +1272,11 @@ class FitParser implements ActivityFormatParser {
   ActivityParseResult _parsePayloadWithIntegrity(
     Uint8List payload,
     List<ParseDiagnostic> diagnostics, {
+    // ignore: deprecated_member_use_from_same_package
     required IntegrityConfig integrityConfig,
   }) {
     // Collect stats if enabled
+    // ignore: deprecated_member_use_from_same_package
     final stats = integrityConfig.collectStats ? IntegrityStats() : null;
 
     final result = _parsePayload(payload, diagnostics);
@@ -1289,6 +1297,7 @@ class FitParser implements ActivityFormatParser {
     }
 
     switch (integrityConfig.mode) {
+      // ignore: deprecated_member_use_from_same_package
       case IntegrityMode.strict:
         final integrityDiags = result.diagnostics.where(
           (d) =>
@@ -1303,6 +1312,7 @@ class FitParser implements ActivityFormatParser {
             'FIT integrity check failed (strict mode).\n  $info',
           );
         }
+      // ignore: deprecated_member_use_from_same_package
       case IntegrityMode.silent:
         // Only suppress integrity-related diagnostics, not everything: an
         // unrelated info diagnostic (multi-session detection, outlier
@@ -1318,9 +1328,12 @@ class FitParser implements ActivityFormatParser {
                     !d.code.startsWith('fit.trailer'),
               )
               .toList(),
+          // ignore: deprecated_member_use_from_same_package
           integrityStats: stats,
+          // ignore: deprecated_member_use_from_same_package
           integrityMode: integrityConfig.mode,
         );
+      // ignore: deprecated_member_use_from_same_package
       case IntegrityMode.report:
         break;
     }
@@ -1328,7 +1341,9 @@ class FitParser implements ActivityFormatParser {
     return ActivityParseResult(
       activity: result.activity,
       diagnostics: result.diagnostics,
+      // ignore: deprecated_member_use_from_same_package
       integrityStats: stats,
+      // ignore: deprecated_member_use_from_same_package
       integrityMode: integrityConfig.mode,
     );
   }

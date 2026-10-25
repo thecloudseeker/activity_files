@@ -80,12 +80,7 @@ RawActivity buildSampleActivity() {
     creator: 'unit-test device',
   );
 
-  final result = RawTransforms.computeCumulativeDistance(baseActivity);
-  final withDistance = result.activity;
-  final withSpeed = RawEditor(
-    withDistance,
-  ).recomputeDistanceAndSpeed().activity;
-  return withSpeed;
+  return RawEditor(baseActivity).recomputeDistanceAndSpeed().activity;
 }
 
 /// Fluent builder for creating test activities with custom configuration.
@@ -245,8 +240,6 @@ class ActivityBuilder {
     );
 
     if (computeDistance && _points.isNotEmpty) {
-      final result = RawTransforms.computeCumulativeDistance(activity);
-      activity = result.activity;
       activity = RawEditor(activity).recomputeDistanceAndSpeed().activity;
     }
 

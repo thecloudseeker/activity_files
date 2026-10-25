@@ -9,11 +9,18 @@ import '../fixtures/builders.dart';
 
 void main() {
   group('CSV roundtrip', () {
-    test('encode -> parse preserves points and channels', () {
+    test('encode -> parse preserves points and channels', () async {
       final activity = buildSampleActivity();
 
-      final csv = ActivityFiles.exportToCsv(activity);
-      final result = ActivityFiles.importFromCsv(csv);
+      final csv = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.csv,
+      ).encoded;
+      final result = await ActivityFiles.import(
+        csv,
+        format: ActivityFileFormat.csv,
+        useIsolate: false,
+      );
 
       final errorDiagnostics = result.diagnostics
           .where((d) => d.severity == ParseSeverity.error)
@@ -35,11 +42,18 @@ void main() {
   });
 
   group('GeoJSON roundtrip', () {
-    test('encode -> parse preserves points and sport', () {
+    test('encode -> parse preserves points and sport', () async {
       final activity = buildSampleActivity();
 
-      final geojson = ActivityFiles.exportToGeojson(activity);
-      final result = ActivityFiles.importFromGeojson(geojson);
+      final geojson = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+      ).encoded;
+      final result = await ActivityFiles.import(
+        geojson,
+        format: ActivityFileFormat.geojson,
+        useIsolate: false,
+      );
 
       final errorDiagnostics = result.diagnostics
           .where((d) => d.severity == ParseSeverity.error)
@@ -55,14 +69,22 @@ void main() {
       expect(result.activity.sport, equals(activity.sport));
     });
 
-    test('point FeatureCollection roundtrip preserves channels', () {
+    test('point FeatureCollection roundtrip preserves channels', () async {
       final activity = buildSampleActivity();
 
-      final geojson = ActivityFiles.exportToGeojsonPoints(
-        activity,
-        includeChannels: true,
+      final geojson = ActivityFiles.export(
+        activity: activity,
+        to: ActivityFileFormat.geojson,
+        options: const EncoderOptions(
+          geojsonGeometry: GeojsonGeometry.points,
+          geojsonIncludeChannels: true,
+        ),
+      ).encoded;
+      final result = await ActivityFiles.import(
+        geojson,
+        format: ActivityFileFormat.geojson,
+        useIsolate: false,
       );
-      final result = ActivityFiles.importFromGeojson(geojson);
 
       final errorDiagnostics = result.diagnostics
           .where((d) => d.severity == ParseSeverity.error)
@@ -81,11 +103,15 @@ void main() {
       expect(hr.first.value, activity.channel(Channel.heartRate).first.value);
     });
 
-    test('missing timestamp uses deterministic UTC epoch fallback', () {
+    test('missing timestamp uses deterministic UTC epoch fallback', () async {
       const geojson =
           '{"type":"Feature","geometry":{"type":"Point","coordinates":[13.405,52.52]},"properties":{"heart_rate":140}}';
 
-      final result = ActivityFiles.importFromGeojson(geojson);
+      final result = await ActivityFiles.import(
+        geojson,
+        format: ActivityFileFormat.geojson,
+        useIsolate: false,
+      );
 
       expect(
         result.diagnostics.where((d) => d.severity == ParseSeverity.error),

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
+// Tests deprecated API on purpose; deleted together with it in 0.10.0.
+// ignore_for_file: deprecated_member_use_from_same_package
 import 'dart:typed_data';
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';

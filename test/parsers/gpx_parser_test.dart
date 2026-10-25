@@ -5,6 +5,8 @@
 /// and error conditions.
 library;
 
+import 'dart:io';
+
 import 'package:activity_files/activity_files.dart';
 import 'package:test/test.dart';
 
@@ -566,6 +568,39 @@ void main() {
 
         expect(result.activity.creator, equals('Garmin BaseCamp'));
       });
+    });
+  });
+
+  group('a document that is not GPX', () {
+    Future<ActivityImportResult> read(String content) => ActivityFiles.import(
+      content,
+      format: ActivityFileFormat.gpx,
+      useIsolate: false,
+    );
+
+    for (final (label, content) in [
+      ('a TCX file', File('example/assets/sample.tcx').readAsStringSync()),
+      ('an HTML page', '<html><body>not an activity</body></html>'),
+    ]) {
+      test('reports $label as gpx.document.unexpected_root', () async {
+        final result = await read(content);
+        final errors = result.diagnostics
+            .where((d) => d.severity == ParseSeverity.error)
+            .map((d) => d.code);
+        expect(errors, contains('gpx.document.unexpected_root'));
+        expect(result.activity.points, isEmpty);
+      });
+    }
+
+    test('its own format reads without that error', () async {
+      final result = await read(
+        File('example/assets/sample.gpx').readAsStringSync(),
+      );
+      expect(
+        result.diagnostics.map((d) => d.code),
+        isNot(contains('gpx.document.unexpected_root')),
+      );
+      expect(result.activity.points, isNotEmpty);
     });
   });
 }
