@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
 import '../models.dart';
 import 'activity_parser.dart';

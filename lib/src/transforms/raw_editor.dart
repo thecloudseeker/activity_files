@@ -449,7 +449,7 @@ class RawEditor {
     // time that still falls between the same neighbors leaves the list
     // sorted. Every other sort site in this file guards the same way.
     if (time != null && !_isSortedByTime(points)) {
-      mergeSort(points, compare: (a, b) => a.time.compareTo(b.time));
+      stableSort(points, (a, b) => a.time.compareTo(b.time));
     }
     _activity = _activity.copyWith(points: points);
     return this;
@@ -1404,7 +1404,7 @@ bool _isAlreadyNormalized(RawActivity activity) {
 /// unspecified (and in practice non-stable, above ~32 elements) tie-break.
 List<T> _stableSortByTime<T>(List<T> items, DateTime Function(T item) timeOf) {
   final sorted = List<T>.of(items);
-  mergeSort(sorted, compare: (a, b) => timeOf(a).compareTo(timeOf(b)));
+  stableSort(sorted, (a, b) => timeOf(a).compareTo(timeOf(b)));
   return sorted;
 }
 

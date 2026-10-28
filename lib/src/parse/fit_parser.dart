@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:collection/collection.dart';
-
 import '../fit/fit_crc.dart';
 import '../fit/fit_epoch.dart';
 import '../fit/fit_record_fields.dart';
@@ -12,6 +10,7 @@ import '../fit/fit_sport.dart';
 import '../geo_math.dart';
 import '../identifier_sanitizer.dart';
 import '../models.dart';
+import '../stable_sort.dart';
 import 'activity_parser.dart';
 import 'integrity_mode.dart';
 import 'parse_result.dart';
@@ -1588,7 +1587,7 @@ List<GeoPoint> _filterContiguousPoints(
   // clamp to the same value, e.g. a pre-FIT-epoch source) must keep their
   // original relative order, not get shuffled by an unstable sort.
   final sorted = [...points];
-  mergeSort(sorted, compare: (a, b) => a.time.compareTo(b.time));
+  stableSort(sorted, (a, b) => a.time.compareTo(b.time));
 
   // Find groups where consecutive points are within a reasonable time window (24 hours)
   final groups = <List<GeoPoint>>[];

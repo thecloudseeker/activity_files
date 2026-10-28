@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
 
 import '../channel_mapper.dart';
 import '../geo_math.dart';
 import '../models.dart';
+import '../stable_sort.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
 import 'encoder_utils.dart';
@@ -23,8 +23,8 @@ class TcxEncoder implements ActivityFormatEncoder {
     activity = activity.flattened();
     final tcxVersion = options.tcxVersion;
     final emitV1 = tcxVersion == TcxVersion.v1;
-    final points = [...activity.points]
-      ..sort((a, b) => a.time.compareTo(b.time));
+    final points = [...activity.points];
+    stableSort(points, (a, b) => a.time.compareTo(b.time));
     if (points.isEmpty) {
       return _emptyDocument(
         emitV1
@@ -78,7 +78,7 @@ class TcxEncoder implements ActivityFormatEncoder {
     // window against the wrong boundary.
     final laps = [...unorderedLaps];
     if (!_isSortedByStart(laps)) {
-      mergeSort(laps, compare: (a, b) => a.startTime.compareTo(b.startTime));
+      stableSort(laps, (a, b) => a.startTime.compareTo(b.startTime));
     }
     final hrDelta = options.maxDeltaFor(Channel.heartRate);
     final cadenceDelta = options.maxDeltaFor(Channel.cadence);

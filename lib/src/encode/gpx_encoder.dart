@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../channel_mapper.dart';
 import '../identifier_sanitizer.dart';
 import '../models.dart';
+import '../stable_sort.dart';
 import 'activity_encoder.dart';
 import 'encoder_options.dart';
 import 'encoder_utils.dart';
@@ -14,8 +15,8 @@ class GpxEncoder implements ActivityFormatEncoder {
   @override
   String encode(RawActivity activity, EncoderOptions options) {
     final emitGpx10 = options.gpxVersion == GpxVersion.v1_0;
-    final points = [...activity.points]
-      ..sort((a, b) => a.time.compareTo(b.time));
+    final points = [...activity.points];
+    stableSort(points, (a, b) => a.time.compareTo(b.time));
 
     final metadataExtensions = activity.gpxMetadataExtensions;
     final tracks = [activity, ...activity.additionalTracks];
@@ -211,8 +212,8 @@ class GpxEncoder implements ActivityFormatEncoder {
           // <trkseg> whenever two segments overlap in time. Sorting inside
           // each already-determined segment is always safe since it can't
           // move a point across a segment boundary.
-          final segmentPoints = points.sublist(segStart, segEnd)
-            ..sort((a, b) => a.time.compareTo(b.time));
+          final segmentPoints = points.sublist(segStart, segEnd);
+          stableSort(segmentPoints, (a, b) => a.time.compareTo(b.time));
           builder.element(
             'trkseg',
             nest: () {
