@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:csv/csv.dart';
-
 import '../models.dart';
 import 'activity_parser.dart';
+import 'csv_reader.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
 
@@ -16,11 +15,22 @@ class CsvParser implements ActivityFormatParser {
     final diagnostics = <ParseDiagnostic>[];
 
     try {
-      // CSV 8.0.0: Use new Csv API. skipEmptyLines is intentionally off so
-      // `csvData`'s row indices (used in diagnostic messages below) line up
-      // with physical file lines; blank rows are filtered manually in the
-      // loop instead.
-      final csvData = Csv(skipEmptyLines: false).decode(input);
+      // Empty lines stay rows, so the row numbers in the diagnostics below
+      // follow the file; blank rows are skipped in the loop instead.
+      final read = readCsv(input);
+      final csvData = read.rows;
+      if (read.delimiter != ',') {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.info,
+            code: 'csv.header.delimiter',
+            message:
+                'Columns are separated by '
+                '${read.delimiter == '\t' ? 'tabs' : '"${read.delimiter}"'}, '
+                'found in the header line.',
+          ),
+        );
+      }
 
       if (csvData.isEmpty) {
         diagnostics.add(

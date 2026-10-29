@@ -20,7 +20,6 @@ environment:
 dependencies:
   args: ^2.7.0
   xml: ">=6.6.1 <8.0.0"
-  csv: ^8.0.0
 
 dev_dependencies:
   lints: ^6.1.0
