@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
 import 'package:activity_files/src/encode/geojson_encoder.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -25,7 +27,7 @@ void main() {
 
   RawActivity roundTrip(RawActivity activity, ActivityFileFormat format) {
     final encoded = ActivityEncoder.encode(activity, format);
-    final result = ActivityParser.parseBytes(
+    final result = ParserRouter.parseBytes(
       Uint8List.fromList(utf8.encode(encoded)),
       format,
     );
@@ -135,7 +137,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-      final result = ActivityParser.parseBytes(
+      final result = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(tcx)),
         ActivityFileFormat.tcx,
       );
@@ -183,7 +185,7 @@ void main() {
           '"geometry":{"type":"Point","coordinates":[9.0,48.0,300.0]},'
           '"properties":{"timestamp":"2024-04-02T07:00:00Z","altitude":300.0,'
           '"heart_rate":140,"core_temp":37.2}}]}';
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(geojson)),
         ActivityFileFormat.geojson,
       ).activity;
@@ -206,7 +208,7 @@ void main() {
         sport: Sport.running,
       );
       final encoded = GeojsonEncoder.encodeAsPointsWithChannels(activity);
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(encoded)),
         ActivityFileFormat.geojson,
       ).activity;
@@ -220,7 +222,7 @@ void main() {
       final activity = RawActivity(points: points, sport: Sport.hiking);
 
       final encoded = GeojsonEncoder.encodeAsPoints(activity);
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(encoded)),
         ActivityFileFormat.geojson,
       ).activity;
@@ -238,7 +240,7 @@ void main() {
 
       final encoded = GeojsonEncoder.encodeAsPoints(activity);
       expect(encoded, isNot(contains('altitude')));
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(encoded)),
         ActivityFileFormat.geojson,
       ).activity;
@@ -265,7 +267,7 @@ void main() {
       expect(encoded.split('\n').first, contains('core_temp'));
       expect(encoded.split('\n').first, contains('water_temperature'));
 
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(encoded)),
         ActivityFileFormat.csv,
       ).activity;
@@ -300,7 +302,7 @@ void main() {
 </gpx>''';
 
     test('unknown TPX tags become custom channels', () {
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(gpx)),
         ActivityFileFormat.gpx,
       ).activity;
@@ -315,7 +317,7 @@ void main() {
       // not just the parse half.
       final encoded = ActivityEncoder.encode(parsed, ActivityFileFormat.gpx);
       expect(encoded, contains('<gpxtpx:vertical_osc>'));
-      final reparsed = ActivityParser.parseBytes(
+      final reparsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(encoded)),
         ActivityFileFormat.gpx,
       ).activity;
@@ -326,7 +328,7 @@ void main() {
     });
 
     test('foreign point extension nodes are preserved and re-encoded', () {
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(gpx)),
         ActivityFileFormat.gpx,
       ).activity;
@@ -341,7 +343,7 @@ void main() {
       expect(encoded, contains('myext:sensor'));
       expect(encoded, contains('xmlns:myext'));
 
-      final reparsed = ActivityParser.parseBytes(
+      final reparsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(encoded)),
         ActivityFileFormat.gpx,
       ).activity;
@@ -356,7 +358,7 @@ void main() {
   group('FIT unknown record fields', () {
     test('unknown native record field becomes a fit_field_<n> channel', () {
       final bytes = _buildFitWithUnknownRecordField();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final samples = result.activity.channel(Channel.custom('fit_field_39'));
       expect(samples, hasLength(1));
       expect(samples.single.value, 85.0);
@@ -388,7 +390,7 @@ void main() {
   </trkseg></trk>
 </gpx>''';
 
-      final fromGpx = ActivityParser.parseBytes(
+      final fromGpx = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(gpx)),
         ActivityFileFormat.gpx,
       ).activity;
@@ -398,7 +400,7 @@ void main() {
         fromGpx,
         ActivityFileFormat.fit,
       );
-      final fromFit = ActivityParser.parseBytes(
+      final fromFit = ParserRouter.parseBytes(
         base64Decode(fitEncoded),
         ActivityFileFormat.fit,
       ).activity;
@@ -410,7 +412,7 @@ void main() {
       expect(values(fromFit, Channel.depth), [3.2, 2.9]);
 
       final gpxAgain = ActivityEncoder.encode(fromFit, ActivityFileFormat.gpx);
-      final reparsed = ActivityParser.parseBytes(
+      final reparsed = ParserRouter.parseBytes(
         Uint8List.fromList(utf8.encode(gpxAgain)),
         ActivityFileFormat.gpx,
       ).activity;

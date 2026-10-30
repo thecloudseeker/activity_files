@@ -1012,9 +1012,7 @@ class ActivityFiles {
 
   /// Import a CSV payload into a [RawActivity].
   @Deprecated(
-    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
-    '(async). For a sync parse, use '
-    'ActivityParser.parse(input, ActivityFileFormat.csv). '
+    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead. '
     'Will be removed in 0.10.0.',
   )
   static ActivityParseResult importFromCsv(String input) =>
@@ -1023,9 +1021,7 @@ class ActivityFiles {
   /// Import a GeoJSON payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
-    'instead (async). For a sync parse, use '
-    'ActivityParser.parse(input, ActivityFileFormat.geojson). '
-    'Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.10.0.',
   )
   static ActivityParseResult importFromGeojson(String input) =>
       const GeojsonParser().parse(input);

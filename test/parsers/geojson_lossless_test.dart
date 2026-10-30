@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 /// GeoJSON round-trip coverage for activity-level metadata properties (numeric
 /// and non-numeric) and Polygon geometries.
 void main() {
   RawActivity parse(String json) =>
-      ActivityParser.parse(json, ActivityFileFormat.geojson).activity;
+      ParserRouter.parse(json, ActivityFileFormat.geojson).activity;
 
   group('GeoJSON lossless round-trip', () {
     test('activity-level properties survive with their JSON types', () {
@@ -130,7 +132,7 @@ void main() {
  ]},
  "properties":{"activity_type":"hiking"}}''';
 
-      final result = ActivityParser.parse(json, ActivityFileFormat.geojson);
+      final result = ParserRouter.parse(json, ActivityFileFormat.geojson);
       expect(
         result.activity.points,
         hasLength(4),
@@ -162,7 +164,7 @@ void main() {
    ]}
  }}''';
 
-        final result = ActivityParser.parse(json, ActivityFileFormat.geojson);
+        final result = ParserRouter.parse(json, ActivityFileFormat.geojson);
         expect(result.activity.points, hasLength(4));
         expect(
           result.activity.points[0].time,

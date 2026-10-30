@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -86,7 +88,7 @@ void main() {
   }
 
   RawActivity parse(Uint8List bytes) =>
-      ActivityParser.parseBytes(bytes, ActivityFileFormat.fit).activity;
+      ParserRouter.parseBytes(bytes, ActivityFileFormat.fit).activity;
 
   void expectSpeeds(RawActivity activity, double speed) {
     expect(activity.channel(Channel.speed).map((s) => s.value), [

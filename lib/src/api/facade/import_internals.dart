@@ -142,9 +142,9 @@ ActivityParseResult _parseSync(
   Encoding encoding,
 ) {
   return switch (payload) {
-    String text => ActivityParser.parse(text, format),
+    String text => ParserRouter.parse(text, format),
     Uint8List bytes => _parseBytesWithBom(bytes, format, encoding),
-    List<int> bytes => ActivityParser.parseBytes(
+    List<int> bytes => ParserRouter.parseBytes(
       bytes,
       format,
       encoding: encoding,
@@ -155,7 +155,7 @@ ActivityParseResult _parseSync(
       'Expected: String or List<int> (bytes)\n'
       '\n'
       'If using a Stream, parse with parseStream() instead:\n'
-      '  ActivityParser.parseStream(stream, format)\n'
+      '  ParserRouter.parseStream(stream, format)\n'
       '\n'
       'Received type: ${payload.runtimeType}',
     ),
@@ -174,7 +174,7 @@ Future<ActivityParseResult> _parseResolved(
     return await _parseBytesIsolated(bytes, format, encoding, useIsolate);
   }
   if (payload is Stream<List<int>>) {
-    return await ActivityParser.parseStream(
+    return await ParserRouter.parseStream(
       payload,
       format,
       useIsolate: useIsolate,
@@ -213,23 +213,7 @@ Future<ActivityParseResult> _parseBytesIsolated(
 ActivityParseResult _failedParseResult({
   required ActivityFileFormat format,
   required FormatException error,
-}) {
-  final formatName = format.name.toUpperCase();
-  final trimmed = error.message.trim();
-  final message = trimmed.isEmpty ? error.toString() : trimmed;
-  return ActivityParseResult(
-    activity: RawActivity(),
-    diagnostics: <ParseDiagnostic>[
-      ParseDiagnostic(
-        severity: ParseSeverity.error,
-        code: 'parser.format_exception',
-        message:
-            'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`import(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
-        node: ParseNodeReference(path: '${format.name}.document'),
-      ),
-    ],
-  );
-}
+}) => formatExceptionResult(format, error);
 
 Future<({Object payload, bool unavailable})> _materializePayload(
   Object payload, {
@@ -563,10 +547,10 @@ ActivityParseResult _parseBytesWithBom(
     final bomDecoder = _decoderForBom(bytes);
     if (bomDecoder != null) {
       final decoded = bomDecoder(bytes);
-      return ActivityParser.parse(decoded, format);
+      return ParserRouter.parse(decoded, format);
     }
   }
-  return ActivityParser.parseBytes(bytes, format, encoding: encoding);
+  return ParserRouter.parseBytes(bytes, format, encoding: encoding);
 }
 
 bool _shouldFailFitIntegrity(

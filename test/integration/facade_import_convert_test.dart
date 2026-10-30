@@ -11,6 +11,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/sample_data.dart';
@@ -58,7 +60,7 @@ void main() {
       expect(conversion.isBinary, isTrue);
       final bytes = conversion.asBytes();
       expect(bytes.length, greaterThan(0));
-      final parsed = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final parsed = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       expect(parsed.activity.points.length, greaterThan(0));
       final stats = conversion.processingStats;
       expect(stats.normalization, isNotNull);
@@ -211,7 +213,7 @@ void main() {
 
     test('parseStream surfaces format exceptions as diagnostics', () async {
       final stream = Stream<List<int>>.fromIterable([utf8.encode(sampleGpx)]);
-      final result = await ActivityParser.parseStream(
+      final result = await ParserRouter.parseStream(
         stream,
         ActivityFileFormat.gpx,
         useIsolate: false,
@@ -397,10 +399,7 @@ void main() {
       final headerSize = corrupted[0];
       corrupted[headerSize - 1] ^= 0xFF;
 
-      final result = ActivityParser.parseBytes(
-        corrupted,
-        ActivityFileFormat.fit,
-      );
+      final result = ParserRouter.parseBytes(corrupted, ActivityFileFormat.fit);
 
       expect(
         result.diagnostics.where((d) => d.code == 'fit.header.crc_mismatch'),

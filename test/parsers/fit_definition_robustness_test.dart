@@ -2,6 +2,8 @@
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -83,7 +85,7 @@ void main() {
       addRecord(data, 0, base + 4);
       addRecord(data, 0, base + 5);
 
-      final activity = ActivityParser.parseBytes(
+      final activity = ParserRouter.parseBytes(
         finish(data),
         ActivityFileFormat.fit,
       ).activity;
@@ -126,7 +128,7 @@ void main() {
         ..add(uint16LeBytes(3000)) // avg_speed 3.0 m/s
         ..add(uint32LeBytes(500000)); // distance 5000 m
 
-      final activity = ActivityParser.parseBytes(
+      final activity = ParserRouter.parseBytes(
         finish(data),
         ActivityFileFormat.fit,
       ).activity;

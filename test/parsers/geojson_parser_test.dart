@@ -9,6 +9,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -24,7 +26,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -48,7 +50,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -70,7 +72,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -97,7 +99,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -120,7 +122,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -143,7 +145,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -161,7 +163,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -200,7 +202,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -236,7 +238,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -259,7 +261,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -294,7 +296,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -329,7 +331,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -374,7 +376,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -408,7 +410,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -442,7 +444,7 @@ void main() {
             ],
           };
 
-          final result = ActivityParser.parse(
+          final result = ParserRouter.parse(
             jsonEncode(geojson),
             ActivityFileFormat.geojson,
           );
@@ -478,7 +480,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -495,7 +497,7 @@ void main() {
 
     group('Error handling', () {
       test('reports error for empty GeoJSON', () {
-        final result = ActivityParser.parse('{}', ActivityFileFormat.geojson);
+        final result = ParserRouter.parse('{}', ActivityFileFormat.geojson);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -504,7 +506,7 @@ void main() {
       });
 
       test('reports error for invalid JSON', () {
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           'not valid json',
           ActivityFileFormat.geojson,
         );
@@ -517,7 +519,7 @@ void main() {
       });
 
       test('reports error for non-object GeoJSON', () {
-        final result = ActivityParser.parse('[]', ActivityFileFormat.geojson);
+        final result = ParserRouter.parse('[]', ActivityFileFormat.geojson);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -528,7 +530,7 @@ void main() {
       test('reports error for unsupported type', () {
         final geojson = {'type': 'Polygon'};
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -542,7 +544,7 @@ void main() {
       test('reports error for Feature without geometry', () {
         final geojson = {'type': 'Feature', 'properties': {}};
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -560,7 +562,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -574,7 +576,7 @@ void main() {
       test('reports error for empty FeatureCollection', () {
         final geojson = {'type': 'FeatureCollection', 'features': []};
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -601,7 +603,7 @@ void main() {
             'properties': {},
           };
 
-          final result = ActivityParser.parse(
+          final result = ParserRouter.parse(
             jsonEncode(geojson),
             ActivityFileFormat.geojson,
           );
@@ -628,7 +630,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -646,7 +648,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -676,7 +678,7 @@ void main() {
             },
           };
 
-          final result = ActivityParser.parse(
+          final result = ParserRouter.parse(
             jsonEncode(geojson),
             ActivityFileFormat.geojson,
           );
@@ -709,7 +711,7 @@ void main() {
             },
           };
 
-          final result = ActivityParser.parse(
+          final result = ParserRouter.parse(
             jsonEncode(geojson),
             ActivityFileFormat.geojson,
           );
@@ -749,7 +751,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -775,7 +777,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -795,7 +797,7 @@ void main() {
             'properties': {'timestamp': 'not-a-date'},
           };
 
-          final result = ActivityParser.parse(
+          final result = ParserRouter.parse(
             jsonEncode(geojson),
             ActivityFileFormat.geojson,
           );
@@ -826,7 +828,7 @@ void main() {
           'properties': {'timestamp': 'not-a-date'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -860,7 +862,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -887,7 +889,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -914,7 +916,7 @@ void main() {
             'properties': {'elevation_gain': 150},
           };
 
-          final result = ActivityParser.parse(
+          final result = ParserRouter.parse(
             jsonEncode(geojson),
             ActivityFileFormat.geojson,
           );
@@ -945,7 +947,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -973,7 +975,7 @@ void main() {
           'properties': {'total_steps': 3200},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1011,7 +1013,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1034,7 +1036,7 @@ void main() {
           final bytes = File(
             'test/fixtures/real_world/togeojson_multitrackgpx.geojson',
           ).readAsBytesSync();
-          final result = ActivityParser.parseBytes(
+          final result = ParserRouter.parseBytes(
             bytes,
             ActivityFileFormat.geojson,
           );
@@ -1066,10 +1068,7 @@ void main() {
         const geojson = '''
 {"type":"Feature","geometry":{"type":"Point","coordinates":["NaN","-105.0"]},"properties":{}}
 ''';
-        final result = ActivityParser.parse(
-          geojson,
-          ActivityFileFormat.geojson,
-        );
+        final result = ParserRouter.parse(geojson, ActivityFileFormat.geojson);
 
         expect(result.activity.points, isEmpty);
         expect(
@@ -1104,7 +1103,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1132,7 +1131,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1162,7 +1161,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1193,7 +1192,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1220,7 +1219,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1249,7 +1248,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1293,7 +1292,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1325,7 +1324,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1353,7 +1352,7 @@ void main() {
           },
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1376,7 +1375,7 @@ void main() {
           'properties': {},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1398,7 +1397,7 @@ void main() {
           'properties': {'timestamp': '2024-01-01T10:00:00Z'},
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );
@@ -1444,7 +1443,7 @@ void main() {
           ],
         };
 
-        final result = ActivityParser.parse(
+        final result = ParserRouter.parse(
           jsonEncode(geojson),
           ActivityFileFormat.geojson,
         );

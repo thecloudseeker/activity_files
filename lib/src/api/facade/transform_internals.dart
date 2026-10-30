@@ -73,7 +73,7 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
   if (request.stream != null) {
     ActivityParseResult parseResult;
     try {
-      parseResult = await ActivityParser.parseStream(
+      parseResult = await ParserRouter.parseStream(
         request.stream!,
         request.from!,
         useIsolate: request.parseInIsolate,

@@ -8,6 +8,8 @@ library;
 import 'dart:convert';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -648,10 +650,7 @@ void main() {
           activity,
           ActivityFileFormat.geojson,
         );
-        final parsed = ActivityParser.parse(
-          geojson,
-          ActivityFileFormat.geojson,
-        );
+        final parsed = ParserRouter.parse(geojson, ActivityFileFormat.geojson);
 
         expect(parsed.activity.points.length, equals(1));
         expect(parsed.activity.sport, equals(Sport.cycling));

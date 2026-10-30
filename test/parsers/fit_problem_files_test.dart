@@ -5,6 +5,8 @@ library;
 import 'dart:io';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -33,7 +35,7 @@ void main() {
       final resolvedFile = file;
 
       final bytes = await resolvedFile.readAsBytes();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(
         result.activity.points.length,

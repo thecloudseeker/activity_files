@@ -8,17 +8,11 @@ import '../transforms.dart';
 
 /// High-level facade for converting between activity file formats.
 ///
-/// This is sugar over [ActivityParser.parse] followed by
-/// [ActivityEncoder.encode], with no capability of its own: it cannot
-/// auto-detect the source format, and it returns a bare `String` rather than
-/// a result carrying diagnostics. Use [ActivityFiles.convert] for the async
-/// pipeline, or compose the two calls directly when you need a synchronous
-/// conversion.
-@Deprecated(
-  'Use ActivityFiles.convert, or compose ActivityParser.parse with '
-  'ActivityEncoder.encode for a synchronous conversion. '
-  'Will be removed in 0.10.0.',
-)
+/// This is sugar over parsing followed by [ActivityEncoder.encode], with no
+/// capability of its own: it cannot auto-detect the source format, and it
+/// returns a bare `String` rather than a result carrying diagnostics. Use
+/// [ActivityFiles.convert].
+@Deprecated('Use ActivityFiles.convert. Will be removed in 0.10.0.')
 class ActivityConverter {
   const ActivityConverter._();
 
@@ -37,8 +31,8 @@ class ActivityConverter {
     @Deprecated('Use diagnostics instead.') List<String>? warnings,
   }) {
     final parseResult = switch (input) {
-      String text => ActivityParser.parse(text, from),
-      List<int> bytes => ActivityParser.parseBytes(bytes, from),
+      String text => ParserRouter.parse(text, from),
+      List<int> bytes => ParserRouter.parseBytes(bytes, from),
       _ => throw ArgumentError(
         'Unsupported input type ${input.runtimeType}; expected String or List<int>.',
       ),

@@ -5,6 +5,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 import 'package:xml/xml.dart';
 
@@ -875,7 +877,7 @@ void main() {
           original,
           ActivityFileFormat.tcx,
         );
-        final parsed = ActivityParser.parse(tcxString, ActivityFileFormat.tcx);
+        final parsed = ParserRouter.parse(tcxString, ActivityFileFormat.tcx);
 
         expect(parsed.activity.points.length, equals(original.points.length));
         expect(parsed.activity.sport, equals(Sport.running));
@@ -901,7 +903,7 @@ void main() {
           original,
           ActivityFileFormat.tcx,
         );
-        final parsed = ActivityParser.parse(tcxString, ActivityFileFormat.tcx);
+        final parsed = ParserRouter.parse(tcxString, ActivityFileFormat.tcx);
 
         expect(parsed.activity.channel(Channel.heartRate).length, equals(1));
         expect(
@@ -937,7 +939,7 @@ void main() {
     </Activity>
   </Activities>
 </TrainingCenterDatabase>''';
-          final parsed = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+          final parsed = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
           final reencoded = ActivityEncoder.encode(
             parsed.activity,
             ActivityFileFormat.tcx,
@@ -993,7 +995,7 @@ void main() {
           ActivityFileFormat.tcx,
         );
         final doc = XmlDocument.parse(tcxString);
-        final parsed = ActivityParser.parse(tcxString, ActivityFileFormat.tcx);
+        final parsed = ParserRouter.parse(tcxString, ActivityFileFormat.tcx);
 
         // TCX's Device_t <Creator> has only one <Name> slot, shared between
         // "creator" and "device model" -- so the two can't both survive when

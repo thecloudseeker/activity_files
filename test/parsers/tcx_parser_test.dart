@@ -8,6 +8,8 @@ library;
 import 'dart:io';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -37,7 +39,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -84,7 +86,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         final hrChannel = result.activity.channel(Channel.heartRate);
         expect(hrChannel.length, equals(2));
@@ -124,7 +126,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         final cadChannel = result.activity.channel(Channel.cadence);
         expect(cadChannel.length, equals(2));
@@ -168,7 +170,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.laps.length, equals(2));
         expect(result.activity.points.length, equals(2));
@@ -220,7 +222,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points.length, equals(4));
         expect(
@@ -254,7 +256,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.sport, equals(Sport.running));
       });
@@ -282,7 +284,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.sport, equals(Sport.cycling));
       });
@@ -310,7 +312,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.sport, equals(Sport.swimming));
       });
@@ -372,7 +374,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points.length, equals(3));
         expect(result.activity.laps.length, equals(3));
@@ -396,7 +398,7 @@ void main() {
     </Activity>
   </Activities>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -411,7 +413,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points, isEmpty);
       });
@@ -430,7 +432,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points, isEmpty);
       });
@@ -461,7 +463,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points.length, equals(1));
       });
@@ -491,7 +493,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
@@ -521,7 +523,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-          final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+          final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
           expect(
             result.activity.points[0].time,
@@ -559,7 +561,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.laps[0].distanceMeters, equals(1000));
       });
@@ -595,7 +597,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.points, hasLength(2));
         expect(
@@ -633,7 +635,7 @@ void main() {
         final tcx = oneActivityTcx(
           '<Creator xsi:type="Device_t">MyWatch</Creator>',
         );
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.creator, equals('MyWatch'));
         expect(result.activity.device, isNull);
@@ -644,7 +646,7 @@ void main() {
         final tcx = oneActivityTcx(
           '<Creator xsi:type="Device_t"><![CDATA[MyWatch]]></Creator>',
         );
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.creator, equals('MyWatch'));
         expect(result.activity.device, isNull);
@@ -658,7 +660,7 @@ void main() {
           '<Manufacturer>garmin</Manufacturer><ProductID>1</ProductID>'
           '</Creator>',
         );
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.creator, isNull);
         expect(result.activity.device?.manufacturer, equals('garmin'));
@@ -710,7 +712,7 @@ void main() {
           firstNotes: 'Felt great',
           secondNotes: 'Legs were tired',
         );
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.tcxNotes, equals('Felt great'));
         expect(
@@ -725,7 +727,7 @@ void main() {
           firstNotes: 'Brick workout',
           secondNotes: 'Brick workout',
         );
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(
           result.diagnostics.map((d) => d.code),
@@ -772,7 +774,7 @@ void main() {
     </Activity>
   </Activities>
 </TrainingCenterDatabase>''';
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.device?.model, equals('Forerunner 945'));
         expect(
@@ -817,7 +819,7 @@ void main() {
     </Activity>
   </Activities>
 </TrainingCenterDatabase>''';
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.device?.model, equals('Forerunner 945'));
         expect(
@@ -867,7 +869,7 @@ void main() {
     </Activity>
   </Activities>
 </TrainingCenterDatabase>''';
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.device?.manufacturer, equals('garmin'));
         expect(
@@ -915,7 +917,7 @@ void main() {
     </Activity>
   </Activities>
 </TrainingCenterDatabase>''';
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         expect(result.activity.creator, equals('MyWatch'));
         expect(result.activity.device?.manufacturer, equals('wahoo_fitness'));

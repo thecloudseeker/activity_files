@@ -6,6 +6,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -92,7 +94,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         // Should have multi-activity diagnostic
         final multiActivityDiag = result.diagnostics.firstWhere(
@@ -146,7 +148,7 @@ void main() {
   </Activities>
 </TrainingCenterDatabase>''';
 
-        final result = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+        final result = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
 
         // Should NOT have multi-activity diagnostic
         final multiActivityDiags = result.diagnostics.where(

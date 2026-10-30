@@ -11,6 +11,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/sample_data.dart';
@@ -645,7 +647,7 @@ void main() {
     test('parser format exception includes actionable hints', () {
       // Valid GPX with format mismatch: parser detects format errors gracefully
       const gpxContent = '<?xml version="1.0"?><gpx></gpx>';
-      final result = ActivityParser.parse(gpxContent, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpxContent, ActivityFileFormat.gpx);
 
       // Valid GPX should parse (even if empty), diagnostics list is available
       expect(result, isNotNull);
@@ -683,10 +685,7 @@ void main() {
 </gpx>
 ''';
 
-      final result = ActivityParser.parse(
-        problematicGpx,
-        ActivityFileFormat.gpx,
-      );
+      final result = ParserRouter.parse(problematicGpx, ActivityFileFormat.gpx);
 
       final summary = DiagnosticsFormatter(
         result.diagnostics,
@@ -715,10 +714,7 @@ void main() {
         '</TrainingCenterDatabase>',
       );
 
-      final result = ActivityParser.parseBytes(
-        validTcx,
-        ActivityFileFormat.tcx,
-      );
+      final result = ParserRouter.parseBytes(validTcx, ActivityFileFormat.tcx);
 
       // Well-formed TCX should parse successfully
       expect(result.activity, isNotNull);

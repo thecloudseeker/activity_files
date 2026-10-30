@@ -8,6 +8,8 @@ library;
 import 'dart:io';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -26,7 +28,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -55,7 +57,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points.length, equals(2));
       });
@@ -78,7 +80,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points.length, equals(1));
         expect(result.activity.sport, equals(Sport.running));
@@ -99,7 +101,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points.length, equals(1));
       });
@@ -118,7 +120,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points.length, equals(1));
       });
@@ -144,7 +146,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.channel(Channel.heartRate).length, equals(1));
         expect(
@@ -175,7 +177,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.channel(Channel.heartRate).length, equals(1));
         expect(result.activity.channel(Channel.cadence).length, equals(1));
@@ -197,7 +199,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.sport, equals(Sport.running));
       });
@@ -215,7 +217,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.sport, equals(Sport.cycling));
       });
@@ -233,7 +235,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.sport, equals(Sport.swimming));
       });
@@ -251,7 +253,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.sport, equals(Sport.unknown));
       });
@@ -268,7 +270,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -279,7 +281,7 @@ void main() {
       test('reports error for empty GPX', () {
         const gpx = '';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -296,7 +298,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points, isEmpty);
       });
@@ -316,7 +318,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points.length, equals(1));
       });
@@ -335,7 +337,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
@@ -352,7 +354,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
@@ -371,7 +373,7 @@ void main() {
   </trk>
 </gpx>''';
 
-          final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+          final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
           expect(
             result.activity.points[0].time,
@@ -391,7 +393,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points, hasLength(2));
         expect(result.activity.points[0].latitude, equals(40.0));
@@ -419,7 +421,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.points, hasLength(1));
         expect(
@@ -453,7 +455,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.laps, hasLength(1));
         expect(
@@ -483,7 +485,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.laps, hasLength(1));
         expect(
@@ -509,7 +511,7 @@ void main() {
   </wpt>
 </gpx>''';
 
-        final activity = ActivityParser.parse(
+        final activity = ParserRouter.parse(
           gpx,
           ActivityFileFormat.gpx,
         ).activity;
@@ -538,7 +540,7 @@ void main() {
   </rte>
 </gpx>''';
 
-        final activity = ActivityParser.parse(
+        final activity = ParserRouter.parse(
           gpx,
           ActivityFileFormat.gpx,
         ).activity;
@@ -564,7 +566,7 @@ void main() {
   </trk>
 </gpx>''';
 
-        final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
         expect(result.activity.creator, equals('Garmin BaseCamp'));
       });

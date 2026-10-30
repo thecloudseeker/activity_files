@@ -25,15 +25,28 @@ import 'parse_result.dart';
 class FitParser implements ActivityFormatParser {
   const FitParser();
 
+  /// Parses a base64-encoded FIT payload. Text that is not base64, or a
+  /// payload without a readable FIT header, comes back as an empty activity
+  /// with an error diagnostic.
   @override
   ActivityParseResult parse(String input) {
-    final diagnostics = <ParseDiagnostic>[];
-    final payload = _decodePayload(input.trim(), diagnostics);
-    return _parsePayload(payload, diagnostics);
+    try {
+      final diagnostics = <ParseDiagnostic>[];
+      final payload = _decodePayload(input.trim(), diagnostics);
+      return _parsePayload(payload, diagnostics);
+    } on FormatException catch (error) {
+      return formatExceptionResult(ActivityFileFormat.fit, error);
+    }
   }
 
+  /// Parses raw FIT bytes. A payload without a readable FIT header comes
+  /// back as an empty activity with an error diagnostic.
   ActivityParseResult parseBytes(Uint8List payload) {
-    return _parsePayload(payload, <ParseDiagnostic>[]);
+    try {
+      return _parsePayload(payload, <ParseDiagnostic>[]);
+    } on FormatException catch (error) {
+      return formatExceptionResult(ActivityFileFormat.fit, error);
+    }
   }
 
   /// Parse FIT bytes with configurable integrity handling.
@@ -1464,7 +1477,7 @@ Uint8List _decodePayload(String input, List<ParseDiagnostic> diagnostics) {
   } on FormatException {
     throw FormatException(
       'FIT payloads must be base64-encoded when provided as String. '
-      'Use ActivityParser.parseBytes for raw binary data.',
+      'Pass raw binary data as bytes instead.',
     );
   }
 }

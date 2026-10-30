@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/builders.dart';
@@ -21,8 +23,8 @@ void main() {
 
   group('Async parsing', () {
     test('parseAsync mirrors synchronous GPX parser', () async {
-      final sync = ActivityParser.parse(sampleGpx, ActivityFileFormat.gpx);
-      final asyncResult = await ActivityParser.parseAsync(
+      final sync = ParserRouter.parse(sampleGpx, ActivityFileFormat.gpx);
+      final asyncResult = await ParserRouter.parseAsync(
         sampleGpx,
         ActivityFileFormat.gpx,
         useIsolate: false,
@@ -39,7 +41,7 @@ void main() {
         options: encoderOptions,
       );
       final bytes = base64Decode(fitPayload);
-      final result = await ActivityParser.parseBytesAsync(
+      final result = await ParserRouter.parseBytesAsync(
         bytes,
         ActivityFileFormat.fit,
       );
@@ -59,7 +61,7 @@ void main() {
         bytes.sublist(0, bytes.length ~/ 2),
         bytes.sublist(bytes.length ~/ 2),
       ]);
-      final result = await ActivityParser.parseStream(
+      final result = await ParserRouter.parseStream(
         stream,
         ActivityFileFormat.fit,
         useIsolate: false,

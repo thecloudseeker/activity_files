@@ -5,6 +5,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -33,7 +35,7 @@ void main() {
 ''';
 
   test('parses GPX 1.0 trackpoints and extensions', () {
-    final result = ActivityParser.parse(gpx10Sample, ActivityFileFormat.gpx);
+    final result = ParserRouter.parse(gpx10Sample, ActivityFileFormat.gpx);
     expect(
       result.diagnostics.where((d) => d.severity == ParseSeverity.error),
       isEmpty,
@@ -92,7 +94,7 @@ void main() {
     final output = conversion.asString();
     expect(output, contains('version="1.0"'));
 
-    final roundTrip = ActivityParser.parse(
+    final roundTrip = ParserRouter.parse(
       output,
       ActivityFileFormat.gpx,
     ).activity;

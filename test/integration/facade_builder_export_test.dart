@@ -10,6 +10,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/sample_data.dart';
@@ -254,8 +256,8 @@ void main() {
       expect(gpx, contains('<ex:trackTag>track</ex:trackTag>'));
       expect(gpx, contains('xmlns:ex="https://example.com/gpx"'));
       final tcx = ActivityEncoder.encode(built, ActivityFileFormat.tcx);
-      expect(tcx, contains('<Manufacturer>Withings</Manufacturer>'));
-      final parsedTcx = ActivityParser.parse(tcx, ActivityFileFormat.tcx);
+      expect(tcx, contains('<manufacturer>Withings</manufacturer>'));
+      final parsedTcx = ParserRouter.parse(tcx, ActivityFileFormat.tcx);
       expect(parsedTcx.activity.device, isNotNull);
       expect(parsedTcx.activity.device!.manufacturer, equals('Withings'));
       expect(parsedTcx.activity.gpxMetadataExtensions.length, equals(1));
@@ -264,7 +266,7 @@ void main() {
         ActivityFileFormat.fit,
         options: encoderOptions,
       );
-      final fitParsed = ActivityParser.parseBytes(
+      final fitParsed = ParserRouter.parseBytes(
         base64Decode(fitString),
         ActivityFileFormat.fit,
       );
@@ -402,7 +404,7 @@ void main() {
         to: ActivityFileFormat.fit,
         runValidation: false,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         export.asBytes(),
         ActivityFileFormat.fit,
       );

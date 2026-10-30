@@ -5,6 +5,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -46,7 +48,7 @@ void main() {
 ''';
 
   test('parses TCX v1 payloads', () {
-    final result = ActivityParser.parse(tcxV1Sample, ActivityFileFormat.tcx);
+    final result = ParserRouter.parse(tcxV1Sample, ActivityFileFormat.tcx);
     expect(
       result.diagnostics.where((d) => d.severity == ParseSeverity.error),
       isEmpty,
@@ -97,7 +99,7 @@ void main() {
     final output = conversion.asString();
     expect(output, contains('TrainingCenterDatabase/v1'));
 
-    final roundTrip = ActivityParser.parse(
+    final roundTrip = ParserRouter.parse(
       output,
       ActivityFileFormat.tcx,
     ).activity;
