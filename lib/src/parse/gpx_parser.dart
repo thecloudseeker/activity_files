@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../geo_math.dart';
 import '../models.dart';
 import 'activity_parser.dart';
+import 'number_utils.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
 
@@ -182,15 +183,16 @@ class GpxParser implements ActivityFormatParser {
           index++;
           final latText = trkpt.getAttribute('lat');
           final lonText = trkpt.getAttribute('lon');
-          final lat = latText != null ? double.tryParse(latText) : null;
-          final lon = lonText != null ? double.tryParse(lonText) : null;
+          final lat = parseFiniteDouble(latText);
+          final lon = parseFiniteDouble(lonText);
           if (lat == null || lon == null) {
             diagnostics.add(
               ParseDiagnostic(
                 severity: ParseSeverity.warning,
                 code: 'gpx.trackpoint.missing_coordinates',
                 message:
-                    'Skipping GPX trackpoint missing coordinates (index $index).',
+                    'Skipping GPX trackpoint with missing or unreadable '
+                    'coordinates (index $index).',
                 node: ParseNodeReference(
                   path: 'gpx.trk.trkseg.trkpt',
                   index: index - 1,
@@ -264,7 +266,7 @@ class GpxParser implements ActivityFormatParser {
           final hasGenuineTime = time != null;
           time ??= DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
 
-          final elevation = eleText != null ? double.tryParse(eleText) : null;
+          final elevation = parseFiniteDouble(eleText);
           if (eleText != null && elevation == null) {
             diagnostics.add(
               ParseDiagnostic(
@@ -400,12 +402,7 @@ class GpxParser implements ActivityFormatParser {
     final routes = <GpxRoute>[];
     for (final child in root.childElements) {
       if (child.name.local == 'wpt') {
-        final point = _parseGpxPoint(
-          child,
-          diagnostics,
-          'gpx.wpt.invalid_timestamp',
-          'gpx.wpt',
-        );
+        final point = _parseGpxPoint(child, diagnostics, 'gpx.wpt', 'gpx.wpt');
         if (point != null) waypoints.add(point);
       } else if (child.name.local == 'rte') {
         final rtePoints = <GeoPoint>[];
@@ -417,7 +414,7 @@ class GpxParser implements ActivityFormatParser {
             final point = _parseGpxPoint(
               rteChild,
               diagnostics,
-              'gpx.rtept.invalid_timestamp',
+              'gpx.rtept',
               'gpx.rte.rtept',
             );
             if (point != null) rtePoints.add(point);
@@ -497,12 +494,24 @@ class GpxParser implements ActivityFormatParser {
 GeoPoint? _parseGpxPoint(
   XmlElement element,
   List<ParseDiagnostic> diagnostics,
-  String code,
+  String codePrefix,
   String path,
 ) {
-  final lat = double.tryParse(element.getAttribute('lat') ?? '');
-  final lon = double.tryParse(element.getAttribute('lon') ?? '');
-  if (lat == null || lon == null) return null;
+  final lat = parseFiniteDouble(element.getAttribute('lat'));
+  final lon = parseFiniteDouble(element.getAttribute('lon'));
+  if (lat == null || lon == null) {
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: '$codePrefix.invalid_coordinates',
+        message:
+            'Skipping <${element.name.local}> with missing or unreadable '
+            'coordinates.',
+        node: ParseNodeReference(path: path),
+      ),
+    );
+    return null;
+  }
   String? timeText;
   String? eleText;
   Map<String, String>? attributes;
@@ -536,7 +545,7 @@ GeoPoint? _parseGpxPoint(
       diagnostics.add(
         ParseDiagnostic(
           severity: ParseSeverity.warning,
-          code: code,
+          code: '$codePrefix.invalid_timestamp',
           message:
               'Invalid timestamp "$timeText" on <${element.name.local}>; '
               'point kept with epoch fallback time.',
@@ -545,10 +554,23 @@ GeoPoint? _parseGpxPoint(
       );
     }
   }
+  final elevation = parseFiniteDouble(eleText);
+  if (eleText != null && elevation == null) {
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: '$codePrefix.invalid_elevation',
+        message:
+            'Invalid elevation "$eleText" on <${element.name.local}>; '
+            'treating as null.',
+        node: ParseNodeReference(path: path),
+      ),
+    );
+  }
   return GeoPoint(
     latitude: lat,
     longitude: lon,
-    elevation: eleText != null ? double.tryParse(eleText) : null,
+    elevation: elevation,
     time: time ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     gpxAttributes: attributes,
     gpxExtensions: extensions,

@@ -1233,6 +1233,18 @@ class FitParser implements ActivityFormatParser {
         ),
       );
     }
+    if (reader.nonFiniteFloats > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.field.non_finite',
+          message:
+              '${reader.nonFiniteFloats} float field value(s) were NaN or '
+              'infinite and were left out.',
+          node: const ParseNodeReference(path: 'fit.file'),
+        ),
+      );
+    }
     if (unknownDefinitionCount > 5) {
       diagnostics.add(
         ParseDiagnostic(
@@ -2096,6 +2108,11 @@ class _FitByteReader {
   _FitByteReader(this.bytes);
   final Uint8List bytes;
   int position = 0;
+
+  /// Float values read as `NaN` or infinity other than the invalid
+  /// sentinel; each is dropped like an invalid value and counted here so
+  /// the parser can report them.
+  int nonFiniteFloats = 0;
   int readUint8() {
     return bytes[position++];
   }
@@ -2323,7 +2340,12 @@ class _FitByteReader {
             data.getUint32(offset + 4, endian) == 0xFFFFFFFF;
         raw = data.getFloat64(offset, endian);
       }
-      if (!invalid) values.add(raw);
+      if (invalid) continue;
+      if (!raw.isFinite) {
+        nonFiniteFloats++;
+        continue;
+      }
+      values.add(raw);
     }
     position += safe;
     if (values.isEmpty) return null;

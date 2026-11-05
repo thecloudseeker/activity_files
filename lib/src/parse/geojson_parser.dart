@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import '../models.dart';
 import 'activity_parser.dart';
+import 'number_utils.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
 
@@ -159,7 +160,7 @@ class GeojsonParser implements ActivityFormatParser {
           continue;
         }
         points.add(point);
-        _collectChannelSamples(point.time, properties, channelMap);
+        _collectChannelSamples(point.time, properties, channelMap, diagnostics);
         // _parseSport never returns null (Sport.unknown is its own
         // fallback), so `sport ??= ...` would only ever evaluate the first
         // feature; re-check for Sport.unknown instead, matching
@@ -393,6 +394,7 @@ class GeojsonParser implements ActivityFormatParser {
             coordinateChannels,
             channelsByKey,
             channelMap,
+            diagnostics,
           );
         }
       }
@@ -414,7 +416,7 @@ class GeojsonParser implements ActivityFormatParser {
       );
       if (point != null) {
         points.add(point);
-        _collectChannelSamples(point.time, properties, channelMap);
+        _collectChannelSamples(point.time, properties, channelMap, diagnostics);
       }
     } else if (geomType == 'MultiLineString') {
       // MultiLineString: array of LineStrings, all sharing one feature-level
@@ -465,6 +467,7 @@ class GeojsonParser implements ActivityFormatParser {
               coordinateChannels,
               channelsByKey,
               channelMap,
+              diagnostics,
             );
           }
         }
@@ -508,6 +511,7 @@ class GeojsonParser implements ActivityFormatParser {
               coordinateChannels,
               channelsByKey,
               channelMap,
+              diagnostics,
             );
           }
         }
@@ -567,7 +571,7 @@ class GeojsonParser implements ActivityFormatParser {
       channels: channelMap.isEmpty ? null : channelMap,
       sport: sport,
       metadata: _collectMetadata(properties),
-      summary: _parseSummary(properties),
+      summary: _parseSummary(properties, diagnostics),
       device: _parseDevice(properties),
     );
 
@@ -578,11 +582,16 @@ class GeojsonParser implements ActivityFormatParser {
   /// structured field the encoder actually regenerates `total_calories`
   /// from; without this, the property (excluded from [_collectMetadata] on
   /// the assumption it's regenerated) had nowhere to go and was dropped.
-  static ActivitySummary? _parseSummary(Map<Object?, Object?> properties) {
-    final calories = properties['total_calories'];
-    return calories is num
-        ? ActivitySummary(calories: calories.toDouble())
-        : null;
+  static ActivitySummary? _parseSummary(
+    Map<Object?, Object?> properties,
+    List<ParseDiagnostic> diagnostics,
+  ) {
+    final calories = _finiteNumber(
+      properties['total_calories'],
+      'total_calories',
+      diagnostics,
+    );
+    return calories != null ? ActivitySummary(calories: calories) : null;
   }
 
   /// Reads `properties.device_manufacturer` into
@@ -715,17 +724,18 @@ class GeojsonParser implements ActivityFormatParser {
     Map<String, List<Object?>>? coordinateChannels,
     Map<String, Channel> channelsByKey,
     Map<Channel, List<Sample>> channelMap,
+    List<ParseDiagnostic> diagnostics,
   ) {
     if (coordinateChannels == null) return;
     for (final entry in coordinateChannels.entries) {
       if (lineIndex >= entry.value.length) continue;
       final line = entry.value[lineIndex];
       if (line is! List || pointIndex >= line.length) continue;
-      final value = line[pointIndex];
-      if (value is! num) continue;
+      final value = _finiteNumber(line[pointIndex], entry.key, diagnostics);
+      if (value == null) continue;
       channelMap
           .putIfAbsent(channelsByKey[entry.key]!, () => [])
-          .add(Sample(time: timestamp, value: value.toDouble()));
+          .add(Sample(time: timestamp, value: value));
     }
   }
 
@@ -771,15 +781,16 @@ class GeojsonParser implements ActivityFormatParser {
     Map<String, List<Object?>>? coordinateChannels,
     Map<String, Channel> channelsByKey,
     Map<Channel, List<Sample>> channelMap,
+    List<ParseDiagnostic> diagnostics,
   ) {
     if (coordinateChannels == null) return;
     for (final entry in coordinateChannels.entries) {
       if (index >= entry.value.length) continue;
-      final value = entry.value[index];
-      if (value is! num) continue;
+      final value = _finiteNumber(entry.value[index], entry.key, diagnostics);
+      if (value == null) continue;
       channelMap
           .putIfAbsent(channelsByKey[entry.key]!, () => [])
-          .add(Sample(time: timestamp, value: value.toDouble()));
+          .add(Sample(time: timestamp, value: value));
     }
   }
 
@@ -856,6 +867,17 @@ class GeojsonParser implements ActivityFormatParser {
 
       // GeoJSON is [lon, lat, elevation?, ...] per spec
       final altitude = coord.length > 2 ? _toDouble(coord[2]) : null;
+      if (coord.length > 2 && coord[2] != null && altitude == null) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.point.invalid_elevation',
+            message:
+                'Coordinate elevation "${coord[2]}" is not a finite number; '
+                'treating as null.',
+          ),
+        );
+      }
 
       // Extract time from properties if available
       DateTime? timestamp = timeOverride;
@@ -925,32 +947,47 @@ class GeojsonParser implements ActivityFormatParser {
     DateTime timestamp,
     Map<Object?, Object?> properties,
     Map<Channel, List<Sample>> channelMap,
+    List<ParseDiagnostic> diagnostics,
   ) {
     for (final entry in properties.entries) {
       final key = entry.key;
-      final value = entry.value;
-      if (value is! num || key is! String || _metaPropertyKeys.contains(key)) {
-        continue;
-      }
+      if (key is! String || _metaPropertyKeys.contains(key)) continue;
+      final value = _finiteNumber(entry.value, key, diagnostics);
+      if (value == null) continue;
       channelMap
           .putIfAbsent(Channel.custom(key), () => [])
-          .add(Sample(time: timestamp, value: value.toDouble()));
+          .add(Sample(time: timestamp, value: value));
     }
   }
 
-  /// Safe conversion to double
-  static double? _toDouble(dynamic value) {
+  /// Safe conversion to double; null for anything that is not a finite
+  /// number.
+  static double? _toDouble(Object? value) {
     if (value is num) return value.isFinite ? value.toDouble() : null;
-    if (value is String) {
-      try {
-        // double.parse accepts the literal strings "NaN"/"Infinity"/
-        // "-Infinity"; treat those as unparseable like any other malformed
-        // value instead of letting a non-finite double reach a GeoPoint/
-        // Sample (and later crash jsonEncode in the GeoJSON encoder).
-        final parsed = double.parse(value);
-        if (parsed.isFinite) return parsed;
-      } catch (_) {}
-    }
+    if (value is String) return parseFiniteDouble(value);
+    return null;
+  }
+
+  /// Reads a JSON number property as a finite double. Values that are not
+  /// numbers are skipped quietly, since properties also hold text; a number
+  /// that decodes to infinity (such as `1e999`) is reported and left out.
+  static double? _finiteNumber(
+    Object? value,
+    String key,
+    List<ParseDiagnostic> diagnostics,
+  ) {
+    if (value is! num) return null;
+    if (value.isFinite) return value.toDouble();
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: 'geojson.property.invalid_number',
+        message:
+            'Property "$key" is not a finite number ($value); '
+            'value left out.',
+        node: ParseNodeReference(path: 'geojson.properties.$key'),
+      ),
+    );
     return null;
   }
 
