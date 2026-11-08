@@ -323,27 +323,6 @@ void main() {
       expect(activity.gpxTrackExtensions, isEmpty);
     });
 
-    test('registerSportMapper ignores duplicate mappers', () {
-      Sport? mapper(dynamic source) => null;
-      ActivityFiles.registerSportMapper(mapper);
-      ActivityFiles.registerSportMapper(mapper); // Should be ignored
-      addTearDown(ActivityFiles.clearSportMappers);
-
-      final removed = ActivityFiles.unregisterSportMapper(mapper);
-      expect(removed, isTrue);
-
-      final removedAgain = ActivityFiles.unregisterSportMapper(mapper);
-      expect(removedAgain, isFalse); // Already removed
-    });
-
-    test('inferSport uses custom fallback', () {
-      final result = ActivityFiles.inferSport(
-        'unknown sport type',
-        fallback: Sport.other,
-      );
-      expect(result, equals(Sport.other));
-    });
-
     test('export with normalize=false but unsorted data auto-sorts', () {
       final base = DateTime.utc(2024, 12, 10, 12);
       final activity = RawActivity(
@@ -438,9 +417,9 @@ void main() {
             (timestamp: ts + 60000, value: 145),
           ],
         },
-        label: 'Test Activity',
+        gpxTrackName: 'Test Activity',
         creator: 'test-suite',
-        sportSource: Sport.running,
+        sport: Sport.running,
         to: ActivityFileFormat.gpx,
         normalize: true,
         runValidation: true,
@@ -449,22 +428,6 @@ void main() {
       expect(result.activity.sport, equals(Sport.running));
       expect(result.activity.points.length, equals(2));
       expect(result.validation, isNotNull);
-    });
-
-    test('detectFormat with allowFilePaths reads from disk', () async {
-      final format = ActivityFiles.detectFormat(
-        'example/assets/sample.gpx',
-        allowFilePaths: true,
-      );
-      expect(format, equals(ActivityFileFormat.gpx));
-    });
-
-    test('detectFormat without allowFilePaths treats string as content', () {
-      final format = ActivityFiles.detectFormat(
-        'example/assets/sample.gpx',
-        allowFilePaths: false,
-      );
-      expect(format, isNull); // Path string doesn't look like any format
     });
 
     test(
@@ -524,23 +487,14 @@ void main() {
       );
     });
 
-    test('format detection error hints about allowFilePaths', () {
+    test('format detection error hints at passing a File', () async {
+      final result = await ActivityFiles.import(
+        'example/assets/sample.gpx',
+        useIsolate: false,
+      );
       expect(
-        () => ActivityFiles.import(
-          'example/assets/sample.gpx',
-          allowFilePaths: false,
-          useIsolate: false,
-        ),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            allOf([
-              contains('specified explicitly'),
-              contains('allowFilePaths'),
-            ]),
-          ),
-        ),
+        _error(result.diagnostics, 'parser.format_undetected').message,
+        contains('pass a File'),
       );
     });
 
@@ -722,3 +676,9 @@ void main() {
     });
   });
 }
+
+/// The error with [code] in [diagnostics]; fails the test when there is none.
+ParseDiagnostic _error(Iterable<ParseDiagnostic> diagnostics, String code) =>
+    diagnostics.singleWhere(
+      (d) => d.severity == ParseSeverity.error && d.code == code,
+    );

@@ -125,6 +125,7 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
       normalize: request.normalize,
       useIsolate: request.parseInIsolate,
       encoding: request.encoding,
+      // ignore: deprecated_member_use_from_same_package
       allowFilePaths: request.allowFilePaths,
       exportInIsolate: request.exportInIsolate,
       runValidation: request.runValidation,

@@ -35,6 +35,10 @@ part 'facade/results.dart';
 part 'facade/transform_internals.dart';
 
 /// Callback used to translate arbitrary identifiers into [Sport] values.
+@Deprecated(
+  'Pass the Sport you mean; it is no longer guessed from text. '
+  'Will be removed in 0.10.0.',
+)
 typedef SportMapper = Sport? Function(dynamic source);
 
 const int _defaultStreamBufferLimitBytes = 64 * 1024 * 1024;
@@ -87,6 +91,10 @@ class ActivityFiles {
     ActivityFileFormat? format,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    @Deprecated(
+      'Pass a File for a path; a String is always content. '
+      'Will be removed in 0.10.0.',
+    )
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
     @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
@@ -200,6 +208,10 @@ class ActivityFiles {
   static ActivityFileFormat? detectFormat(
     Object source, {
     Encoding encoding = utf8,
+    @Deprecated(
+      'Pass a File for a path; a String is always content. '
+      'Will be removed in 0.10.0.',
+    )
     bool allowFilePaths = false,
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _detectFormatSync(
@@ -359,6 +371,10 @@ class ActivityFiles {
     bool normalize = true,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    @Deprecated(
+      'Pass a File for a path; a String is always content. '
+      'Will be removed in 0.10.0.',
+    )
     bool allowFilePaths = false,
     bool exportInIsolate = false,
     bool runValidation = true,
@@ -375,6 +391,7 @@ class ActivityFiles {
       format: from,
       useIsolate: useIsolate,
       encoding: encoding,
+      // ignore: deprecated_member_use_from_same_package
       allowFilePaths: allowFilePaths,
       strictFitIntegrity: strictFitIntegrity,
       // ignore: deprecated_member_use_from_same_package
@@ -821,7 +838,11 @@ class ActivityFiles {
     Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
     Iterable<Lap> laps = const <Lap>[],
     Sport? sport,
+    @Deprecated('Pass sport instead. Will be removed in 0.10.0.')
     Object? sportSource,
+    @Deprecated(
+      'Pass sport and gpxTrackName instead. Will be removed in 0.10.0.',
+    )
     String? label,
     String? creator,
     ActivityDeviceMetadata? device,
@@ -844,10 +865,10 @@ class ActivityFiles {
     final primarySport =
         sport ??
         (sportSource != null
-            ? inferSport(sportSource, fallback: Sport.unknown)
+            ? _resolveSport(sportSource) ?? Sport.unknown
             : Sport.unknown);
     final derivedSport = (primarySport == Sport.unknown && label != null)
-        ? inferSport(label, fallback: Sport.unknown)
+        ? _resolveSport(label) ?? Sport.unknown
         : primarySport;
     final builder = builderFromStreams(
       location: location,
@@ -935,6 +956,11 @@ class ActivityFiles {
   // channel queries) that don't act on a RawActivity lifecycle stage.
   /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
   /// last-in-first-out so callers can override earlier defaults.
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.10.0.',
+  )
+  // ignore: deprecated_member_use_from_same_package
   static void registerSportMapper(SportMapper mapper) {
     if (_sportMappers.contains(mapper)) {
       return;
@@ -943,13 +969,26 @@ class ActivityFiles {
   }
 
   /// Removes a previously registered [mapper].
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.10.0.',
+  )
+  // ignore: deprecated_member_use_from_same_package
   static bool unregisterSportMapper(SportMapper mapper) =>
       _sportMappers.remove(mapper);
 
   /// Clears all registered sport mappers.
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.10.0.',
+  )
   static void clearSportMappers() => _sportMappers.clear();
 
   /// Resolves [Sport] by applying registered mappers and built-in heuristics.
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.10.0.',
+  )
   static Sport inferSport(dynamic source, {Sport fallback = Sport.unknown}) {
     final resolved = _resolveSport(source);
     return resolved ?? fallback;

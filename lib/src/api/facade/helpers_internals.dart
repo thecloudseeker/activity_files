@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 part of '../activity_files_facade.dart';
 
+// ignore: deprecated_member_use_from_same_package
 final List<SportMapper> _sportMappers = <SportMapper>[];
 
 Sport? _resolveSport(dynamic source) {

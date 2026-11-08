@@ -28,29 +28,6 @@ void main() {
       expect(result.diagnostics, isEmpty);
     });
 
-    test('inferSport applies registered mappers before fallbacks', () {
-      Sport? mapper(dynamic source) {
-        return source is int && source == 42 ? Sport.cycling : null;
-      }
-
-      ActivityFiles.registerSportMapper(mapper);
-      addTearDown(() => ActivityFiles.unregisterSportMapper(mapper));
-      expect(ActivityFiles.inferSport(42), equals(Sport.cycling));
-      expect(ActivityFiles.inferSport('running'), equals(Sport.running));
-    });
-
-    test('inferSport derives sport hints from descriptive labels', () {
-      expect(ActivityFiles.inferSport('Morning Run'), equals(Sport.running));
-      expect(
-        ActivityFiles.inferSport('Lunch Ride 40km'),
-        equals(Sport.cycling),
-      );
-      expect(
-        ActivityFiles.inferSport('Sunset Walk With Dog'),
-        equals(Sport.walking),
-      );
-    });
-
     test('convert returns binary FIT payload', () async {
       final conversion = await ActivityFiles.convert(
         source: sampleGpx,
@@ -280,41 +257,6 @@ void main() {
       expect(result.asString(), contains('<gpx'));
     });
 
-    test('import requires allowFilePaths for string paths', () async {
-      final path = 'example/assets/sample.gpx';
-      await expectLater(
-        () => ActivityFiles.import(path, useIsolate: false),
-        throwsArgumentError,
-      );
-      final allowed = await ActivityFiles.import(
-        path,
-        useIsolate: false,
-        allowFilePaths: true,
-      );
-      expect(allowed.activity.points, isNotEmpty);
-      expect(allowed.sourceDescription, equals(path));
-    });
-
-    test('convert requires allowFilePaths for string paths', () async {
-      final path = 'example/assets/sample.gpx';
-      await expectLater(
-        () => ActivityFiles.convert(
-          source: path,
-          to: ActivityFileFormat.fit,
-          useIsolate: false,
-        ),
-        throwsArgumentError,
-      );
-      final conversion = await ActivityFiles.convert(
-        source: path,
-        to: ActivityFileFormat.fit,
-        useIsolate: false,
-        allowFilePaths: true,
-      );
-      expect(conversion.sourceFormat, equals(ActivityFileFormat.gpx));
-      expect(conversion.activity.points, isNotEmpty);
-    });
-
     test('convert runs validation by default', () async {
       final conversion = await ActivityFiles.convert(
         source: sampleGpx,
@@ -432,8 +374,8 @@ void main() {
         },
         device: device,
         creator: 'withings-exporter',
-        label: 'Morning Run',
-        sportSource: {'category': 'running'},
+        gpxTrackName: 'Morning Run',
+        sport: Sport.running,
         gpxMetadataName: 'Morning Run',
         gpxMetadataDescription: 'Withings export',
         includeCreatorInGpxMetadataDescription: false,
@@ -486,9 +428,9 @@ void main() {
           ],
         },
         laps: [lap],
-        label: 'Lunch Ride',
+        gpxTrackName: 'Lunch Ride',
         creator: 'stream-integration',
-        sportSource: 'cycling',
+        sport: Sport.cycling,
         timestampConverter: decode,
         to: ActivityFileFormat.gpx,
         normalize: true,

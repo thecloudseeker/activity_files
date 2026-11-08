@@ -30,13 +30,12 @@ void main() {
     test('detectFormat identifies fixture formats', () async {
       for (final entry in assets.entries) {
         final path = await assetPath(entry.key);
-        final detected = ActivityFiles.detectFormat(path, allowFilePaths: true);
+        final detected = ActivityFiles.detectFormat(File(path));
         expect(detected, equals(entry.value));
 
         final loaded = await ActivityFiles.import(
-          path,
+          File(path),
           useIsolate: false,
-          allowFilePaths: true,
         );
         expect(loaded.format, equals(entry.value));
         if (entry.value != ActivityFileFormat.fit) {
@@ -92,16 +91,14 @@ void main() {
     test('convert can round-trip GPX fixture to FIT', () async {
       final gpxPath = await assetPath('sample.gpx');
       final loaded = await ActivityFiles.import(
-        gpxPath,
+        File(gpxPath),
         useIsolate: false,
-        allowFilePaths: true,
       );
 
       final conversion = await ActivityFiles.convert(
-        source: gpxPath,
+        source: File(gpxPath),
         to: ActivityFileFormat.fit,
         useIsolate: false,
-        allowFilePaths: true,
       );
       expect(conversion.isBinary, isTrue);
 
