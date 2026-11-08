@@ -85,7 +85,7 @@ int? _encodeFitSoftwareVersion(String? version) {
   if (value == null || value <= 0) {
     return null;
   }
-  return (value * 100).round();
+  return _roundFinite(value * 100);
 }
 
 /// UTF-8 bytes for a FIT string field, truncated to 63 bytes on a character
@@ -208,7 +208,7 @@ class _FitMessageEncoder {
 
   /// Scales a value for FIT encoding; null stays null (invalid sentinel).
   static int? _scaled(double? value, int scale) =>
-      value == null ? null : (value * scale).round();
+      value == null ? null : _roundFinite(value * scale);
 
   /// Writes a uint8/enum byte; null becomes the FIT invalid value 0xFF.
   /// Valid values are clamped to 0xFE so they never collide with invalid.
@@ -437,7 +437,7 @@ class _FitMessageEncoder {
     _OptionalRecordField field,
     double? value,
   ) {
-    final scaled = value == null ? null : (value * field.scale).round();
+    final scaled = value == null ? null : _roundFinite(value * field.scale);
     switch (field.type) {
       case _FitBaseType.enumType:
       case _FitBaseType.uint8:
@@ -735,6 +735,10 @@ class _FitDeveloperFieldSpec {
   final int size;
   final int developerIndex;
 }
+
+/// Rounds [value], or returns null (written as the FIT invalid value) when
+/// scaling has pushed it past the range of a double.
+int? _roundFinite(double value) => value.isFinite ? value.round() : null;
 
 int _clampUint16(int value) =>
     value < 0 ? 0 : (value > 0xFFFE ? 0xFFFE : value);

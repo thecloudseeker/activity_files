@@ -44,6 +44,8 @@ ActivityExportResult _exportFromActivity({
     working = trackResult.activity;
     repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
   }
+  final List<ParseDiagnostic> nonFinite;
+  (working, nonFinite) = _dropNonFiniteForExport(working);
   final encoded = ActivityEncoder.encode(working, to, options: options);
   final binary = to == ActivityFileFormat.fit
       ? Uint8List.fromList(base64Decode(encoded))
@@ -66,6 +68,7 @@ ActivityExportResult _exportFromActivity({
   final mergedDiagnostics = <ParseDiagnostic>[
     ...diagnostics,
     ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
+    ...nonFinite,
     ..._lossyDiagnostics(
       working,
       to,
@@ -86,6 +89,33 @@ ActivityExportResult _exportFromActivity({
       normalization: normalizationStats,
       validationDuration: validationDuration,
     ),
+  );
+}
+
+/// Removes `NaN` and infinite values before encoding, and reports them,
+/// so an activity built in code never makes an encoder throw or write a
+/// literal `NaN`.
+(RawActivity, List<ParseDiagnostic>) _dropNonFiniteForExport(
+  RawActivity activity,
+) {
+  final report = NonFiniteReport();
+  final cleaned = dropNonFinite(activity, report);
+  if (report.isEmpty) return (activity, const []);
+  return (
+    cleaned,
+    [
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: '${DiagnosticCategory.repaired}.non_finite_dropped',
+        message:
+            'Left out values that are not finite numbers (NaN or '
+            'infinity): ${report.describe()}.',
+        suggestedFix:
+            'Check how these values were computed; a division by zero is '
+            'the usual cause.',
+        priority: 3,
+      ),
+    ],
   );
 }
 
@@ -277,6 +307,18 @@ List<ParseDiagnostic> _lossyDiagnostics(
         'Channel(s) ${droppedChannels.join(', ')} cannot be represented '
             'in TCX and are dropped.',
         fix: 'Export to FIT, GPX, GeoJSON, or CSV to preserve them.',
+      );
+    }
+  }
+  if (to == ActivityFileFormat.geojson) {
+    final unwritable = activity.metadata.values
+        .where((value) => !GeojsonEncoder.isJsonValue(value))
+        .length;
+    if (unwritable > 0) {
+      add(
+        'metadata_values_dropped',
+        '$unwritable metadata value(s) are not JSON values and are dropped.',
+        fix: 'Store metadata as strings, numbers, booleans, lists or maps.',
       );
     }
   }

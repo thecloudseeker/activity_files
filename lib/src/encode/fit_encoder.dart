@@ -495,7 +495,9 @@ class FitEncoder implements ActivityFormatEncoder {
       definitionSection.addByte(developerDataLocal);
       definitionSection.addByte(0); // developer_data_index 0
       for (var i = 0; i < developerChannels.length; i++) {
-        final nameBytes = _utf8Field(developerChannels[i].id)!;
+        // A channel id can be empty (a GeoJSON property keyed ""); FIT then
+        // gets a field without a name rather than a crash.
+        final nameBytes = _utf8Field(developerChannels[i].id) ?? const <int>[];
         encoder.writeDefinition(
           definitionSection,
           localId: fieldDescriptionLocal,
@@ -552,10 +554,12 @@ class FitEncoder implements ActivityFormatEncoder {
     for (final sample in recordSamples) {
       final timestampSeconds = fitSecondsSinceEpoch(sample.time);
       final lat = sample.latitude != null
-          ? (sample.latitude! * 2147483648.0 / 180.0).round()
+          ? _roundFinite(sample.latitude! * 2147483648.0 / 180.0) ??
+                _invalidSemicircle
           : _invalidSemicircle;
       final lon = sample.longitude != null
-          ? (sample.longitude! * 2147483648.0 / 180.0).round()
+          ? _roundFinite(sample.longitude! * 2147483648.0 / 180.0) ??
+                _invalidSemicircle
           : _invalidSemicircle;
       final altitudeRaw = _encodeAltitude(sample.elevation);
       final snapshot = channelCursor.snapshot(sample.time);
@@ -621,10 +625,13 @@ double? _valueWithinChannel(
 }
 
 int _encodeAltitude(double? elevation) {
-  if (elevation == null || elevation.isNaN) {
+  if (elevation == null) {
     return 0xFFFF;
   }
-  final scaled = ((elevation + 500.0) * 5.0).round();
+  final scaled = _roundFinite((elevation + 500.0) * 5.0);
+  if (scaled == null) {
+    return 0xFFFF;
+  }
   if (scaled < 0) {
     return 0;
   }

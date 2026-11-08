@@ -1508,7 +1508,9 @@ class RawActivity {
     }
     double total = 0;
     for (var i = 1; i < points.length; i++) {
-      total += haversineMeters(points[i - 1], points[i]);
+      final step = haversineMeters(points[i - 1], points[i]);
+      // Coordinates far outside their range give no usable distance.
+      if (step.isFinite) total += step;
     }
     return total;
   }

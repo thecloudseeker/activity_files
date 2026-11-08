@@ -16,6 +16,17 @@ class GeojsonEncoder {
     'altitude',
   };
 
+  /// Whether [value] can be written as JSON: null, a string, a bool, a
+  /// finite number, or a list or string-keyed map of such values.
+  static bool isJsonValue(Object? value) => switch (value) {
+    null || String() || bool() || int() => true,
+    final double d => d.isFinite,
+    final List<Object?> list => list.every(isJsonValue),
+    final Map<Object?, Object?> map =>
+      map.keys.every((k) => k is String) && map.values.every(isJsonValue),
+    _ => false,
+  };
+
   /// Encode activity to GeoJSON FeatureCollection format
   ///
   /// Returns GeoJSON string with activity as LineString feature
@@ -59,6 +70,16 @@ class GeojsonEncoder {
   static double _round(double value, int precision) =>
       double.parse(value.toStringAsFixed(precision));
 
+  /// Running mean, so values near the double limit cannot overflow a sum
+  /// into infinity, which JSON cannot hold.
+  static double _mean(List<double> values) {
+    var mean = 0.0;
+    for (var i = 0; i < values.length; i++) {
+      mean += values[i] / (i + 1) - mean / (i + 1);
+    }
+    return mean;
+  }
+
   /// Build GeoJSON Feature from activity
   static Map<String, dynamic> _buildFeature(
     RawActivity activity,
@@ -98,10 +119,7 @@ class GeojsonEncoder {
         'total_calories': activity.summary!.calories,
       if (laps.isNotEmpty) ...{
         'num_laps': laps.length,
-        if (avgHeartRates.isNotEmpty)
-          'avg_heart_rate':
-              avgHeartRates.fold<double>(0, (sum, hr) => sum + hr) /
-              avgHeartRates.length,
+        if (avgHeartRates.isNotEmpty) 'avg_heart_rate': _mean(avgHeartRates),
         'max_heart_rate': laps
             .map((lap) => lap.maxHeartRate)
             .nonNulls
@@ -115,7 +133,8 @@ class GeojsonEncoder {
       // Preserved source properties win over the computed defaults above, so a
       // GeoJSON round-trip keeps every original feature property verbatim.
       // Empty for non-GeoJSON sources, leaving the computed defaults intact.
-      ...activity.metadata,
+      for (final MapEntry(:key, :value) in activity.metadata.entries)
+        if (isJsonValue(value)) key: value,
       // Per-point timestamps are always regenerated from the current points
       // (togeojson/Mapbox convention); GeoJSON has no native time field.
       if (points.isNotEmpty)

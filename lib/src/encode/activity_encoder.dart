@@ -2,6 +2,7 @@
 import '../models.dart';
 import 'csv_encoder.dart';
 import 'encoder_options.dart';
+import 'finite_guard.dart';
 import 'fit_encoder.dart';
 import 'geojson_encoder.dart';
 import 'gpx_encoder.dart';
@@ -17,11 +18,15 @@ class ActivityEncoder {
   const ActivityEncoder._();
 
   /// Encodes [activity] using the requested [format].
+  ///
+  /// `NaN` and infinite values are left out of the output;
+  /// `ActivityFiles.export` reports them.
   static String encode(
-    RawActivity activity,
+    RawActivity input,
     ActivityFileFormat format, {
     EncoderOptions options = const EncoderOptions(),
   }) {
+    final activity = dropNonFinite(input, NonFiniteReport());
     return switch (format) {
       ActivityFileFormat.gpx => const GpxEncoder().encode(activity, options),
       ActivityFileFormat.tcx => const TcxEncoder().encode(activity, options),

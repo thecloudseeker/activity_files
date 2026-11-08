@@ -8,6 +8,7 @@ import '../encode/activity_encoder.dart';
 import '../encode/csv_encoder.dart';
 import '../encode/encoder_options.dart';
 import '../encode/encoder_utils.dart';
+import '../encode/finite_guard.dart';
 import '../encode/geojson_encoder.dart';
 import '../fit/fit_epoch.dart';
 import '../models.dart';
@@ -429,8 +430,11 @@ class ActivityFiles {
       collected,
     );
     if (!exportInIsolate) {
+      final List<ParseDiagnostic> nonFinite;
+      (exportActivity, nonFinite) = _dropNonFiniteForExport(exportActivity);
       collected = [
         ...collected,
+        ...nonFinite,
         ..._lossyDiagnostics(
           exportActivity,
           to,
