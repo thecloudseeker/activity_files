@@ -3,6 +3,7 @@ import 'package:xml/xml.dart';
 
 import '../channel_mapper.dart';
 import '../identifier_sanitizer.dart';
+import '../library_namespace.dart';
 import '../models.dart';
 import '../stable_sort.dart';
 import 'activity_encoder.dart';
@@ -102,22 +103,19 @@ class GpxEncoder implements ActivityFormatEncoder {
             }
             builder.element(
               'extensions',
-              nest: () {
-                if (hasDevice) {
-                  _writeDeviceExtension(builder, device!);
-                }
-                for (final extension in metadataExtensions) {
-                  _writeExtensionNode(builder, extension);
-                }
-              },
+              nest: () => _writeFileExtensions(
+                builder,
+                hasDevice ? device : null,
+                metadataExtensions,
+              ),
             );
           }
 
           if (emitGpx10) {
-            // GPX 1.0 places metadata fields directly under the root element.
+            // GPX 1.0 places metadata fields directly under the root element;
+            // its extension content comes after the tracks.
             writeNameAndDescription();
             builder.element('time', nest: start.toIso8601String());
-            writeExtensionsBlock();
           } else {
             builder.element(
               'metadata',
@@ -165,6 +163,15 @@ class GpxEncoder implements ActivityFormatEncoder {
             extraTagNames: extraTagNames,
           );
         }
+        // GPX 1.0 has no <extensions>: foreign elements follow the tracks.
+        if (emitGpx10) {
+          final device = activity.device;
+          _writeFileExtensions(
+            builder,
+            (device?.isNotEmpty ?? false) ? device : null,
+            metadataExtensions,
+          );
+        }
       },
     );
     return builder.buildDocument().toXmlString(pretty: true, indent: '  ');
@@ -190,16 +197,29 @@ class GpxEncoder implements ActivityFormatEncoder {
         if (trackDescription != null) {
           builder.element('desc', nest: trackDescription);
         }
-        builder.element('type', nest: trackType);
-        if (trackExtensions.isNotEmpty) {
+        if (_isGpx10(options)) {
+          // GPX 1.0 has no <trk><type>; the library's own element keeps it,
+          // and the track's extension elements stand on their own.
           builder.element(
-            'extensions',
-            nest: () {
-              for (final extension in trackExtensions) {
-                _writeExtensionNode(builder, extension);
-              }
-            },
+            'type',
+            attributes: const {'xmlns': libraryNamespace},
+            nest: trackType,
           );
+          for (final extension in trackExtensions) {
+            _writeExtensionNode(builder, extension);
+          }
+        } else {
+          builder.element('type', nest: trackType);
+          if (trackExtensions.isNotEmpty) {
+            builder.element(
+              'extensions',
+              nest: () {
+                for (final extension in trackExtensions) {
+                  _writeExtensionNode(builder, extension);
+                }
+              },
+            );
+          }
         }
         for (final (segStart, segEnd) in _segmentRanges(
           points.length,
@@ -265,28 +285,25 @@ class GpxEncoder implements ActivityFormatEncoder {
                     final hasPointExtensions =
                         pointExtensions != null && pointExtensions.isNotEmpty;
                     if (tpxValues.isNotEmpty || hasPointExtensions) {
-                      builder.element(
-                        'extensions',
-                        nest: () {
-                          if (tpxValues.isNotEmpty) {
-                            builder.element(
-                              'gpxtpx:TrackPointExtension',
-                              nest: () {
-                                for (final entry in tpxValues) {
-                                  builder.element(entry.tag, nest: entry.text);
-                                }
-                              },
-                            );
+                      _writeExtensions(builder, options, () {
+                        if (tpxValues.isNotEmpty) {
+                          builder.element(
+                            'gpxtpx:TrackPointExtension',
+                            nest: () {
+                              for (final entry in tpxValues) {
+                                builder.element(entry.tag, nest: entry.text);
+                              }
+                            },
+                          );
+                        }
+                        // Preserved point-level extension elements from the
+                        // source file (lossless round-trip).
+                        if (hasPointExtensions) {
+                          for (final extension in pointExtensions) {
+                            _writeExtensionNode(builder, extension);
                           }
-                          // Preserved point-level extension elements from the
-                          // source file (lossless round-trip).
-                          if (hasPointExtensions) {
-                            for (final extension in pointExtensions) {
-                              _writeExtensionNode(builder, extension);
-                            }
-                          }
-                        },
-                      );
+                        }
+                      });
                     }
                   },
                 );
@@ -326,14 +343,11 @@ class GpxEncoder implements ActivityFormatEncoder {
         _writeGpxAttributes(builder, point.gpxAttributes);
         final extensions = point.gpxExtensions;
         if (extensions != null && extensions.isNotEmpty) {
-          builder.element(
-            'extensions',
-            nest: () {
-              for (final extension in extensions) {
-                _writeExtensionNode(builder, extension);
-              }
-            },
-          );
+          _writeExtensions(builder, options, () {
+            for (final extension in extensions) {
+              _writeExtensionNode(builder, extension);
+            }
+          });
         }
       },
     );
@@ -536,26 +550,39 @@ void _writeExtensionNode(XmlBuilder builder, GpxExtensionNode node) {
   );
 }
 
-void _writeDeviceExtension(XmlBuilder builder, ActivityDeviceMetadata device) {
-  if (device.isEmpty) {
-    return;
-  }
-  void writeTag(String? value, String tag) {
-    final trimmed = value?.trim();
-    if (trimmed == null || trimmed.isEmpty) {
-      return;
-    }
-    builder.element(tag, nest: trimmed);
-  }
+bool _isGpx10(EncoderOptions options) => options.gpxVersion == GpxVersion.v1_0;
 
-  builder.element(
-    'device',
-    nest: () {
-      writeTag(device.manufacturer, 'manufacturer');
-      writeTag(device.model, 'model');
-      writeTag(device.product, 'product');
-      writeTag(device.serialNumber, 'serialNumber');
-      writeTag(device.softwareVersion, 'softwareVersion');
-    },
-  );
+/// Writes extension content: inside `<extensions>` in GPX 1.1, and directly
+/// in GPX 1.0, which has no such element but allows foreign elements where
+/// 1.1 puts it.
+void _writeExtensions(
+  XmlBuilder builder,
+  EncoderOptions options,
+  void Function() content,
+) {
+  if (_isGpx10(options)) {
+    content();
+  } else {
+    builder.element('extensions', nest: content);
+  }
 }
+
+/// The file-level extension content: the device, then the caller's nodes.
+void _writeFileExtensions(
+  XmlBuilder builder,
+  ActivityDeviceMetadata? device,
+  List<GpxExtensionNode> extensions,
+) {
+  if (device != null) writeLibraryDevice(builder, device);
+  for (final extension in extensions) {
+    // A deviceNode() the caller added is the same device; it is written
+    // once, from activity.device.
+    if (device != null && _isLibraryDeviceNode(extension)) continue;
+    _writeExtensionNode(builder, extension);
+  }
+}
+
+bool _isLibraryDeviceNode(GpxExtensionNode node) =>
+    node.name == 'device' &&
+    (node.namespaceUri == defaultExtensionNamespace ||
+        node.namespaceUri == legacyExtensionNamespace);

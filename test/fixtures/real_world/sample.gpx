@@ -5,7 +5,7 @@
     <name>Artificial Activity</name>
     <desc>Synthetic sample for tests/examples.</desc>
     <extensions>
-      <device>
+      <device xmlns="https://schemas.eikedreier.com/activity_files/v1">
         <manufacturer>Example Labs</manufacturer>
         <product>Synthetic 1</product>
         <serialNumber>SYN-0001</serialNumber>

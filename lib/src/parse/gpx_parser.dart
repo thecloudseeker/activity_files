@@ -4,6 +4,7 @@ import 'package:xml/xml.dart';
 import '../geo_math.dart';
 import '../models.dart';
 import 'activity_parser.dart';
+import 'library_extensions.dart';
 import 'number_utils.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
@@ -121,6 +122,21 @@ class GpxParser implements ActivityFormatParser {
     var metadataName = _firstText(root, 'name');
     var metadataDescription = _firstText(root, 'desc');
     final metadataExtensions = <GpxExtensionNode>[];
+    ActivityDeviceMetadata? device;
+    // The library's own <device> becomes the activity's device rather than
+    // a raw extension node; earlier releases wrote it without a namespace,
+    // so it inherited the GPX one.
+    void readExtension(XmlElement child) {
+      if (isLibraryElement(child, 'device', formatNamespaces: _gpxNamespaces)) {
+        device ??= readLibraryDevice(child);
+        return;
+      }
+      metadataExtensions.add(_extensionNodeFromXml(child));
+    }
+
+    void readExtensions(XmlElement extensions) =>
+        extensions.childElements.forEach(readExtension);
+
     // GPX 1.1 wraps metadata; GPX 1.0 keeps name/desc/time at the root.
     final metadataElement = root.getElement('metadata');
     if (metadataElement != null) {
@@ -128,14 +144,22 @@ class GpxParser implements ActivityFormatParser {
       metadataDescription =
           _firstText(metadataElement, 'desc') ?? metadataDescription;
       for (final child in metadataElement.childElements) {
-        if (child.name.local == 'extensions') {
-          metadataExtensions.addAll(_extensionChildrenToNodes(child));
-        }
+        if (child.name.local == 'extensions') readExtensions(child);
       }
     }
+    // GPX 1.0 has no <extensions>: its foreign elements stand directly in
+    // the root, a track or a point.
+    final gpxNamespace = root.name.namespaceUri;
+    bool isForeign(XmlElement element) {
+      final uri = element.name.namespaceUri;
+      return uri != null && uri.isNotEmpty && uri != gpxNamespace;
+    }
+
     for (final child in root.childElements) {
       if (child.name.local == 'extensions') {
-        metadataExtensions.addAll(_extensionChildrenToNodes(child));
+        readExtensions(child);
+      } else if (isForeign(child)) {
+        readExtension(child);
       }
     }
     // Parse each <trk> element independently so that multi-track files can be
@@ -159,6 +183,10 @@ class GpxParser implements ActivityFormatParser {
       for (final child in trk.childElements) {
         if (child.name.local == 'extensions') {
           trkExtensions.addAll(_extensionChildrenToNodes(child));
+        } else if (isForeign(child) && !isLibraryElement(child, 'type')) {
+          // The library's own <type> carries a GPX 1.0 track type, read
+          // with the other track texts.
+          trkExtensions.add(_extensionNodeFromXml(child));
         }
       }
 
@@ -204,6 +232,8 @@ class GpxParser implements ActivityFormatParser {
 
           String? timeText;
           String? eleText;
+          // The point's extension elements: inside <extensions> in GPX 1.1,
+          // directly in the point in GPX 1.0.
           final extensionNodes = <XmlElement>[];
           Map<String, String>? pointAttributes;
 
@@ -217,10 +247,12 @@ class GpxParser implements ActivityFormatParser {
                 eleText ??= child.innerText.trim();
                 break;
               case 'extensions':
-                extensionNodes.add(child);
+                extensionNodes.addAll(child.childElements);
                 break;
               default:
-                if (_pointAttributeElements.contains(local)) {
+                if (isForeign(child)) {
+                  extensionNodes.add(child);
+                } else if (_pointAttributeElements.contains(local)) {
                   final value = child.innerText.trim();
                   if (value.isNotEmpty) {
                     (pointAttributes ??= {})[local] = value;
@@ -283,42 +315,39 @@ class GpxParser implements ActivityFormatParser {
             );
           }
           List<GpxExtensionNode>? pointExtensions;
-          for (final extChild in extensionNodes) {
-            for (final tpext in extChild.childElements) {
-              if (tpext.name.local == 'TrackPointExtension') {
-                for (final child in tpext.childElements) {
-                  final name = child.name.local;
-                  final valueText = child.innerText.trim();
-                  if (valueText.isEmpty) continue;
-                  final parsed = double.tryParse(valueText);
-                  if (parsed == null) {
-                    diagnostics.add(
-                      ParseDiagnostic(
-                        severity: ParseSeverity.warning,
-                        code: 'gpx.extension.invalid_number',
-                        message:
-                            'Unparsable extension value "$valueText" for $name at $time.',
-                        node: ParseNodeReference(
-                          path: 'gpx.trk.trkseg.trkpt.extensions.$name',
-                          index: index - 1,
-                        ),
+          for (final tpext in extensionNodes) {
+            if (tpext.name.local == 'TrackPointExtension') {
+              for (final child in tpext.childElements) {
+                final name = child.name.local;
+                final valueText = child.innerText.trim();
+                if (valueText.isEmpty) continue;
+                final parsed = parseFiniteDouble(valueText);
+                if (parsed == null) {
+                  diagnostics.add(
+                    ParseDiagnostic(
+                      severity: ParseSeverity.warning,
+                      code: 'gpx.extension.invalid_number',
+                      message:
+                          'Unparsable extension value "$valueText" for $name at $time.',
+                      node: ParseNodeReference(
+                        path: 'gpx.trk.trkseg.trkpt.extensions.$name',
+                        index: index - 1,
                       ),
-                    );
-                    continue;
-                  }
-                  // Known tags map to built-in channels; unknown numeric
-                  // tags are preserved as custom channels.
-                  final channel =
-                      _tpxTagToChannel[name] ?? Channel.custom(name);
-                  trkChannels
-                      .putIfAbsent(channel, () => [])
-                      .add(Sample(time: time, value: parsed));
+                    ),
+                  );
+                  continue;
                 }
-              } else {
-                // Preserve unrecognized point-level extension elements for
-                // lossless round-trips.
-                (pointExtensions ??= []).add(_extensionNodeFromXml(tpext));
+                // Known tags map to built-in channels; unknown numeric
+                // tags are preserved as custom channels.
+                final channel = _tpxTagToChannel[name] ?? Channel.custom(name);
+                trkChannels
+                    .putIfAbsent(channel, () => [])
+                    .add(Sample(time: time, value: parsed));
               }
+            } else {
+              // Preserve unrecognized point-level extension elements for
+              // lossless round-trips.
+              (pointExtensions ??= []).add(_extensionNodeFromXml(tpext));
             }
           }
           final point = GeoPoint(
@@ -444,6 +473,7 @@ class GpxParser implements ActivityFormatParser {
                   laps: t.laps,
                   sport: t.sport,
                   creator: creator,
+                  device: device,
                   gpxMetadataName: metadataName,
                   gpxMetadataDescription: metadataDescription,
                   gpxMetadataExtensions: metadataExtensions,
@@ -463,6 +493,7 @@ class GpxParser implements ActivityFormatParser {
       laps: primary?.laps ?? const [],
       sport: overallSport,
       creator: creator,
+      device: device,
       gpxMetadataName: metadataName,
       gpxMetadataDescription: metadataDescription,
       gpxMetadataExtensions: metadataExtensions,
@@ -486,6 +517,13 @@ class GpxParser implements ActivityFormatParser {
     return GpxParser._gpxSportMap[value.trim().toLowerCase()] ?? Sport.unknown;
   }
 }
+
+/// The GPX namespaces, which an extension element written without one
+/// inherits.
+const Set<String> _gpxNamespaces = {
+  'http://www.topografix.com/GPX/1/1',
+  'http://www.topografix.com/GPX/1/0',
+};
 
 /// Parses a `<wpt>`/`<rtept>` element into a [GeoPoint], preserving its
 /// standard child elements (name, sym, desc, …) in [GeoPoint.gpxAttributes]
@@ -531,7 +569,11 @@ GeoPoint? _parseGpxPoint(
         }
         break;
       default:
-        if (GpxParser._pointAttributeElements.contains(local)) {
+        // GPX 1.0 puts foreign elements directly in the point.
+        final uri = child.name.namespaceUri;
+        if (uri != null && uri.isNotEmpty && uri != element.name.namespaceUri) {
+          (extensions ??= []).add(_extensionNodeFromXml(child));
+        } else if (GpxParser._pointAttributeElements.contains(local)) {
           final value = child.innerText.trim();
           if (value.isNotEmpty) (attributes ??= {})[local] = value;
         }
