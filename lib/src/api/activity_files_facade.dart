@@ -247,6 +247,22 @@ class ActivityFiles {
         ),
       ];
     }
+    if (softLimit &&
+        _payloadSizeAtLeast(materialized.payload) >
+            _defaultStreamBufferLimitBytes) {
+      diagnostics = [
+        ...diagnostics,
+        const ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'import.payload.large',
+          message:
+              'The source is larger than 64 MB; it was read in full because '
+              'it is an activity file.',
+          suggestedFix:
+              'Pass maxPayloadBytes to refuse sources over a size you choose.',
+        ),
+      ];
+    }
     return ActivityImportResult._(
       activity: parseResult.activity,
       diagnostics: diagnostics,
@@ -261,8 +277,7 @@ class ActivityFiles {
   /// This helper is useful when you want to branch your own logic based on
   /// format before calling [import] or [convert].
   ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit; pass `null`
-  /// to disable the limit.
+  /// Detection reads only the start of [source], so no size limit applies.
   static ActivityFileFormat? detectFormat(
     Object source, {
     Encoding encoding = utf8,
@@ -271,6 +286,10 @@ class ActivityFiles {
       'Will be removed in 0.10.0.',
     )
     bool allowFilePaths = false,
+    @Deprecated(
+      'Detection reads only the start of the source, so the limit has no '
+      'effect. Will be removed in 0.10.0.',
+    )
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _detectFormatSync(
     source,
@@ -301,7 +320,7 @@ class ActivityFiles {
     bool useIsolate = true,
     void Function(int completed, int total)? onProgress,
     bool stopOnError = false,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
   }) async {
     final sourceList = sources.toList();
     final total = sourceList.length;
@@ -422,9 +441,8 @@ class ActivityFiles {
   /// [runValidation] to append structural validation diagnostics/results;
   /// disable it when conversion throughput matters more than validation output.
   ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes, files and buffered streams; a file is measured before it
-  /// is read. Pass `null` to disable the limit.
+  /// Reads [source] as [import] does, with the same [maxPayloadBytes]
+  /// rules, and never throws because of it.
   static Future<ActivityConversionResult> convert({
     required Object source,
     required ActivityFileFormat to,
@@ -445,7 +463,7 @@ class ActivityFiles {
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
   }) async {
     final loadResult = await import(
@@ -1083,7 +1101,7 @@ class ActivityFiles {
     bool strictFitIntegrity = false,
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
   }) => import(
     source,
     format: format,
@@ -1105,7 +1123,7 @@ class ActivityFiles {
     bool useIsolate = true,
     void Function(int completed, int total)? onProgress,
     bool stopOnError = false,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
   }) => importBatch(
     sources,
     format: format,

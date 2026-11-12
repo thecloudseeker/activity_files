@@ -701,6 +701,14 @@ ActivityFileFormat? _formatFromSourcePath(Object source) {
   return path == null ? null : _detectFromExtension(_extensionForPath(path));
 }
 
+/// A lower bound of [payload]'s size in bytes; a string counts one byte per
+/// code unit, which no encoding undercuts.
+int _payloadSizeAtLeast(Object payload) => switch (payload) {
+  List<int> bytes => bytes.length,
+  String text => text.length,
+  _ => 0,
+};
+
 /// The result `import` returns for a source it could not read: an empty
 /// activity and one error.
 ActivityImportResult _failedImport({

@@ -129,8 +129,9 @@ ArgParser _commandParser({
     )
     ..addOption(
       'max-payload-bytes',
-      defaultsTo: '${ActivityFiles.defaultMaxPayloadBytes}',
-      help: 'Largest input in bytes, or none.',
+      help:
+          'Largest input in bytes, or none. Left out, an input over 64 MB '
+          'is read with a warning.',
       valueHelp: 'BYTES',
     )
     ..addFlag(
@@ -396,7 +397,8 @@ Duration _durationOption(
 );
 
 int? _maxPayloadBytes(ArgResults command) {
-  final raw = _string(command, 'max-payload-bytes')!;
+  final raw = _string(command, 'max-payload-bytes');
+  if (raw == null) return softPayloadLimit;
   if (raw == 'none') return null;
   return _intOption(command, 'max-payload-bytes', min: 1);
 }

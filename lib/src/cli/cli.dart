@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:args/args.dart';
 
 import '../../activity_files.dart';
+import '../api/payload_limit.dart';
 
 part 'cli_commands.dart';
 part 'cli_inputs.dart';

@@ -142,43 +142,41 @@ void main() {
 
     for (final format in [ActivityFileFormat.gpx, null]) {
       final label = format == null ? 'detected format' : 'given format';
-      test('import throws FormatException to the caller ($label)', () async {
-        Object? caught;
+      test('import reports the limit as an error ($label)', () async {
+        ActivityImportResult? result;
         final unhandled = await unhandledErrorsOf(() async {
-          try {
-            await ActivityFiles.import(
-              oversized(),
-              format: format,
-              useIsolate: false,
-              maxPayloadBytes: limit,
-            );
-          } catch (error) {
-            caught = error;
-          }
+          result = await ActivityFiles.import(
+            oversized(),
+            format: format,
+            useIsolate: false,
+            maxPayloadBytes: limit,
+          );
         });
 
-        expect(caught, isA<FormatException>());
-        expect('$caught', contains('exceeds $limit bytes'));
+        final error = result!.diagnostics.singleWhere(
+          (d) => d.code == 'import.payload.too_large',
+        );
+        expect(error.severity, ParseSeverity.error);
+        expect(error.message, contains('exceeds $limit bytes'));
         expect(unhandled, isEmpty);
       });
     }
 
-    test('convert throws FormatException to the caller', () async {
-      Object? caught;
+    test('convert reports the limit as an error', () async {
+      ActivityConversionResult? result;
       final unhandled = await unhandledErrorsOf(() async {
-        try {
-          await ActivityFiles.convert(
-            source: oversized(),
-            to: ActivityFileFormat.tcx,
-            useIsolate: false,
-            maxPayloadBytes: limit,
-          );
-        } catch (error) {
-          caught = error;
-        }
+        result = await ActivityFiles.convert(
+          source: oversized(),
+          to: ActivityFileFormat.tcx,
+          useIsolate: false,
+          maxPayloadBytes: limit,
+        );
       });
 
-      expect(caught, isA<FormatException>());
+      expect(
+        result!.diagnostics.map((d) => d.code),
+        contains('import.payload.too_large'),
+      );
       expect(unhandled, isEmpty);
     });
 
