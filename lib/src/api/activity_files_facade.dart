@@ -24,6 +24,7 @@ import '../validation.dart';
 import 'activity_export_request.dart';
 import 'export_serialization.dart';
 import 'export_stats.dart';
+import 'payload_limit.dart';
 
 part 'facade/edit_internals.dart';
 part 'facade/export_internals.dart';
@@ -43,6 +44,15 @@ typedef SportMapper = Sport? Function(dynamic source);
 
 const int _defaultStreamBufferLimitBytes = 64 * 1024 * 1024;
 const int _maxFormatDetectBytes = 128 * 1024;
+
+/// Codes of the errors `import` reports for a source it could not read.
+const Set<String> _sourceFailureCodes = {
+  'parser.format_undetected',
+  'import.source.unsupported',
+  'import.source.unreadable',
+  'import.source.read_failed',
+  'import.payload.too_large',
+};
 
 /// Top-level facade exposing ergonomic helpers for app integrations.
 class ActivityFiles {
@@ -83,9 +93,17 @@ class ActivityFiles {
   /// extensions or by inspecting the payload. Specify [format] when the input
   /// is ambiguous (e.g. a FIT payload provided as a base64 string).
   ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes, files and buffered streams; a file is measured before it
-  /// is read. Pass `null` to disable the limit.
+  /// Never throws because of [source]: a missing or unreadable file, an
+  /// unsupported source type, a format that cannot be detected or a payload
+  /// over [maxPayloadBytes] comes back as an empty activity with an error
+  /// diagnostic, and [ActivityImportResult.format] is null when no format is
+  /// known. Only [strictFitIntegrity], which asks for it, throws.
+  ///
+  /// Left out, [maxPayloadBytes] is a soft limit: a source over 64 MB is
+  /// read with an `import.payload.large` warning, except a file of no known
+  /// format, which is reported without being loaded. A number is a hard cap
+  /// (a file is measured before it is read), even when it is 64 MB. Pass
+  /// `null` for no limit.
   static Future<ActivityImportResult> import(
     Object source, {
     ActivityFileFormat? format,
@@ -100,45 +118,88 @@ class ActivityFiles {
     @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
+  }) async {
+    final softLimit = maxPayloadBytes == softPayloadLimit;
+    final hardLimit = softLimit ? null : maxPayloadBytes;
+    try {
+      return await _importChecked(
+        source,
+        format: format,
+        useIsolate: useIsolate,
+        encoding: encoding,
+        allowFilePaths: allowFilePaths,
+        strictFitHandling: _resolveStrictFitHandling(
+          strictFitIntegrity: strictFitIntegrity,
+          fitCorruptionHandling: fitCorruptionHandling,
+        ),
+        hardLimit: hardLimit,
+        softLimit: softLimit,
+      );
+    } on _FitIntegrityException {
+      rethrow;
+    } on _ImportFailure catch (failure) {
+      return _failedImport(
+        code: failure.code,
+        message: failure.message,
+        description: failure.description,
+        format: failure.format ?? format,
+      );
+    } on _PayloadLimitException catch (error) {
+      return _failedImport(
+        code: 'import.payload.too_large',
+        message: error.message,
+        description: _describeSource(source),
+        format: format ?? _formatFromSourcePath(source),
+        suggestedFix:
+            'Raise maxPayloadBytes, or leave it out for the soft default.',
+      );
+    } catch (error) {
+      // Anything else comes from the source itself, such as a stream that
+      // reports an error while it is read.
+      return _failedImport(
+        code: 'import.source.read_failed',
+        message: 'Reading the source failed: $error',
+        description: _describeSource(source),
+        format: format ?? _formatFromSourcePath(source),
+      );
+    }
+  }
+
+  static Future<ActivityImportResult> _importChecked(
+    Object source, {
+    required ActivityFileFormat? format,
+    required bool useIsolate,
+    required Encoding encoding,
+    required bool allowFilePaths,
+    required bool strictFitHandling,
+    required int? hardLimit,
+    required bool softLimit,
   }) async {
     final resolved = await _resolveSource(
       source,
       allowFilePaths: allowFilePaths,
-      maxPayloadBytes: maxPayloadBytes,
+      maxPayloadBytes: hardLimit,
+      softLimit: softLimit,
+      format: format,
+      encoding: encoding,
     );
     final ActivityFileFormat detected;
     try {
-      if (maxPayloadBytes != null) {
+      if (hardLimit != null) {
         _enforcePayloadLimit(
           resolved.detectionBytes ?? resolved.payload,
           encoding: encoding,
-          limit: maxPayloadBytes,
+          limit: hardLimit,
         );
       }
-      final found =
-          format ??
-          _detectFormat(
-            resolved,
-            encoding: encoding,
-            maxPayloadBytes: maxPayloadBytes,
-          );
+      final found = format ?? _detectFormat(resolved, encoding: encoding);
       if (found == null) {
-        throw ArgumentError(
-          'Unable to infer activity format from source. The format must be specified explicitly.\n'
-          '\n'
-          'To fix this, try one of the following:\n'
-          '  1. Provide the format parameter: import(source, format: ActivityFileFormat.gpx)\n'
-          '  2. Use a file with a recognized extension (.gpx, .tcx, .fit, .csv, .geojson)\n'
-          '  3. If passing a filesystem path as a String, enable: import(source, allowFilePaths: true)\n'
-          '\n'
-          'Tips for common formats:\n'
-          '  • GPX/TCX: Usually detected automatically from file extension\n'
-          '  • FIT (binary): For base64-encoded FIT data, use import(bytes, format: ActivityFileFormat.fit)\n'
-          '  • CSV/GeoJSON: Detectable from extension or content sniffing\n'
-          '  • Inline content: Always specify format for text passed as a String\n'
-          '\n'
-          'Received: ${resolved.description} (extension: ${resolved.fileExtension ?? "none"})',
+        throw _ImportFailure.undetected(
+          resolved.fileExtension == null
+              ? resolved.description
+              : '${resolved.description} (extension: ${resolved.fileExtension})',
+          inline: resolved.description == 'inline',
         );
       }
       detected = found;
@@ -154,7 +215,7 @@ class ActivityFiles {
         detected,
         useIsolate: useIsolate,
         encoding: encoding,
-        maxPayloadBytes: maxPayloadBytes,
+        maxPayloadBytes: hardLimit,
       );
     } on _PayloadLimitException {
       rethrow;
@@ -164,16 +225,13 @@ class ActivityFiles {
     if (_shouldFailFitIntegrity(
       detected,
       parseResult.diagnostics,
-      _resolveStrictFitHandling(
-        strictFitIntegrity: strictFitIntegrity,
-        fitCorruptionHandling: fitCorruptionHandling,
-      ),
+      strictFitHandling,
     )) {
       throw _fitIntegrityFailure(parseResult.diagnostics);
     }
     final materialized = await _materializePayload(
       resolved.payload,
-      maxBytes: maxPayloadBytes,
+      maxBytes: hardLimit,
     );
     var diagnostics = parseResult.diagnostics;
     if (materialized.unavailable) {
@@ -218,7 +276,6 @@ class ActivityFiles {
     source,
     encoding: encoding,
     allowFilePaths: allowFilePaths,
-    maxPayloadBytes: maxPayloadBytes,
   );
 
   /// Imports multiple sources in sequence and returns a [BatchImportResult].
@@ -253,14 +310,19 @@ class ActivityFiles {
     var completed = 0;
     for (final source in sourceList) {
       try {
-        successes.add(
-          await import(
-            source,
-            format: format,
-            useIsolate: useIsolate,
-            maxPayloadBytes: maxPayloadBytes,
-          ),
+        final result = await import(
+          source,
+          format: format,
+          useIsolate: useIsolate,
+          maxPayloadBytes: maxPayloadBytes,
         );
+        // import reports a source it cannot read instead of throwing; the
+        // batch still lists it as a failure.
+        final unread = result.diagnostics
+            .where((d) => _sourceFailureCodes.contains(d.code))
+            .firstOrNull;
+        if (unread != null) throw FormatException(unread.message);
+        successes.add(result);
       } catch (error, stackTrace) {
         failures.add(
           BatchImportFailure(
@@ -531,7 +593,7 @@ class ActivityFiles {
 
   /// Converts a [source] stream, normalizes, and exports to [to].
   ///
-  /// Parsing occurs via [ActivityParser.parseStream]. Toggle [parseInIsolate]
+  /// The stream is read as [import] reads one. Toggle [parseInIsolate]
   /// and [exportInIsolate] to control isolate offloading for parse and export.
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for buffered

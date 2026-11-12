@@ -162,7 +162,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
     return;
   }
   print(
-    'Loaded ${loaded.format.name}: '
+    'Loaded ${loaded.format?.name}: '
     '${loaded.activity.points.length} points, '
     '${loaded.activity.channels.length} channel(s)',
   );

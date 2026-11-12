@@ -52,9 +52,6 @@ _FileFailure _asFailure(Object error) => switch (error) {
   _ => _FileFailure('Internal error: ${_firstLine(error)}', _exitSoftware),
 };
 
-/// How the library's message begins when it cannot tell the format.
-const _undetected = 'Unable to infer activity format';
-
 /// Runs the library call [read] that reads one input and turns what it
 /// throws into a file failure.
 Future<T> _guardRead<T>(_ReadOptions options, Future<T> Function() read) async {
@@ -63,16 +60,35 @@ Future<T> _guardRead<T>(_ReadOptions options, Future<T> Function() read) async {
   } on FormatException catch (e) {
     throw _FileFailure(_firstLine(e.message), _exitData);
   } on ArgumentError catch (e) {
-    throw _FileFailure(
-      '${_firstLine(e.message)}'
-      '${options.from == null && '${e.message}'.startsWith(_undetected) ? ' Pass --from to name the format.' : ''}',
-      _exitData,
-    );
+    throw _FileFailure(_firstLine(e.message), _exitData);
   } on FileSystemException catch (e) {
     throw _FileFailure(
       'Could not read the file: ${e.osError?.message ?? e.message}',
       _exitNoInput,
     );
+  }
+}
+
+/// Refuses a source the library could not read at all (missing, too large,
+/// of no known format), with the exit code that failure stands for.
+void _refuseFailedSource(
+  Iterable<ParseDiagnostic> diagnostics,
+  _ReadOptions options,
+) {
+  for (final d in diagnostics) {
+    if (d.severity != ParseSeverity.error) continue;
+    switch (d.code) {
+      case 'import.source.unreadable':
+        throw _FileFailure(_firstLine(d.message), _exitNoInput);
+      case 'parser.format_undetected':
+        throw _FileFailure(
+          '${_firstLine(d.message)}'
+          '${options.from == null ? ' Pass --from to name the format.' : ''}',
+          _exitData,
+        );
+      case 'import.payload.too_large' || 'import.source.read_failed':
+        throw _FileFailure(_firstLine(d.message), _exitData);
+    }
   }
 }
 
@@ -100,7 +116,8 @@ bool _holdsData(RawActivity activity) =>
     activity.gpxRoutes.isNotEmpty ||
     activity.additionalTracks.any(_holdsData);
 
-/// Imports [input]; a file the parser rejects fails with its diagnostics.
+/// Imports [input]; a file the parser rejects fails with its diagnostics,
+/// so the result it returns always has a format.
 Future<ActivityImportResult> _read(_Input input, _ReadOptions options) async {
   final result = await _guardRead(
     options,
@@ -113,6 +130,7 @@ Future<ActivityImportResult> _read(_Input input, _ReadOptions options) async {
       useIsolate: false,
     ),
   );
+  _refuseFailedSource(result.diagnostics, options);
   _refuseUnreadable(_fromParse(result.diagnostics), result.activity);
   return result;
 }
@@ -247,6 +265,7 @@ Future<int> _runConvert(ArgResults command) async {
         useIsolate: false,
       ),
     );
+    _refuseFailedSource(result.diagnostics, read);
     final reported = _exportDiagnostics(result);
     _refuseUnreadable(reported, result.activity);
     final target = outputs[input]!;
@@ -303,7 +322,7 @@ Future<int> _runEdit(ArgResults command) async {
     }
     final result = ActivityFiles.export(
       activity: editor.activity,
-      to: write.to ?? imported.format,
+      to: write.to ?? imported.format!,
       options: write.encoder,
       normalize: write.normalize,
       runValidation: write.validate,
@@ -427,7 +446,7 @@ Future<int> _runSplit(ArgResults command) async {
 
   try {
     final imported = await _read(input, read);
-    final to = write.to ?? imported.format;
+    final to = write.to ?? imported.format!;
     final parts = RawEditor.splitBySport(
       imported.activity,
       normalize: write.normalize,
@@ -499,7 +518,7 @@ Future<int> _runValidate(ArgResults command) async {
     try {
       final imported = await _read(input, read);
       final activity = imported.activity;
-      format = imported.format.name;
+      format = imported.format!.name;
       points = activity.points.length;
       // The result is the library's; what the reader reported is listed
       // but does not fail the file.
@@ -615,7 +634,7 @@ Map<String, Object?> _summary(_Input input, ActivityImportResult imported) {
   final device = activity.device;
   return {
     'input': input.display,
-    'format': imported.format.name,
+    'format': imported.format!.name,
     'sport': activity.sport.name,
     'start': ?range?.start.toIso8601String(),
     'end': ?range?.end.toIso8601String(),

@@ -147,8 +147,10 @@ class ActivityImportResult with _DiagnosticSummaryMixin {
   @override
   final List<ParseDiagnostic> diagnostics;
 
-  /// Detected format of the payload.
-  final ActivityFileFormat format;
+  /// Format of the payload: the one passed to `import`, or the one detected.
+  /// Null when no format was given and none could be detected; the
+  /// diagnostics then hold a `parser.format_undetected` error.
+  final ActivityFileFormat? format;
 
   /// Human-readable description of the source (e.g. file path).
   final String sourceDescription;
@@ -264,8 +266,9 @@ class ActivityConversionResult extends ActivityExportResult {
     super.processingStats = const ActivityProcessingStats(),
   }) : super._();
 
-  /// Detected format of the source payload.
-  final ActivityFileFormat sourceFormat;
+  /// Format of the source payload: the one passed as `from`, or the one
+  /// detected. Null when neither is known; see [ActivityImportResult.format].
+  final ActivityFileFormat? sourceFormat;
 
   /// Clones the conversion result with overrides.
   @override

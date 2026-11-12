@@ -224,8 +224,8 @@ void main() {
   });
 
   group('RawEditor.merge', () {
-    test('RawEditor.merge throws ArgumentError for an empty list', () {
-      expect(() => RawEditor.merge(const []), throwsArgumentError);
+    test('RawEditor.merge of an empty list is an empty activity', () {
+      expect(RawEditor.merge(const []).points, isEmpty);
     });
   });
 
