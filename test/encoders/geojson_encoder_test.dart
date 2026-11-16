@@ -85,10 +85,11 @@ void main() {
           ActivityFileFormat.geojson,
         );
         final decoded = jsonDecode(geojson);
+        // One point is a Point, whose coordinates are a single position.
         final coordinates = decoded['features'][0]['geometry']['coordinates'];
 
-        expect(coordinates[0][0], equals(-105.0)); // longitude first
-        expect(coordinates[0][1], equals(40.0)); // latitude second
+        expect(coordinates[0], equals(-105.0)); // longitude first
+        expect(coordinates[1], equals(40.0)); // latitude second
       });
 
       test('encodes empty activity', () {
@@ -102,7 +103,7 @@ void main() {
 
         expect(decoded['type'], equals('FeatureCollection'));
         expect(decoded['features'].length, equals(1));
-        expect(decoded['features'][0]['geometry']['coordinates'], isEmpty);
+        expect(decoded['features'][0]['geometry'], isNull);
       });
     });
 
@@ -503,7 +504,7 @@ void main() {
     });
 
     group('Geometry handling', () {
-      test('encodes single point as LineString with single coordinate', () {
+      test('encodes single point as a Point', () {
         final activity = RawActivity(
           points: [
             GeoPoint(
@@ -519,9 +520,10 @@ void main() {
           ActivityFileFormat.geojson,
         );
         final decoded = jsonDecode(geojson);
-        final coordinates = decoded['features'][0]['geometry']['coordinates'];
+        final geometry = decoded['features'][0]['geometry'];
 
-        expect(coordinates.length, equals(1));
+        expect(geometry['type'], equals('Point'));
+        expect(geometry['coordinates'], equals([-105.0, 40.0]));
       });
 
       test('encodes multiple points as LineString', () {
@@ -571,8 +573,7 @@ void main() {
           ActivityFileFormat.geojson,
         );
         final decoded = jsonDecode(geojson);
-        final coordinates =
-            decoded['features'][0]['geometry']['coordinates'][0];
+        final coordinates = decoded['features'][0]['geometry']['coordinates'];
 
         expect(coordinates[0], closeTo(-105.654321, 1e-6));
         expect(coordinates[1], closeTo(40.123456, 1e-6));
@@ -597,8 +598,7 @@ void main() {
           options: const EncoderOptions(precisionLatLon: 2, precisionEle: 1),
         );
         final decoded = jsonDecode(geojson);
-        final coordinates =
-            decoded['features'][0]['geometry']['coordinates'][0];
+        final coordinates = decoded['features'][0]['geometry']['coordinates'];
 
         expect(coordinates[0], equals(-122.99));
         expect(coordinates[1], equals(47.12));

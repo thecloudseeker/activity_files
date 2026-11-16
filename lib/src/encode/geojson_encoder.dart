@@ -84,23 +84,29 @@ class GeojsonEncoder {
   static Map<String, dynamic> _buildFeature(
     RawActivity activity,
     EncoderOptions options,
-  ) => {
-    'type': 'Feature',
-    'geometry': {
-      'type': 'LineString',
-      // Third coordinate is elevation per the GeoJSON spec (RFC 7946 §3.1.1);
-      // omitted when the point has none so nulls round-trip as null.
-      'coordinates': [
-        for (final p in activity.points)
-          [
-            _round(p.longitude, options.precisionLatLon),
-            _round(p.latitude, options.precisionLatLon),
-            if (p.elevation != null) _round(p.elevation!, options.precisionEle),
-          ],
-      ],
-    },
-    'properties': _getProperties(activity),
-  };
+  ) {
+    // Third coordinate is elevation per the GeoJSON spec (RFC 7946 §3.1.1);
+    // omitted when the point has none so nulls round-trip as null.
+    final coordinates = [
+      for (final p in activity.points)
+        [
+          _round(p.longitude, options.precisionLatLon),
+          _round(p.latitude, options.precisionLatLon),
+          if (p.elevation != null) _round(p.elevation!, options.precisionEle),
+        ],
+    ];
+    return {
+      'type': 'Feature',
+      // A LineString needs two positions (RFC 7946 §3.1.4): one position is
+      // a Point, and none is a null geometry, which keeps the properties.
+      'geometry': switch (coordinates.length) {
+        0 => null,
+        1 => {'type': 'Point', 'coordinates': coordinates.single},
+        _ => {'type': 'LineString', 'coordinates': coordinates},
+      },
+      'properties': _getProperties(activity),
+    };
+  }
 
   /// Extract GeoJSON properties from activity
   static Map<String, dynamic> _getProperties(RawActivity activity) {
@@ -171,6 +177,14 @@ class GeojsonEncoder {
     EncoderOptions options = const EncoderOptions(),
   }) {
     activity = activity.flattened();
+    // No points is one feature with a null geometry, as in the LineString
+    // form, so the activity's properties still have a place.
+    if (activity.points.isEmpty) {
+      return jsonEncode({
+        'type': 'FeatureCollection',
+        'features': [_buildFeature(activity, options)],
+      });
+    }
     final channelsByTime = includeChannels
         ? channelValuesByTime(activity.channels)
         : const <DateTime, Map<Channel, double>>{};

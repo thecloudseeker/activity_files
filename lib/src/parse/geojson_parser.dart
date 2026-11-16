@@ -307,8 +307,31 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
+    final properties = _asMapOrNull(feature['properties']) ?? {};
     final geometry = _asMapOrNull(feature['geometry']);
     if (geometry == null) {
+      // An explicit null is an unlocated feature (RFC 7946 §3.2): it holds
+      // no points, but its properties are still the activity's.
+      if (feature.containsKey('geometry') && feature['geometry'] == null) {
+        diagnostics.add(
+          const ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'geojson.null_geometry',
+            message:
+                'Feature has a null geometry; it holds no points, so only '
+                'its properties were read.',
+          ),
+        );
+        return ActivityParseResult(
+          activity: RawActivity(
+            sport: _parseSport(properties['activity_type']?.toString()),
+            metadata: _collectMetadata(properties),
+            summary: _parseSummary(properties, diagnostics),
+            device: _parseDevice(properties),
+          ),
+          diagnostics: diagnostics,
+        );
+      }
       diagnostics.add(
         ParseDiagnostic(
           severity: ParseSeverity.error,
@@ -322,7 +345,6 @@ class GeojsonParser implements ActivityFormatParser {
       );
     }
 
-    final properties = _asMapOrNull(feature['properties']) ?? {};
     final coordinates = _asListOrNull(geometry['coordinates']);
 
     if (coordinates == null || coordinates.isEmpty) {
@@ -399,24 +421,47 @@ class GeojsonParser implements ActivityFormatParser {
         }
       }
     } else if (geomType == 'Point') {
-      // Point: [lon, lat, ...]
+      // Point: [lon, lat, ...]. A one-point track written by this library
+      // keeps its time and channels in coordinateProperties, as a LineString
+      // does; any other Point carries them as plain properties.
+      final times = _coordinateTimes(properties);
+      final coordinateChannels = _coordinateChannels(properties);
       final sharedTimestamp = _resolvePropertyTimestamp(
         properties,
         diagnostics,
       );
-      if (!_hasTimestampForEveryPoint(1, null, sharedTimestamp)) {
+      final time =
+          (times != null && times.isNotEmpty ? times.first : null) ??
+          sharedTimestamp;
+      if (!_hasTimestampForEveryPoint(1, null, time)) {
         addSyntheticTimestampDiagnostic();
       }
       final point = _coordinateToGeoPoint(
         coordinates,
         properties,
         diagnostics,
-        timeOverride: sharedTimestamp,
+        timeOverride: time,
         resolvePropertyTimestamp: false,
       );
       if (point != null) {
         points.add(point);
-        _collectChannelSamples(point.time, properties, channelMap, diagnostics);
+        if (coordinateChannels != null) {
+          _collectCoordinateChannelSamples(
+            point.time,
+            0,
+            coordinateChannels,
+            _channelsByKey(coordinateChannels),
+            channelMap,
+            diagnostics,
+          );
+        } else {
+          _collectChannelSamples(
+            point.time,
+            properties,
+            channelMap,
+            diagnostics,
+          );
+        }
       }
     } else if (geomType == 'MultiLineString') {
       // MultiLineString: array of LineStrings, all sharing one feature-level

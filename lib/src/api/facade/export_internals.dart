@@ -332,6 +332,25 @@ List<ParseDiagnostic> _lossyDiagnostics(
           'clamped to it; FIT cannot represent earlier dates.',
     );
   }
+  // FIT keeps no file without records as an activity; the encoder writes a
+  // valid file that holds only what is left, and this says so.
+  if (to == ActivityFileFormat.fit &&
+      activity.points.isEmpty &&
+      activity.channels.values.every((samples) => samples.isEmpty)) {
+    diagnostics.add(
+      const ParseDiagnostic(
+        severity: ParseSeverity.error,
+        code: 'fit.export.no_records',
+        message:
+            'The activity has no points or channel samples, so the FIT file '
+            'holds no records.',
+        suggestedFix:
+            'Check the source: an empty or unreadable file parses to an '
+            'empty activity.',
+        priority: 0,
+      ),
+    );
+  }
   return diagnostics;
 }
 

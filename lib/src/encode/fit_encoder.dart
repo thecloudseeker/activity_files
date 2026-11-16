@@ -35,22 +35,6 @@ class FitEncoder implements ActivityFormatEncoder {
     // FIT output is a single flat record stream; merge multi-track input.
     activity = activity.flattened();
     final recordSamples = _recordSamples(activity);
-    if (recordSamples.isEmpty) {
-      throw ArgumentError(
-        'Cannot encode empty activity to FIT. Activity must contain at least geographic points or sensor samples.\n'
-        '\n'
-        'The activity has no data:\n'
-        '  • GPS points: ${activity.points.length}\n'
-        '  • Sensor channels: ${activity.channels.length}\n'
-        '\n'
-        'To fix this:\n'
-        '  1. Add GPS trackpoints: builder.addPoint(lat, lon, elevation, time)\n'
-        '  2. Or add sensor data: builder.addSample(Channel.heartRate, time, value)\n'
-        '  3. Or import data from a file: await ActivityFiles.import(File("activity.gpx"))\n'
-        '\n'
-        'FIT requires at least one data point to be valid.',
-      );
-    }
     final builder = BytesBuilder();
     final definitionSection = BytesBuilder();
     final dataSection = BytesBuilder();
@@ -145,6 +129,15 @@ class FitEncoder implements ActivityFormatEncoder {
         );
       }
     }
+    // Messages below need a timestamp. Without records, the earliest lap,
+    // set, length or event supplies it; an activity with none of those has
+    // nothing timed to write, and the file holds only its identity.
+    final anchorTime = recordSamples.isNotEmpty
+        ? recordSamples.first.time
+        : _earliestTime(activity);
+    if (anchorTime == null) {
+      return _assemble(builder, definitionSection, dataSection);
+    }
     // Session message: sport plus the full activity summary (all fields the
     // FIT parser reads back; absent values are written as FIT invalid
     // sentinels so they round-trip as null).
@@ -234,7 +227,7 @@ class FitEncoder implements ActivityFormatEncoder {
     encoder.writeSession(
       dataSection,
       localId: sessionLocal,
-      timestamp: recordSamples.first.time,
+      timestamp: anchorTime,
       sport: activity.sport,
       summary: activity.summary,
       extraFields: sessionExtras,
@@ -246,7 +239,7 @@ class FitEncoder implements ActivityFormatEncoder {
       encoder.writeSession(
         dataSection,
         localId: sessionLocal,
-        timestamp: recordSamples.first.time,
+        timestamp: anchorTime,
         sport: session.sport ?? activity.sport,
         summary: session,
         extraFields: sessionExtras,
@@ -589,6 +582,15 @@ class FitEncoder implements ActivityFormatEncoder {
         ],
       );
     }
+    return _assemble(builder, definitionSection, dataSection);
+  }
+
+  /// Joins definitions and data behind a FIT header and appends the CRC.
+  String _assemble(
+    BytesBuilder builder,
+    BytesBuilder definitionSection,
+    BytesBuilder dataSection,
+  ) {
     final dataBytes = dataSection.toBytes();
     final headerBytes = definitionSection.toBytes();
     builder.add(headerBytes);
@@ -622,6 +624,21 @@ double? _valueWithinChannel(
     return null;
   }
   return reading.delta <= tolerance ? reading.value : null;
+}
+
+/// The earliest start among laps, sets, swim lengths and events, or null
+/// when the activity has none of them.
+DateTime? _earliestTime(RawActivity activity) {
+  DateTime? earliest;
+  for (final time in [
+    for (final lap in activity.laps) lap.startTime,
+    for (final set in activity.sets) set.startTime,
+    for (final length in activity.lengths) length.startTime,
+    for (final event in activity.events) event.time,
+  ]) {
+    if (earliest == null || time.isBefore(earliest)) earliest = time;
+  }
+  return earliest;
 }
 
 int _encodeAltitude(double? elevation) {
