@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'package:xml/xml.dart';
+import '../library_namespace.dart';
 import '../models.dart';
 import 'activity_parser.dart';
+import 'library_extensions.dart';
 import 'number_utils.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
+
+/// The TCX namespaces, which an extension element written without one
+/// inherits.
+const Set<String> _tcxNamespaces = {
+  'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
+  'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v1',
+};
 
 /// Parser for the TCX file format.
 ///
@@ -142,9 +151,30 @@ class TcxParser implements ActivityFormatParser {
         droppedActivityMetadata = true;
       }
 
+      // The library writes the device and creator label into the
+      // activity's extensions, since <Creator> cannot hold them all.
+      ActivityDeviceMetadata? extensionDevice;
+      String? extensionCreator;
+      var libraryForm = false;
       for (final child in activityElement.childElements) {
-        if (child.name.local == 'Extensions') {
-          metadataExtensions.addAll(_parseExtensionChildren(child));
+        if (child.name.local != 'Extensions') continue;
+        for (final extension in child.childElements) {
+          if (isLibraryElement(
+            extension,
+            'device',
+            formatNamespaces: _tcxNamespaces,
+          )) {
+            libraryForm = true;
+            extensionDevice ??= readLibraryDevice(extension);
+          } else if (isLibraryElement(extension, 'trackExtensions')) {
+            trackExtensions.addAll(_parseExtensionChildren(extension));
+          } else if (isLibraryElement(extension, 'creator')) {
+            libraryForm = true;
+            final label = extension.innerText.trim();
+            if (label.isNotEmpty) extensionCreator ??= label;
+          } else {
+            metadataExtensions.add(_extensionNodeFromXml(extension));
+          }
         }
       }
 
@@ -154,7 +184,11 @@ class TcxParser implements ActivityFormatParser {
       // label with no device). Each field gets its own "first non-null
       // wins" backfill and distinctness check, gated on that field's own
       // null-ness.
-      final creatorInfo = _extractCreatorInfo(activityElement);
+      // A file in the library's form says everything in its extensions;
+      // its <Creator>, if any, only repeats part of it.
+      final creatorInfo = libraryForm
+          ? (creator: extensionCreator, device: extensionDevice)
+          : _extractCreatorInfo(activityElement);
       if (creator == null) {
         creator = creatorInfo.creator;
       } else if (creatorInfo.creator != null &&
@@ -232,8 +266,15 @@ class TcxParser implements ActivityFormatParser {
         double? lapAvgWatts;
         double? lapMaxWatts;
         double? lapMaxBikeCadence;
+        // Required elements this library filled with a schema default.
+        final defaulted = <String>{};
         for (final extensions in _childElements(lapElement, 'Extensions')) {
           for (final lx in extensions.childElements) {
+            if (lx.name.local == tcxDefaultedFieldsElement &&
+                lx.name.namespaceUri == libraryNamespace) {
+              defaulted.addAll(lx.innerText.trim().split(RegExp(r'\s+')));
+              continue;
+            }
             if (lx.name.local != 'LX') continue;
             lapAvgSpeed ??= lapNumber('AvgSpeed', _firstText(lx, 'AvgSpeed'));
             lapAvgWatts ??= lapNumber('AvgWatts', _firstText(lx, 'AvgWatts'));
@@ -468,7 +509,9 @@ class TcxParser implements ActivityFormatParser {
               distanceMeters: lapDistance,
               name: 'Lap ${allLaps.length + 1}',
               sport: activitySport,
-              calories: lapValueOf('Calories'),
+              calories: defaulted.contains('Calories')
+                  ? null
+                  : lapValueOf('Calories'),
               maxSpeed: lapValueOf('MaximumSpeed'),
               avgHeartRate: lapHrOf('AverageHeartRateBpm'),
               maxHeartRate: lapHrOf('MaximumHeartRateBpm'),
@@ -477,8 +520,12 @@ class TcxParser implements ActivityFormatParser {
               avgSpeed: lapAvgSpeed,
               avgPower: lapAvgWatts,
               maxPower: lapMaxWatts,
-              tcxIntensity: _firstText(lapElement, 'Intensity'),
-              tcxTriggerMethod: _firstText(lapElement, 'TriggerMethod'),
+              tcxIntensity: defaulted.contains('Intensity')
+                  ? null
+                  : _firstText(lapElement, 'Intensity'),
+              tcxTriggerMethod: defaulted.contains('TriggerMethod')
+                  ? null
+                  : _firstText(lapElement, 'TriggerMethod'),
             ),
           );
         }

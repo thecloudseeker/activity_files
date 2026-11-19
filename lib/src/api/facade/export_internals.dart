@@ -310,6 +310,48 @@ List<ParseDiagnostic> _lossyDiagnostics(
       );
     }
   }
+  if (to == ActivityFileFormat.tcx) {
+    // TCX names only running and biking; every other sport is Other.
+    const tcxSports = {
+      Sport.running,
+      Sport.cycling,
+      Sport.other,
+      Sport.unknown,
+    };
+    final generalized =
+        {activity.sport, for (final lap in activity.laps) ?lap.sport}
+            .where((sport) => !tcxSports.contains(sport))
+            .map((s) => s.name)
+            .toList()
+          ..sort();
+    if (generalized.isNotEmpty) {
+      add(
+        'sport_generalized',
+        'TCX names only running and biking, so ${generalized.join(', ')} '
+            'is written as Other.',
+        fix: 'Export to FIT, GPX, GeoJSON, or CSV to keep the sport.',
+      );
+    }
+    // The TCX schema's heart rate starts at 1 bpm.
+    final zeroHeartRates =
+        activity
+            .channel(Channel.heartRate)
+            .where((s) => s.value.round() < 1)
+            .length +
+        [
+          for (final lap in activity.laps) ...[
+            lap.avgHeartRate,
+            lap.maxHeartRate,
+          ],
+        ].where((v) => v != null && v.round() < 1).length;
+    if (zeroHeartRates > 0) {
+      add(
+        'heart_rate_zero_dropped',
+        '$zeroHeartRates heart rate value(s) below 1 bpm cannot be '
+            'represented in TCX and are dropped.',
+      );
+    }
+  }
   if (to == ActivityFileFormat.geojson) {
     final unwritable = activity.metadata.values
         .where((value) => !GeojsonEncoder.isJsonValue(value))
@@ -321,6 +363,17 @@ List<ParseDiagnostic> _lossyDiagnostics(
         fix: 'Store metadata as strings, numbers, booleans, lists or maps.',
       );
     }
+  }
+  // FIT has no value for "a sport the model has no name for"; it is written
+  // as generic, which reads back as unknown.
+  if (to == ActivityFileFormat.fit &&
+      (activity.sport == Sport.other ||
+          activity.laps.any((lap) => lap.sport == Sport.other))) {
+    add(
+      'sport_generalized',
+      'FIT has no sport for "other"; it is written as generic, which reads '
+          'back as unknown.',
+    );
   }
   // FIT timestamps are seconds (unsigned) since the FIT epoch
   // (1989-12-31); anything earlier has no valid representation and is

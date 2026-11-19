@@ -973,8 +973,8 @@ void main() {
     });
 
     group('Creator vs. device metadata', () {
-      test('a distinct activity.creator survives a round trip instead of '
-          'being overwritten by device.model', () {
+      test('a distinct activity.creator and device.model both survive a '
+          'round trip', () {
         final activity = RawActivity(
           points: [
             GeoPoint(
@@ -997,20 +997,11 @@ void main() {
         final doc = XmlDocument.parse(tcxString);
         final parsed = ParserRouter.parse(tcxString, ActivityFileFormat.tcx);
 
-        // TCX's Device_t <Creator> has only one <Name> slot, shared between
-        // "creator" and "device model" -- so the two can't both survive when
-        // they differ; the fix is specifically that creator wins that slot
-        // rather than being silently replaced by the device model.
-        expect(
-          doc
-              .findAllElements('Creator')
-              .single
-              .findElements('Name')
-              .single
-              .innerText,
-          equals('ActivityFilesTestSuite'),
-        );
+        // Without a serial number, product and version the device is no
+        // valid Device_t, so both go into the activity's extensions.
+        expect(doc.findAllElements('Creator'), isEmpty);
         expect(parsed.activity.creator, equals('ActivityFilesTestSuite'));
+        expect(parsed.activity.device?.model, equals('Fenix 7'));
       });
     });
   });

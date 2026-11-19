@@ -250,7 +250,12 @@ void main() {
       expect(built.gpxTrackExtensions.length, equals(1));
 
       final gpx = ActivityEncoder.encode(built, ActivityFileFormat.gpx);
-      expect(gpx, contains('<device>'));
+      expect(
+        gpx,
+        contains(
+          '<device xmlns="https://schemas.eikedreier.com/activity_files/v1">',
+        ),
+      );
       expect(gpx, contains('<manufacturer>Withings</manufacturer>'));
       expect(gpx, contains('<ex:metaTag>meta</ex:metaTag>'));
       expect(gpx, contains('<ex:trackTag>track</ex:trackTag>'));

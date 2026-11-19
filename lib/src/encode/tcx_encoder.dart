@@ -3,6 +3,7 @@ import 'package:xml/xml.dart';
 
 import '../channel_mapper.dart';
 import '../geo_math.dart';
+import '../library_namespace.dart';
 import '../models.dart';
 import '../stable_sort.dart';
 import 'activity_encoder.dart';
@@ -150,7 +151,7 @@ class TcxEncoder implements ActivityFormatEncoder {
               // sport-to-sport boundary must still be written to the next
               // sport's <Track>, not just deduplicated away because the
               // previous sport's adjacent lap already claimed it.
-              final writtenPointTimes = <DateTime>{};
+              final writtenPoints = Set<GeoPoint>.identity();
               builder.element(
                 'Activity',
                 attributes: {'Sport': _sportLabel(group.sport)},
@@ -159,7 +160,6 @@ class TcxEncoder implements ActivityFormatEncoder {
                     'Id',
                     nest: group.laps.first.startTime.toUtc().toIso8601String(),
                   );
-                  var wroteTrackExtensions = false;
                   for (final (lapIndex, lap) in group.laps.indexed) {
                     final globalIndex = groupStartIndex[groupIndex] + lapIndex;
                     final prevLap = globalIndex > 0
@@ -202,14 +202,19 @@ class TcxEncoder implements ActivityFormatEncoder {
                             nest: lap.maxSpeed!.toStringAsFixed(3),
                           );
                         }
-                        if (lap.calories != null) {
-                          builder.element(
-                            'Calories',
-                            nest: lap.calories!.round().toString(),
-                          );
-                        }
+                        // Calories, Intensity and TriggerMethod are required
+                        // by the schema: a lap without them gets the neutral
+                        // value Garmin's tools write, marked as a default in
+                        // the lap's extensions so it reads back as no value.
+                        final defaulted = <String>[];
+                        if (lap.calories == null) defaulted.add('Calories');
+                        builder.element(
+                          'Calories',
+                          nest: (lap.calories?.round() ?? 0).toString(),
+                        );
                         void writeHr(String tag, double? value) {
-                          if (value == null) return;
+                          // The schema's heart rate starts at 1 bpm.
+                          if (value == null || value.round() < 1) return;
                           builder.element(
                             tag,
                             nest: () {
@@ -223,186 +228,202 @@ class TcxEncoder implements ActivityFormatEncoder {
 
                         writeHr('AverageHeartRateBpm', lap.avgHeartRate);
                         writeHr('MaximumHeartRateBpm', lap.maxHeartRate);
-                        if (lap.tcxIntensity != null) {
-                          builder.element('Intensity', nest: lap.tcxIntensity!);
+                        if (lap.tcxIntensity == null) {
+                          defaulted.add('Intensity');
                         }
+                        builder.element(
+                          'Intensity',
+                          nest: lap.tcxIntensity ?? 'Active',
+                        );
                         if (lap.avgCadence != null) {
                           builder.element(
                             'Cadence',
                             nest: lap.avgCadence!.round().toString(),
                           );
                         }
-                        if (lap.tcxTriggerMethod != null) {
-                          builder.element(
-                            'TriggerMethod',
-                            nest: lap.tcxTriggerMethod!,
-                          );
+                        if (lap.tcxTriggerMethod == null) {
+                          defaulted.add('TriggerMethod');
                         }
                         builder.element(
-                          'Track',
-                          nest: () {
-                            if (trackExtensions.isNotEmpty &&
-                                !wroteTrackExtensions) {
-                              builder.element(
-                                'Extensions',
-                                nest: () {
-                                  for (final extension in trackExtensions) {
-                                    _writeExtensionNode(
-                                      builder,
-                                      extension,
-                                      prefixRemap: extensionPrefixRemap,
-                                    );
+                          'TriggerMethod',
+                          nest: lap.tcxTriggerMethod ?? 'Manual',
+                        );
+                        final lapPoints = [
+                          for (final p in points)
+                            if ((effectiveStart == null ||
+                                    !p.time.isBefore(effectiveStart)) &&
+                                (effectiveEnd == null ||
+                                    !p.time.isAfter(effectiveEnd)) &&
+                                !writtenPoints.contains(p))
+                              p,
+                        ];
+                        // A <Track> needs a trackpoint; a lap without one
+                        // has no <Track>, which the schema allows.
+                        if (lapPoints.isNotEmpty) {
+                          builder.element(
+                            'Track',
+                            nest: () {
+                              var cumulativeDistance = 0.0;
+                              GeoPoint? previous;
+                              for (final point in lapPoints) {
+                                writtenPoints.add(point);
+                                final snapshot = channelCursor.snapshot(
+                                  point.time,
+                                );
+                                final hr = _valueWithin(
+                                  snapshot.heartRate,
+                                  snapshot.heartRateDelta,
+                                  hrDelta,
+                                );
+                                final cadence = _valueWithin(
+                                  snapshot.cadence,
+                                  snapshot.cadenceDelta,
+                                  cadenceDelta,
+                                );
+                                final speed = _valueWithin(
+                                  snapshot.valueFor(Channel.speed),
+                                  snapshot.deltaFor(Channel.speed),
+                                  speedDelta,
+                                );
+                                final watts = _valueWithin(
+                                  snapshot.valueFor(Channel.power),
+                                  snapshot.deltaFor(Channel.power),
+                                  powerDelta,
+                                );
+                                final knownDistance = _valueWithin(
+                                  snapshot.valueFor(Channel.distance),
+                                  snapshot.deltaFor(Channel.distance),
+                                  distanceDelta,
+                                );
+                                if (knownDistance != null) {
+                                  cumulativeDistance = knownDistance;
+                                } else {
+                                  final prev = previous;
+                                  if (prev != null) {
+                                    final step = haversineMeters(prev, point);
+                                    // Coordinates far outside their range give
+                                    // no usable distance; skip that step.
+                                    if (step.isFinite) {
+                                      cumulativeDistance += step;
+                                    }
                                   }
-                                },
-                              );
-                              wroteTrackExtensions = true;
-                            }
-                            var cumulativeDistance = 0.0;
-                            GeoPoint? previous;
-                            for (final point in points.where(
-                              (p) =>
-                                  (effectiveStart == null ||
-                                      !p.time.isBefore(effectiveStart)) &&
-                                  (effectiveEnd == null ||
-                                      !p.time.isAfter(effectiveEnd)) &&
-                                  !writtenPointTimes.contains(p.time),
-                            )) {
-                              writtenPointTimes.add(point.time);
-                              final snapshot = channelCursor.snapshot(
-                                point.time,
-                              );
-                              final hr = _valueWithin(
-                                snapshot.heartRate,
-                                snapshot.heartRateDelta,
-                                hrDelta,
-                              );
-                              final cadence = _valueWithin(
-                                snapshot.cadence,
-                                snapshot.cadenceDelta,
-                                cadenceDelta,
-                              );
-                              final speed = _valueWithin(
-                                snapshot.valueFor(Channel.speed),
-                                snapshot.deltaFor(Channel.speed),
-                                speedDelta,
-                              );
-                              final watts = _valueWithin(
-                                snapshot.valueFor(Channel.power),
-                                snapshot.deltaFor(Channel.power),
-                                powerDelta,
-                              );
-                              final knownDistance = _valueWithin(
-                                snapshot.valueFor(Channel.distance),
-                                snapshot.deltaFor(Channel.distance),
-                                distanceDelta,
-                              );
-                              if (knownDistance != null) {
-                                cumulativeDistance = knownDistance;
-                              } else {
-                                final prev = previous;
-                                if (prev != null) {
-                                  cumulativeDistance += haversineMeters(
-                                    prev,
-                                    point,
-                                  );
                                 }
-                              }
-                              previous = point;
-                              builder.element(
-                                'Trackpoint',
-                                nest: () {
-                                  builder.element(
-                                    'Time',
-                                    nest: point.time.toUtc().toIso8601String(),
-                                  );
-                                  builder.element(
-                                    'Position',
-                                    nest: () {
-                                      builder.element(
-                                        'LatitudeDegrees',
-                                        nest: _round(
-                                          point.latitude,
-                                          options.precisionLatLon,
-                                        ),
-                                      );
-                                      builder.element(
-                                        'LongitudeDegrees',
-                                        nest: _round(
-                                          point.longitude,
-                                          options.precisionLatLon,
-                                        ),
-                                      );
-                                    },
-                                  );
-                                  final elevation = point.elevation;
-                                  if (elevation != null) {
+                                previous = point;
+                                builder.element(
+                                  'Trackpoint',
+                                  nest: () {
                                     builder.element(
-                                      'AltitudeMeters',
-                                      nest: _round(
-                                        elevation,
-                                        options.precisionEle,
+                                      'Time',
+                                      nest: point.time
+                                          .toUtc()
+                                          .toIso8601String(),
+                                    );
+                                    builder.element(
+                                      'Position',
+                                      nest: () {
+                                        builder.element(
+                                          'LatitudeDegrees',
+                                          nest: _round(
+                                            point.latitude,
+                                            options.precisionLatLon,
+                                          ),
+                                        );
+                                        builder.element(
+                                          'LongitudeDegrees',
+                                          nest: _round(
+                                            point.longitude,
+                                            options.precisionLatLon,
+                                          ),
+                                        );
+                                      },
+                                    );
+                                    final elevation = point.elevation;
+                                    if (elevation != null) {
+                                      builder.element(
+                                        'AltitudeMeters',
+                                        nest: _round(
+                                          elevation,
+                                          options.precisionEle,
+                                        ),
+                                      );
+                                    }
+                                    builder.element(
+                                      'DistanceMeters',
+                                      nest: cumulativeDistance.toStringAsFixed(
+                                        1,
                                       ),
                                     );
-                                  }
-                                  builder.element(
-                                    'DistanceMeters',
-                                    nest: cumulativeDistance.toStringAsFixed(1),
-                                  );
-                                  if (hr != null) {
-                                    builder.element(
-                                      'HeartRateBpm',
-                                      nest: () {
-                                        builder.element(
-                                          'Value',
-                                          nest: hr.round().toString(),
-                                        );
-                                      },
-                                    );
-                                  }
-                                  if (cadence != null) {
-                                    builder.element(
-                                      'Cadence',
-                                      nest: cadence.round().toString(),
-                                    );
-                                  }
-                                  if (speed != null || watts != null) {
-                                    builder.element(
-                                      'Extensions',
-                                      nest: () {
-                                        builder.element(
-                                          'ns3:TPX',
-                                          nest: () {
-                                            if (speed != null) {
-                                              builder.element(
-                                                'ns3:Speed',
-                                                nest: speed.toStringAsFixed(3),
-                                              );
-                                            }
-                                            if (watts != null) {
-                                              builder.element(
-                                                'ns3:Watts',
-                                                nest: watts.round().toString(),
-                                              );
-                                            }
-                                          },
-                                        );
-                                      },
-                                    );
-                                  }
-                                },
-                              );
-                            }
-                          },
-                        );
+                                    // The schema's heart rate starts at 1 bpm.
+                                    if (hr != null && hr.round() >= 1) {
+                                      builder.element(
+                                        'HeartRateBpm',
+                                        nest: () {
+                                          builder.element(
+                                            'Value',
+                                            nest: hr.round().toString(),
+                                          );
+                                        },
+                                      );
+                                    }
+                                    if (cadence != null) {
+                                      builder.element(
+                                        'Cadence',
+                                        nest: cadence.round().toString(),
+                                      );
+                                    }
+                                    if (speed != null || watts != null) {
+                                      builder.element(
+                                        'Extensions',
+                                        nest: () {
+                                          builder.element(
+                                            'ns3:TPX',
+                                            nest: () {
+                                              if (speed != null) {
+                                                builder.element(
+                                                  'ns3:Speed',
+                                                  nest: speed.toStringAsFixed(
+                                                    3,
+                                                  ),
+                                                );
+                                              }
+                                              if (watts != null) {
+                                                builder.element(
+                                                  'ns3:Watts',
+                                                  nest: watts
+                                                      .round()
+                                                      .toString(),
+                                                );
+                                              }
+                                            },
+                                          );
+                                        },
+                                      );
+                                    }
+                                  },
+                                );
+                              }
+                            },
+                          );
+                        }
                         // LX lap extensions (ActivityExtension/v2) carry lap
                         // power and speed stats the base schema cannot hold.
-                        if (lap.avgSpeed != null ||
+                        final hasLx =
+                            lap.avgSpeed != null ||
                             lap.maxCadence != null ||
                             lap.avgPower != null ||
-                            lap.maxPower != null) {
+                            lap.maxPower != null;
+                        if (hasLx || defaulted.isNotEmpty) {
                           builder.element(
                             'Extensions',
                             nest: () {
+                              if (defaulted.isNotEmpty) {
+                                builder.element(
+                                  tcxDefaultedFieldsElement,
+                                  attributes: {'xmlns': libraryNamespace},
+                                  nest: defaulted.join(' '),
+                                );
+                              }
+                              if (!hasLx) return;
                               builder.element(
                                 'ns3:LX',
                                 nest: () {
@@ -438,17 +459,78 @@ class TcxEncoder implements ActivityFormatEncoder {
                       },
                     );
                   }
-                  // Notes and file-level metadata extensions belong to the file,
-                  // so emit them only on the first activity.
+                  // Notes, creator and file-level extensions belong to the
+                  // file, so emit them only on the first activity, in schema
+                  // order: Notes, Creator, Extensions.
                   if (groupIndex == 0) {
                     final notes = activity.tcxNotes;
                     if (notes != null && notes.trim().isNotEmpty) {
                       builder.element('Notes', nest: notes.trim());
                     }
-                    if (metadataExtensions.isNotEmpty) {
+                    final device = activity.device;
+                    final creatorLabel = activity.creator?.trim();
+                    final creator = _tcxDeviceCreator(device, creatorLabel);
+                    if (creator != null) {
+                      builder.element(
+                        'Creator',
+                        attributes: const {'xsi:type': 'Device_t'},
+                        nest: () {
+                          builder.element('Name', nest: creator.name);
+                          builder.element('UnitId', nest: '${creator.unitId}');
+                          builder.element(
+                            'ProductID',
+                            nest: '${creator.productId}',
+                          );
+                          builder.element(
+                            'Version',
+                            nest: () {
+                              final version = creator.version;
+                              builder.element(
+                                'VersionMajor',
+                                nest: '${version[0]}',
+                              );
+                              builder.element(
+                                'VersionMinor',
+                                nest: '${version[1]}',
+                              );
+                              if (version.length > 2) {
+                                builder.element(
+                                  'BuildMajor',
+                                  nest: '${version[2]}',
+                                );
+                              }
+                              if (version.length > 3) {
+                                builder.element(
+                                  'BuildMinor',
+                                  nest: '${version[3]}',
+                                );
+                              }
+                            },
+                          );
+                        },
+                      );
+                    }
+                    // Device_t has no manufacturer and a bare label fits no
+                    // creator type, so both always go into the extensions
+                    // too, where the parser reads them first.
+                    final hasDevice = device != null && device.isNotEmpty;
+                    final hasLabel =
+                        creatorLabel != null && creatorLabel.isNotEmpty;
+                    if (hasDevice ||
+                        hasLabel ||
+                        metadataExtensions.isNotEmpty ||
+                        trackExtensions.isNotEmpty) {
                       builder.element(
                         'Extensions',
                         nest: () {
+                          if (hasDevice) writeLibraryDevice(builder, device);
+                          if (hasLabel) {
+                            builder.element(
+                              'creator',
+                              attributes: const {'xmlns': libraryNamespace},
+                              nest: creatorLabel,
+                            );
+                          }
                           for (final extension in metadataExtensions) {
                             _writeExtensionNode(
                               builder,
@@ -456,33 +538,27 @@ class TcxEncoder implements ActivityFormatEncoder {
                               prefixRemap: extensionPrefixRemap,
                             );
                           }
+                          // A <Track> holds only trackpoints, so a track's
+                          // extensions are kept here, in the library's own
+                          // wrapper.
+                          if (trackExtensions.isNotEmpty) {
+                            builder.element(
+                              'trackExtensions',
+                              attributes: const {'xmlns': libraryNamespace},
+                              nest: () {
+                                for (final extension in trackExtensions) {
+                                  _writeExtensionNode(
+                                    builder,
+                                    extension,
+                                    prefixRemap: extensionPrefixRemap,
+                                  );
+                                }
+                              },
+                            );
+                          }
                         },
                       );
                     }
-                  }
-                  final device = activity.device;
-                  final creatorLabel = activity.creator;
-                  if (device != null && device.isNotEmpty) {
-                    builder.element(
-                      'Creator',
-                      attributes: const {'xsi:type': 'Device_t'},
-                      nest: () {
-                        // Prefer the activity's own creator (e.g. a distinct
-                        // <Creator><Name> from the original source file)
-                        // over the device model, so a round-trip doesn't
-                        // silently overwrite a genuine creator string with
-                        // device metadata.
-                        final name = creatorLabel ?? device.model;
-                        if (name != null && name.trim().isNotEmpty) {
-                          builder.element('Name', nest: name);
-                        } else if (creatorLabel != null) {
-                          builder.text(creatorLabel);
-                        }
-                        _writeTcxDeviceMetadata(builder, device);
-                      },
-                    );
-                  } else if (creatorLabel != null) {
-                    builder.element('Creator', nest: creatorLabel);
                   }
                 },
               );
@@ -528,7 +604,6 @@ class TcxEncoder implements ActivityFormatEncoder {
   String _sportLabel(Sport sport) => switch (sport) {
     Sport.running => 'Running',
     Sport.cycling => 'Biking',
-    Sport.walking => 'Walking',
     _ => 'Other',
   };
 }
@@ -641,47 +716,50 @@ void _writeExtensionNode(
   );
 }
 
-void _writeTcxDeviceMetadata(
-  XmlBuilder builder,
-  ActivityDeviceMetadata device,
-) {
-  void writeTag(String tag, String? value) {
-    if (value == null) {
-      return;
-    }
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) {
-      return;
-    }
-    builder.element(tag, nest: trimmed);
+/// The `<Creator xsi:type="Device_t">` fields, or null unless all four are
+/// known: the schema requires Name, UnitId, ProductID and Version, and none
+/// is invented.
+({String name, int unitId, int productId, List<int> version})?
+_tcxDeviceCreator(ActivityDeviceMetadata? device, String? creatorLabel) {
+  if (device == null) return null;
+  final name = (creatorLabel != null && creatorLabel.isNotEmpty)
+      ? creatorLabel
+      : device.model?.trim();
+  final unitId = int.tryParse(device.serialNumber?.trim() ?? '');
+  final productId =
+      int.tryParse(device.product?.trim() ?? '') ?? device.fitProductId;
+  final versionText = device.softwareVersion?.trim();
+  if (name == null ||
+      name.isEmpty ||
+      unitId == null ||
+      unitId < 0 ||
+      unitId > 0xFFFFFFFF ||
+      productId == null ||
+      productId < 0 ||
+      productId > 0xFFFF ||
+      versionText == null) {
+    return null;
   }
-
-  writeTag('Manufacturer', device.manufacturer);
-  writeTag('ProductID', device.product);
-  writeTag('UnitId', device.serialNumber);
-
-  if (device.softwareVersion != null &&
-      device.softwareVersion!.trim().isNotEmpty) {
-    final version = device.softwareVersion!.trim();
-    final parts = version.split('+');
-    final core = parts.first.split('.');
-    final build = parts.length > 1 ? parts[1].split('.') : const <String>[];
-    builder.element(
-      'Version',
-      nest: () {
-        if (core.isNotEmpty && core[0].isNotEmpty) {
-          builder.element('VersionMajor', nest: core[0]);
-        }
-        if (core.length > 1 && core[1].isNotEmpty) {
-          builder.element('VersionMinor', nest: core[1]);
-        }
-        if (build.isNotEmpty && build[0].isNotEmpty) {
-          builder.element('BuildMajor', nest: build[0]);
-        }
-        if (build.length > 1 && build[1].isNotEmpty) {
-          builder.element('BuildMinor', nest: build[1]);
-        }
-      },
-    );
+  // "major.minor" with an optional "+buildMajor.buildMinor".
+  final parts = versionText.split('+');
+  final numbers = [
+    for (final part in [
+      ...parts.first.split('.'),
+      if (parts.length > 1) ...parts[1].split('.'),
+    ])
+      int.tryParse(part),
+  ];
+  if (parts.length > 2 ||
+      parts.first.split('.').length != 2 ||
+      numbers.length < 2 ||
+      numbers.length > 4 ||
+      numbers.any((n) => n == null || n < 0 || n > 0xFFFF)) {
+    return null;
   }
+  return (
+    name: name,
+    unitId: unitId,
+    productId: productId,
+    version: numbers.cast<int>(),
+  );
 }
