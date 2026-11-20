@@ -41,34 +41,32 @@ Future<ActivityExportResult> _convertAndExportFromSource({
 
 Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
   if (request.activity != null) {
-    var activity = request.activity!;
-    var diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
-    (activity, diagnostics) = _applyAutoFix(
-      activity,
-      request.autoFix,
-      diagnostics,
+    final activity = request.activity!;
+    final diagnostics = List<ParseDiagnostic>.from(request.diagnostics);
+    final to = request.to;
+    final options = request.options;
+    final normalize = request.normalize;
+    final runValidation = request.runValidation;
+    final validation = request.validation;
+    final autoFix = request.autoFix;
+    ActivityExportResult export() => _exportFromActivity(
+      activity: activity,
+      to: to,
+      options: options,
+      normalize: normalize,
+      diagnostics: diagnostics,
+      runValidation: runValidation,
+      validation: validation,
+      autoFix: autoFix,
     );
     if (request.exportInIsolate) {
-      return await ActivityFiles.exportAsync(
-        activity: activity,
-        to: request.to,
-        options: request.options,
-        normalize: request.normalize,
-        diagnostics: diagnostics,
-        runValidation: request.runValidation,
-        validation: request.validation,
+      final response = await isolate_runner.runWithIsolation(
+        () => _encodeExportResult(export()),
         useIsolate: true,
       );
+      return _decodeExportResult(response);
     }
-    return _exportFromActivity(
-      activity: activity,
-      to: request.to,
-      options: request.options,
-      normalize: request.normalize,
-      diagnostics: diagnostics,
-      runValidation: request.runValidation,
-      validation: request.validation,
-    );
+    return export();
   }
   if (request.stream != null) {
     ActivityParseResult parseResult;
@@ -93,19 +91,12 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
     )) {
       throw _fitIntegrityFailure(parseResult.diagnostics);
     }
-    var parsedActivity = parseResult.activity;
-    var parseDiagnostics = List<ParseDiagnostic>.from(parseResult.diagnostics);
-    (parsedActivity, parseDiagnostics) = _applyAutoFix(
-      parsedActivity,
-      request.autoFix,
-      parseDiagnostics,
-    );
     final downstreamDiagnostics = <ParseDiagnostic>[
-      ...parseDiagnostics,
+      ...parseResult.diagnostics,
       ...request.diagnostics,
     ];
     final downstreamRequest = _ExportRequest.fromActivity(
-      activity: parsedActivity,
+      activity: parseResult.activity,
       to: request.to,
       options: request.options,
       normalize: request.normalize,
@@ -113,6 +104,7 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
       exportInIsolate: request.exportInIsolate,
       diagnostics: downstreamDiagnostics,
       validation: request.validation,
+      autoFix: request.autoFix,
     );
     return await _runPipeline(downstreamRequest);
   }
@@ -176,18 +168,34 @@ Future<ActivityExportResult> _runPipeline(_ExportRequest request) async {
     return (activity, diagnostics);
   }
   final fixed = RawEditor(activity).autoFix(options).activity;
-  // Counted from the deduplicated input: points and samples that only shared
-  // a timestamp are not invalid data the trim removed.
+  // The trims are counted on their own, from the deduplicated input:
+  // points and samples that only shared a timestamp are not invalid data,
+  // and gap filling and the distance recompute add points and samples back
+  // that would hide what the trims removed.
   final deduped = RawEditor(activity).sortAndDedup().activity;
-  return (fixed, [...diagnostics, ..._autoFixDiagnostics(deduped, fixed)]);
+  final trimmed = RawEditor(activity)
+      .autoFix(
+        ActivityAutoFixOptions(
+          fixInvalidGps: options.fixInvalidGps,
+          fixChannelDrift: options.fixChannelDrift,
+          fixDistanceDrift: false,
+          fixTimestampGaps: false,
+        ),
+      )
+      .activity;
+  return (
+    fixed,
+    [...diagnostics, ..._autoFixDiagnostics(deduped, trimmed, fixed)],
+  );
 }
 
 List<ParseDiagnostic> _autoFixDiagnostics(
   RawActivity before,
+  RawActivity trimmed,
   RawActivity after,
 ) {
   final diagnostics = <ParseDiagnostic>[];
-  final removedPoints = before.points.length - after.points.length;
+  final removedPoints = before.points.length - trimmed.points.length;
   if (removedPoints > 0) {
     diagnostics.add(
       ParseDiagnostic(
@@ -197,9 +205,7 @@ List<ParseDiagnostic> _autoFixDiagnostics(
       ),
     );
   }
-  final beforeSamples = _totalSamples(before);
-  final afterSamples = _totalSamples(after);
-  final deltaSamples = beforeSamples - afterSamples;
+  final deltaSamples = _totalSamples(before) - _totalSamples(trimmed);
   if (deltaSamples > 0) {
     diagnostics.add(
       ParseDiagnostic(

@@ -9,6 +9,7 @@ ActivityExportResult _exportFromActivity({
   required Iterable<ParseDiagnostic> diagnostics,
   required bool runValidation,
   ValidationResult? validation,
+  ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
 }) {
   var working = activity;
   // See convert()'s matching comment: flatten before normalizing/ordering
@@ -20,7 +21,15 @@ ActivityExportResult _exportFromActivity({
   }
   NormalizationStats? normalizationStats;
   var repairDiagnostics = const <ValidationDiagnostic>[];
+  var autoFixDiagnostics = const <ParseDiagnostic>[];
   if (!normalize) {
+    // As in convert(): auto-fix sees the data before ordering nudges shared
+    // timestamps apart.
+    (working, autoFixDiagnostics) = _applyAutoFix(
+      working,
+      autoFix,
+      autoFixDiagnostics,
+    );
     final ordered = _ensureOrderedForExport(working);
     working = ordered.activity;
     repairDiagnostics = ordered.diagnostics;
@@ -43,6 +52,15 @@ ActivityExportResult _exportFromActivity({
     );
     working = trackResult.activity;
     repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
+  }
+  // Auto-fix runs where convert() runs it: after flattening and
+  // normalizing, so every track is repaired and the output is the same.
+  if (normalize) {
+    (working, autoFixDiagnostics) = _applyAutoFix(
+      working,
+      autoFix,
+      autoFixDiagnostics,
+    );
   }
   final List<ParseDiagnostic> nonFinite;
   (working, nonFinite) = _dropNonFiniteForExport(working);
@@ -68,6 +86,7 @@ ActivityExportResult _exportFromActivity({
   final mergedDiagnostics = <ParseDiagnostic>[
     ...diagnostics,
     ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
+    ...autoFixDiagnostics,
     ...nonFinite,
     ..._lossyDiagnostics(
       working,

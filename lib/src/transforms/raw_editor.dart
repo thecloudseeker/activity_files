@@ -178,6 +178,14 @@ class RawEditor {
   ///
   /// Repair diagnostics for both repairs are appended to [repairDiagnostics].
   RawEditor trimInvalid() {
+    _trimInvalidGps();
+    _trimChannelDrift();
+    return this;
+  }
+
+  /// The GPS half of [trimInvalid]: drops invalid and Null Island points
+  /// and clears sentinel elevations.
+  void _trimInvalidGps() {
     var allValid = true;
     var sentinelCoordCount = 0;
     var sentinelElevationCount = 0;
@@ -238,10 +246,13 @@ class RawEditor {
         ),
       );
     }
-    final retainedPoints = allValid
-        ? _activity
-              .points // No invalid points, no copy needed
-        : validPoints;
+    if (!allValid) _activity = _activity.copyWith(points: validPoints);
+  }
+
+  /// The channel half of [trimInvalid]: cuts channel samples and laps to the
+  /// time the points cover. A sensor-only activity keeps them all.
+  void _trimChannelDrift() {
+    final retainedPoints = _activity.points;
     final start = retainedPoints.isNotEmpty ? retainedPoints.first.time : null;
     final end = retainedPoints.isNotEmpty ? retainedPoints.last.time : null;
     final trimmedChannels = _activity.channels.map((channel, samples) {
@@ -282,11 +293,9 @@ class RawEditor {
           .toList();
     }
     _activity = _activity.copyWith(
-      points: retainedPoints,
       channels: trimmedChannels,
       laps: trimmedLaps,
     );
-    return this;
   }
 
   /// Crops the activity to the inclusive [start] and [end] times.
@@ -866,6 +875,8 @@ class RawEditor {
     var lapStartDistance = normalizedDistance;
     var nextSplit = lapStartDistance + meters;
     var previousRaw = firstSample.value;
+    var previousTime = firstSample.time;
+    var skippedJumps = 0;
     for (var i = 0; i < distanceSamples.length; i++) {
       final sample = distanceSamples[i];
       if (i == 0) {
@@ -873,10 +884,22 @@ class RawEditor {
       } else {
         final rawValue = sample.value;
         final delta = rawValue - previousRaw;
+        final seconds =
+            sample.time.difference(previousTime).inMicroseconds / 1e6;
+        // A step faster than any sport is a corrupt sample (a FIT invalid
+        // value read as distance, say); it is skipped, not split into laps.
+        // Samples sharing a timestamp are left to the lap limit below.
+        if (delta > 0 &&
+            seconds > 0 &&
+            delta / seconds > _maxPlausibleSpeedMetersPerSecond) {
+          skippedJumps++;
+          continue;
+        }
         if (delta >= 0) {
           normalizedDistance += delta;
         }
         previousRaw = rawValue;
+        previousTime = sample.time;
       }
       while (normalizedDistance >= nextSplit) {
         if (laps.length >= _maxDistanceSplits) {
@@ -920,6 +943,22 @@ class RawEditor {
         ),
       );
     }
+    if (skippedJumps > 0) {
+      _repairDiagnostics.add(
+        ValidationDiagnostic(
+          severity: ValidationSeverity.warning,
+          code: '${DiagnosticCategory.repaired}.distance_jumps_skipped',
+          message:
+              'Skipped $skippedJumps distance sample(s) implying more than '
+              '${_maxPlausibleSpeedMetersPerSecond.round()} m/s when '
+              'splitting laps.',
+          suggestedFix:
+              'Recompute the distance channel with '
+              'recomputeDistanceAndSpeed() if the samples are corrupt.',
+          priority: 3,
+        ),
+      );
+    }
     if (splitLimitReached) {
       _repairDiagnostics.add(
         ValidationDiagnostic(
@@ -946,17 +985,18 @@ class RawEditor {
   /// what each flag controls.
   RawEditor autoFix(ActivityAutoFixOptions options) {
     sortAndDedup();
-    if (options.fixInvalidGps || options.fixChannelDrift) {
-      trimInvalid();
-    }
-    if (options.fixDistanceDrift) {
-      recomputeDistanceAndSpeed();
-    }
+    if (options.fixInvalidGps) _trimInvalidGps();
+    if (options.fixChannelDrift) _trimChannelDrift();
+    // Gaps are filled before distance and speed are recomputed, so the
+    // points they add get both channels too.
     if (options.fixTimestampGaps && options.maxInsertedGapPoints > 0) {
       _fillTimestampGaps(
         options.gapThreshold,
         maxInsertedPoints: options.maxInsertedGapPoints,
       );
+    }
+    if (options.fixDistanceDrift) {
+      recomputeDistanceAndSpeed();
     }
     if (options.autoLapByDistance) {
       // Generate auto-laps if:
@@ -1012,10 +1052,9 @@ class RawEditor {
       if (thresholdMicros <= 0) {
         continue;
       }
-      final steps = gap.inMicroseconds ~/ thresholdMicros;
-      if (steps <= 1) {
-        continue;
-      }
+      // Rounded up, so no interval left is longer than the threshold.
+      final steps =
+          (gap.inMicroseconds + thresholdMicros - 1) ~/ thresholdMicros;
       for (var j = 1; j < steps; j++) {
         if (inserted >= maxInsertedPoints) {
           break;
@@ -1331,6 +1370,10 @@ class RawEditor {
 // Upper bound on the laps markLapsByDistance generates; far above any real
 // activity, low enough that a corrupt distance value stays cheap.
 const _maxDistanceSplits = 100_000;
+
+// Fastest distance gain markLapsByDistance accepts between two samples;
+// above any sport in the Sport enum.
+const _maxPlausibleSpeedMetersPerSecond = 100.0;
 
 bool _isSortedBy<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {

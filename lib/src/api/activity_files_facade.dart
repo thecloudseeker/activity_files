@@ -507,7 +507,14 @@ class ActivityFiles {
     collected.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
     var exportActivity = activity;
     if (!normalize) {
-      final ordered = _ensureOrderedForExport(activity);
+      // Auto-fix sees the data as read: the ordering step below nudges
+      // shared timestamps apart, which would leave it no duplicates to drop.
+      (exportActivity, collected) = _applyAutoFix(
+        exportActivity,
+        autoFix,
+        collected,
+      );
+      final ordered = _ensureOrderedForExport(exportActivity);
       exportActivity = ordered.activity;
       collected.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
     }
@@ -521,11 +528,13 @@ class ActivityFiles {
         trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
       );
     }
-    (exportActivity, collected) = _applyAutoFix(
-      exportActivity,
-      autoFix,
-      collected,
-    );
+    if (normalize) {
+      (exportActivity, collected) = _applyAutoFix(
+        exportActivity,
+        autoFix,
+        collected,
+      );
+    }
     if (!exportInIsolate) {
       final List<ParseDiagnostic> nonFinite;
       (exportActivity, nonFinite) = _dropNonFiniteForExport(exportActivity);
