@@ -26,6 +26,7 @@ batches.
 - Handling problems
   - [Error handling](#error-handling)
   - [Resilience](#resilience)
+  - [Impossible arguments](#impossible-arguments)
   - [Payload limits](#payload-limits)
   - [Troubleshooting](#troubleshooting)
 - The model
@@ -165,9 +166,9 @@ final export = await ActivityFiles.buildAndExport(
     Channel.temperature: temperatureStream,
   },
   laps: lapStream,
-  label: 'Morning Run',
+  gpxTrackName: 'Morning Run',
   creator: 'withings-exporter',
-  sportSource: withingsCategory,
+  sport: Sport.running,
   device: device,
   gpxMetadataDescription: 'Withings export',
   includeCreatorInGpxMetadataDescription: false,
@@ -186,7 +187,7 @@ final export = await ActivityFiles.buildAndExport(
 );
 ```
 
-Each stream uses records (`({timestamp, latitude, longitude, elevation})` and `({timestamp, value})`), so arrays from REST or gRPC payloads can be forwarded as-is. When wearable categories differ from the built-in `Sport` enum, call `ActivityFiles.registerSportMapper` once during startup to plug in your own mapping.
+Each stream uses records (`({timestamp, latitude, longitude, elevation})` and `({timestamp, value})`), so arrays from REST or gRPC payloads can be forwarded as-is. Map your wearable's category to a `Sport` yourself and pass it as `sport`; the library does not guess one.
 
 ### FIT session/lap stats
 
@@ -212,7 +213,7 @@ activity_files inspect -i ride.fit
 
 ## Dart VM and servers
 
-If you are running on the Dart VM (command-line programs, servers, tests), you can keep using `dart:io` to read from disk. Pass `File` instances directly (preferred) or set `allowFilePaths: true` when a plain string should be treated as a path:
+If you are running on the Dart VM (command-line programs, servers, tests), you can keep using `dart:io` to read from disk. Pass a path as a `File`; a `String` is always read as content:
 
 ```dart
 import 'dart:io';
@@ -235,8 +236,6 @@ Future<void> bootstrap() async {
 }
 ```
 
-> Security note: String sources are treated as inline payloads by default. Only set `allowFilePaths: true` (available on `import()` and `convert()`) when you explicitly trust and expect a filesystem path.
-
 ## Converter facade
 
 Convert a file from one format to another. The source format is detected
@@ -257,7 +256,7 @@ Future<void> convertGpxToTcx() async {
   final tcxString = conversion.asString();
   final normalized = conversion.activity;
   print(
-    'Loaded ${conversion.sourceFormat.name} → '
+    'Loaded ${conversion.sourceFormat?.name} → '
     '${conversion.targetFormat.name}, points: ${normalized.points.length}',
   );
 }
@@ -315,8 +314,13 @@ file to completion.
 
 ```dart
 // Parse GPX to RawActivity (plus non-fatal diagnostics).
-final result = ActivityParser.parse(gpxString, ActivityFileFormat.gpx);
-for (final warning in result.warningDiagnostics) {
+final result = await ActivityFiles.import(
+  gpxString,
+  format: ActivityFileFormat.gpx,
+);
+for (final warning in result.diagnostics.where(
+  (d) => d.severity == ParseSeverity.warning,
+)) {
   final node = warning.node?.format();
   final context = node != null ? ' @ $node' : '';
   print('Warning ${warning.code}$context: ${warning.message}');
@@ -344,8 +348,10 @@ final tcxString =
 final fitBase64 =
     ActivityEncoder.encode(activity, ActivityFileFormat.fit, options: options);
 final fitBytes = base64Decode(fitBase64);
-final fitActivity =
-    ActivityParser.parseBytes(fitBytes, ActivityFileFormat.fit).activity;
+final fitActivity = (await ActivityFiles.import(
+  fitBytes,
+  format: ActivityFileFormat.fit,
+)).activity;
 
 // GPX version: default is 1.1, set gpxVersion to GpxVersion.v1_0 to feed older tools.
 // TCX version: default is v2, set tcxVersion to TcxVersion.v1 for legacy TCX parsers.
@@ -404,7 +410,7 @@ sport, time range, channels, laps and the diagnostics the parser reported.
 ```dart
 final result = await ActivityFiles.import(File('ride.fit'));
 final activity = result.activity;
-print('Format: ${result.format.name}, sport: ${activity.sport.name}');
+print('Format: ${result.format?.name}, sport: ${activity.sport.name}');
 print('From ${activity.startTime} to ${activity.endTime}');
 print('Points: ${activity.points.length}, laps: ${activity.laps.length}');
 for (final entry in activity.channels.entries) {
@@ -585,8 +591,8 @@ What the grid does to the data:
   Lap boundary times are not snapped to the grid, so a boundary may no longer
   land on a point.
 
-Activities with fewer than two points come back unchanged, and a zero or
-negative `step` throws `ArgumentError`.
+Activities with fewer than two points come back unchanged, and so does one
+given a zero or negative `step` (see [impossible arguments](#impossible-arguments)).
 
 Distance and speed are interpolated like any other channel, which is not the
 same as deriving them from the new geometry. Recompute after resampling when
@@ -969,30 +975,37 @@ activity_files convert --to gpx -i old.gpx -o new.gpx --encoding latin1
 Lap boundaries are part of `validate`. The auto-fix options are listed in the
 [reference](#auto-fix-options).
 
+## Impossible arguments
+
+A call whose arguments cannot mean anything, such as `crop` with its end
+before its start or a split distance of zero, stops at an `assert` during
+development and in tests. In a release build, where asserts are off, it
+changes nothing and adds a `call.invalid_argument` error to
+`repairDiagnostics`; a shipped app never crashes on such a call. Where the
+arguments have a natural result, that is the result: merging no activities
+gives an empty one.
+
 ## Payload limits
 
-- Inline strings/byte arrays and buffered streams are capped at 64MB
-  (`ActivityFiles.defaultMaxPayloadBytes`) by default. Larger inputs throw
-  `FormatException`.
-- To override the limit, pass `maxPayloadBytes` to `import()`, `convert()`,
-  or `detectFormat()`. Pass `null` to disable the limit entirely.
-- For very large files, stream from disk/network in smaller chunks, split the
-  source before parsing/exporting, or set `maxPayloadBytes: null` if you trust
-  the input.
+- Left out, `maxPayloadBytes` is soft: a source over 64 MB is read with an
+  `import.payload.large` warning. A file over 64 MB of no known format is
+  reported as `parser.format_undetected` without being loaded.
+- A number is a hard cap, even 64 MB (`ActivityFiles.defaultMaxPayloadBytes`):
+  a larger source comes back empty with an `import.payload.too_large` error,
+  and a file is measured before it is read. `null` means no limit.
 
 ```dart
-final huge = await ActivityFiles.convert(
-  source: File('huge.fit'),
-  to: ActivityFileFormat.gpx,
-  maxPayloadBytes: null, // a file you trust
+final upload = await ActivityFiles.import(
+  File('upload.fit'),
+  maxPayloadBytes: 16 * 1024 * 1024, // refuse anything larger
 );
 ```
 
-On the command line, `--max-payload-bytes` sets the same limit, and
-`--max-payload-bytes none` disables it for a file you trust:
+On the command line, `--max-payload-bytes` sets a hard cap and
+`--max-payload-bytes none` disables the limit:
 
 ```shell
-activity_files convert --to gpx -i huge.fit -o huge.gpx --max-payload-bytes none
+activity_files convert --to gpx -i upload.fit -o upload.gpx --max-payload-bytes 16777216
 ```
 
 ## Format handling
@@ -1213,31 +1226,27 @@ on `WorkoutSet.exerciseCategoryId`.
 
 ## Troubleshooting
 
-### "Unable to infer activity format"
+### `parser.format_undetected`
 
-Format detection failed on the given content. Pass `format:` explicitly to
-`import`/`convert` (`--from` on the command line). If you passed a filesystem
-path as a plain string, it was treated as inline content. Pass a `File`
-instead, or set `allowFilePaths: true`. For FIT, prefer raw bytes or a `File`
-over base64 strings; base64 defeats content sniffing.
+Format detection failed on the given content, and `format` on the result is
+null. Pass `format:` explicitly to `import`/`convert` (`--from` on the command
+line). A path passed as a plain string is read as content; pass a `File`
+instead. For FIT, prefer raw bytes or a `File` over base64 strings; base64
+defeats content sniffing.
 
-### "Payload exceeds size limit" / high memory use
+### `import.payload.too_large` / high memory use
 
-Parsing buffers the full payload in memory (streamed sources too), up to the
-`maxPayloadBytes` cap (see the streaming caveat under "Async export &
-streaming"). The default 64MB cap exists so untrusted inputs cannot exhaust
-memory.
+Parsing buffers the full payload in memory (streamed sources too). The error
+means the source is larger than the `maxPayloadBytes` you passed.
 
-- For trusted larger files, raise the cap (e.g.
-  `maxPayloadBytes: 256 * 1024 * 1024`, or `--max-payload-bytes 268435456`)
-  or disable it with `null` (`--max-payload-bytes none`).
+- Raise the cap (e.g. `maxPayloadBytes: 256 * 1024 * 1024`, or
+  `--max-payload-bytes 268435456`), leave it out for the soft default, or pass
+  `null` (`--max-payload-bytes none`).
 - Pass `File` objects or streams instead of reading the payload into memory
   yourself, so only one copy is held.
-- Set `useIsolate` / `exportInIsolate` to keep buffering and encoding off the
-  UI thread.
 - If none of that fits, split the source file before parsing.
 
-### "FormatException: Invalid UTF-8" or garbled text
+### `parser.format_exception` on text, or garbled text
 
 The file is not UTF-8 (common for older GPX/TCX exports). Pass
 `encoding: latin1` (or another `dart:convert` codec) to `import`/`convert`, or
@@ -1296,7 +1305,7 @@ All commands read their input the same way.
 | `--recursive` | Also read the subfolders of a folder input. | |
 | `--encoding` | Text encoding of GPX/TCX/CSV/GeoJSON input. Default `utf-8`. | `encoding:` |
 | `--strict-fit` | Refuse a FIT file with integrity errors instead of keeping what could be read. | `strictFitIntegrity:` |
-| `--max-payload-bytes` | Largest input in bytes, or `none`. Default 67108864 (64 MB). | `maxPayloadBytes:` |
+| `--max-payload-bytes` | Largest input in bytes, or `none`. Left out, an input over 64 MB is read with a warning. | `maxPayloadBytes:` |
 | `--json` | `validate` and `inspect`: the report as JSON Lines on stdout. | |
 
 ### Writing options

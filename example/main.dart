@@ -256,7 +256,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
 Future<void> _demoFilePathHandling(File sampleFile) async {
   print('=== File path handling ===');
 
-  // Option 1: Pass File object directly (recommended)
+  // A path is passed as a File; a String is always the file's content.
   final viaFileObject = await ActivityFiles.import(
     sampleFile,
     useIsolate: supportsIsolates,

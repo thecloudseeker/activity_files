@@ -1,4 +1,53 @@
 # Changelog
+## 0.9.0
+### Breaking
+- `ActivityImportResult.format` and `ActivityConversionResult.sourceFormat` are nullable; they're null when no format was given and none could be detected.
+  - Migration: read `result.format?.name`, or check `hasErrors` first.
+
+### Changed
+- `import()`/`convert()` no longer throw because of their source; a missing file, an unsupported source type, an unknown format or a payload over `maxPayloadBytes` comes back as an empty activity with an error. `strictFitIntegrity` still throws.
+- Leaving out `maxPayloadBytes` reads a source over 64 MB with a warning instead of refusing it; a number, 64 MB included, is a hard cap.
+- `ActivityParser` and `FitParser` no longer throw on invalid UTF-8 or a damaged FIT header; they return a `parser.format_exception` error.
+- Exporting an activity without points or samples to FIT writes a valid file plus a `fit.export.no_records` error instead of throwing.
+- Editing calls with impossible arguments (`crop` ending before it starts, a step or distance of zero or less) stop at an `assert` during development and change nothing in a release build, reporting `call.invalid_argument`, instead of throwing `ArgumentError`. `RawEditor.merge([])` returns an empty activity.
+- GPX and TCX write the device under the library's namespace (`<device xmlns="https://schemas.eikedreier.com/activity_files/v1">`) and read it back; the earlier bare `<device>` is still read.
+- TCX writes `<Creator xsi:type="Device_t">` only when name, serial number, product and version are all known; the device and creator always go into the activity's `<Extensions>` too.
+- TCX laps without calories, intensity or trigger method get the schema's neutral values, marked so they read back as absent.
+- TCX writes sports other than running and biking as `Other` (`lossy.sport_generalized`) and leaves out heart rates below 1 bpm (`lossy.heart_rate_zero_dropped`).
+- TCX keeps track extensions in the activity's `<Extensions>`; `<Track>` holds only trackpoints, and a lap without points has no `<Track>`.
+- GeoJSON writes a `Point` for an activity with one point and a `null` geometry for none, in both the line and the point-feature form, and reads both back.
+- GPX 1.0 writes extension content directly where 1.0 allows foreign elements, since it has no `<extensions>`, and reads it back from there.
+
+- No longer depends on `csv` or `collection`; CSV is read by the library's own reader, and the only runtime dependencies are `args` and `xml`.
+
+### Deprecated
+- Deprecated members, those from 0.8.x included, are removed in 0.11.0 instead of 0.10.0.
+- `ActivityParser` is replaced by `ActivityFiles.import`; removed in 0.11.0.
+- `inferSport`, `registerSportMapper`, `unregisterSportMapper`, `clearSportMappers`, `SportMapper` and `buildAndExport(sportSource:, label:)`: the sport is no longer guessed, pass `sport` (and `gpxTrackName`); removed in 0.11.0.
+- `allowFilePaths` on `import`/`convert`/`detectFormat`: pass a path as a `File`; removed in 0.11.0.
+- `detectFormat(maxPayloadBytes:)` has no effect; removed in 0.11.0.
+
+### Fixed
+- `NaN`, `Infinity` or `1e999` in a file no longer reaches the activity; the value is left out with a warning.
+- Exporting an activity holding `NaN` or infinity no longer throws or writes `NaN`; the value is left out with `repaired.non_finite_dropped`.
+- A huge value such as `1e308` no longer makes FIT or GeoJSON export throw.
+- Unreadable numbers in GPX waypoints, TCX lap totals and TPX extensions, and CSV value columns are reported instead of dropped silently.
+- `convertStream`/`buildAndExport` with auto-fix give the same output as `convert`; they repaired only the first track before.
+- `fixInvalidGps` and `fixChannelDrift` each do only their own repair; either one used to apply both.
+- Auto-fix fills every gap longer than `gapThreshold`; gaps under twice the threshold were left alone.
+- Points added by auto-fix gap filling get distance and speed.
+- `convert(normalize: false)` applies auto-fix again; nudging shared timestamps apart first left it nothing to remove.
+- `autofix.invalid_gps.trimmed`/`autofix.channel_drift.trimmed` no longer go missing when gap filling adds points.
+- `markLapsByDistance()` skips a distance step faster than 100 m/s instead of splitting it into thousands of laps (`repaired.distance_jumps_skipped`).
+- Text with a byte-order mark is no longer detected as FIT.
+- A comma-separated CSV whose quoted values hold semicolons no longer comes back with no points; the delimiter is taken from the header line, and one other than a comma is reported (`csv.header.delimiter`).
+- GPX and TCX export no longer reorder points that share a timestamp, and TCX no longer drops all but the first of them.
+- GPX 1.1 and TCX output validates against the official schemas.
+- FIT export reports `lossy.sport_generalized` for `Sport.other`, which FIT writes as generic.
+- A CSV column without a header is reported (`csv.header.empty`) instead of becoming a channel without a name.
+- GeoJSON export leaves out metadata values JSON cannot hold (`lossy.metadata_values_dropped`) instead of throwing.
+- TCX export of an activity with an out-of-range coordinate no longer writes a `NaN` lap distance.
+
 ## 0.8.5
 ### Added
 - The `activity_files` command line now covers every library task: `edit`, `merge`, `split` and `inspect` join `convert` and `validate`, and a test fails whenever a library feature has no command.
