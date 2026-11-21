@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -19,7 +21,7 @@ void main() {
         developerFieldBytes: const [0x12, 0x34],
       );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final channel = Channel.custom('fit_dev_0_1');
       final samples = result.activity.channel(channel);
 
@@ -34,7 +36,7 @@ void main() {
         developerFieldBytes: const [0xC8, 0x00], // 200
       );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final runningPower = result.activity.channel(
         Channel.custom('running_power'),
       );
@@ -53,7 +55,7 @@ void main() {
         valueBytes: const [0xA9, 0xFC, 0xFF, 0xFF],
       );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final samples = result.activity.channel(Channel.custom('calibration'));
 
       expect(samples, hasLength(1));
@@ -68,12 +70,37 @@ void main() {
         valueBytes: const [0x00, 0x00, 0x50, 0x40],
       );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final samples = result.activity.channel(Channel.custom('stance_ratio'));
 
       expect(samples, hasLength(1));
       expect(samples.single.value, closeTo(3.25, 1e-9));
     });
+
+    for (final (label, valueBytes) in const [
+      ('infinity', [0x00, 0x00, 0x80, 0x7F]),
+      ('negative infinity', [0x00, 0x00, 0x80, 0xFF]),
+      ('a NaN other than the invalid sentinel', [0x00, 0x00, 0xC0, 0x7F]),
+    ]) {
+      test('a float32 $label is left out with a warning', () {
+        final bytes = _buildFitWithDescribedDeveloperField(
+          fieldName: 'stance_ratio',
+          fitBaseTypeId: 0x88,
+          valueBytes: valueBytes,
+        );
+
+        final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
+
+        expect(
+          result.activity.channel(Channel.custom('stance_ratio')),
+          isEmpty,
+        );
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('fit.field.non_finite'),
+        );
+      });
+    }
 
     test('field names sanitize into safe channel ids', () {
       final bytes = _buildFitWithDescribedDeveloperField(
@@ -82,7 +109,7 @@ void main() {
         valueBytes: const [0x2A],
       );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final samples = result.activity.channel(
         Channel.custom('leg_spring_stiffness'),
       );
@@ -101,7 +128,7 @@ void main() {
         offset: 5,
       );
 
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final samples = result.activity.channel(Channel.custom('charge'));
 
       expect(samples, hasLength(1));

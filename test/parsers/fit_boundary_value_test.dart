@@ -2,6 +2,8 @@
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -38,7 +40,7 @@ void main() {
       ..add(uint16LeBytes(255));
 
     final bytes = finish(data);
-    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
     expect(result.activity.summary?.calories, equals(255.0));
     expect(result.activity.summary?.avgPower, equals(255.0));
@@ -83,7 +85,7 @@ void main() {
       ]);
 
     final bytes = finish(data);
-    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
     expect(
       result.activity.channel(Channel.custom('legs_0')).single.value,
@@ -135,7 +137,7 @@ void main() {
       ]);
 
     final bytes = finish(data);
-    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
     expect(
       result.activity.channel(Channel.custom('legs_0')).single.value,
@@ -184,7 +186,7 @@ void main() {
         ]);
 
       final bytes = finish(data);
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(
         result.activity.channel(Channel.custom('legs')).single.value,
@@ -221,7 +223,7 @@ void main() {
       ..add(compressedPoint.toBytes());
 
     final bytes = finish(data);
-    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
     expect(result.activity.points, hasLength(2));
     expect(
@@ -284,7 +286,7 @@ void main() {
       ]);
 
     final bytes = finish(data);
-    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
     expect(result.activity.points, hasLength(2));
     expect(

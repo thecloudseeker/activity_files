@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:csv/csv.dart';
-
 import '../models.dart';
 import 'activity_parser.dart';
+import 'csv_reader.dart';
+import 'number_utils.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
 
@@ -16,11 +16,22 @@ class CsvParser implements ActivityFormatParser {
     final diagnostics = <ParseDiagnostic>[];
 
     try {
-      // CSV 8.0.0: Use new Csv API. skipEmptyLines is intentionally off so
-      // `csvData`'s row indices (used in diagnostic messages below) line up
-      // with physical file lines; blank rows are filtered manually in the
-      // loop instead.
-      final csvData = Csv(skipEmptyLines: false).decode(input);
+      // Empty lines stay rows, so the row numbers in the diagnostics below
+      // follow the file; blank rows are skipped in the loop instead.
+      final read = readCsv(input);
+      final csvData = read.rows;
+      if (read.delimiter != ',') {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.info,
+            code: 'csv.header.delimiter',
+            message:
+                'Columns are separated by '
+                '${read.delimiter == '\t' ? 'tabs' : '"${read.delimiter}"'}, '
+                'found in the header line.',
+          ),
+        );
+      }
 
       if (csvData.isEmpty) {
         diagnostics.add(
@@ -77,10 +88,13 @@ class CsvParser implements ActivityFormatParser {
           continue;
         }
 
+        double? optional(String column) =>
+            _parseOptionalDouble(row, headerMap, column, i + 1, diagnostics);
+
         final point = GeoPoint(
           latitude: latitude,
           longitude: longitude,
-          elevation: _parseDouble(row, headerMap, 'elevation'),
+          elevation: optional('elevation'),
           time: timestamp,
         );
         points.add(point);
@@ -95,49 +109,37 @@ class CsvParser implements ActivityFormatParser {
         _addChannelSample(
           channelMap,
           Channel.heartRate,
-          row,
-          headerMap,
-          'heart_rate',
+          optional('heart_rate'),
           timestamp,
         );
         _addChannelSample(
           channelMap,
           Channel.cadence,
-          row,
-          headerMap,
-          'cadence',
+          optional('cadence'),
           timestamp,
         );
         _addChannelSample(
           channelMap,
           Channel.speed,
-          row,
-          headerMap,
-          'speed',
+          optional('speed'),
           timestamp,
         );
         _addChannelSample(
           channelMap,
           Channel.power,
-          row,
-          headerMap,
-          'power',
+          optional('power'),
           timestamp,
         );
         _addChannelSample(
           channelMap,
           Channel.temperature,
-          row,
-          headerMap,
-          'temperature',
+          optional('temperature'),
           timestamp,
         );
         _addChannelSample(
           channelMap,
           Channel.distance,
-          row,
-          headerMap,
-          'distance',
+          optional('distance'),
           timestamp,
         );
         // Unknown numeric columns are preserved as custom channels so our
@@ -147,7 +149,15 @@ class CsvParser implements ActivityFormatParser {
           if (_knownColumns.contains(entry.key)) continue;
           final index = entry.value;
           if (index >= row.length) continue;
-          final value = double.tryParse(row[index].trim());
+          final text = row[index].trim();
+          // Non-numeric text in an unknown column is free text and stays
+          // out of the channels on purpose; a number that is not finite is
+          // reported, since it was meant as a value.
+          if (isNonFiniteNumber(text)) {
+            _addInvalidValue(diagnostics, i + 1, entry.key, text);
+            continue;
+          }
+          final value = double.tryParse(text);
           if (value == null) continue;
           channelMap
               .putIfAbsent(Channel.custom(entry.key), () => [])
@@ -233,6 +243,17 @@ class CsvParser implements ActivityFormatParser {
     final map = <String, int>{};
     for (int i = 0; i < headers.length; i++) {
       final raw = headers[i].toLowerCase().trim();
+      if (raw.isEmpty) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'csv.header.empty',
+            message:
+                'Column ${i + 1} has no header, so its values are not read.',
+          ),
+        );
+        continue;
+      }
       final normalized = _headerSynonyms[raw] ?? raw;
       if (map.containsKey(normalized)) {
         diagnostics.add(
@@ -271,18 +292,42 @@ class CsvParser implements ActivityFormatParser {
     Map<String, int> headerMap,
     String headerName,
   ) {
-    final value = _getString(row, headerMap, headerName);
-    if (value != null) {
-      try {
-        // double.parse accepts the literal strings "NaN"/"Infinity"/
-        // "-Infinity"; treat those as unparseable like any other malformed
-        // value instead of letting a non-finite double reach a GeoPoint/
-        // Sample (and later crash jsonEncode in the GeoJSON encoder).
-        final parsed = double.parse(value);
-        if (parsed.isFinite) return parsed;
-      } catch (_) {}
+    return parseFiniteDouble(_getString(row, headerMap, headerName));
+  }
+
+  /// Reads an optional numeric column; a cell that holds text but no finite
+  /// number is left out with a warning.
+  static double? _parseOptionalDouble(
+    List<String> row,
+    Map<String, int> headerMap,
+    String headerName,
+    int rowNumber,
+    List<ParseDiagnostic> diagnostics,
+  ) {
+    final text = _getString(row, headerMap, headerName);
+    if (text == null) return null;
+    final value = parseFiniteDouble(text);
+    if (value == null) {
+      _addInvalidValue(diagnostics, rowNumber, headerName, text);
     }
-    return null;
+    return value;
+  }
+
+  static void _addInvalidValue(
+    List<ParseDiagnostic> diagnostics,
+    int rowNumber,
+    String column,
+    String text,
+  ) {
+    diagnostics.add(
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: 'csv.row.invalid_value',
+        message:
+            'Row $rowNumber has an unreadable "$column" value "$text"; '
+            'value left out.',
+      ),
+    );
   }
 
   /// Parse DateTime from row
@@ -304,12 +349,9 @@ class CsvParser implements ActivityFormatParser {
   static void _addChannelSample(
     Map<Channel, List<Sample>> channelMap,
     Channel channel,
-    List<String> row,
-    Map<String, int> headerMap,
-    String headerName,
+    double? value,
     DateTime timestamp,
   ) {
-    final value = _parseDouble(row, headerMap, headerName);
     if (value != null) {
       channelMap
           .putIfAbsent(channel, () => [])

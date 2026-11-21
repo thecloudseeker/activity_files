@@ -124,8 +124,8 @@ void main() {
       expect(identical(merged, activity.build()), isFalse);
     });
 
-    test('merge rejects empty activity list', () {
-      expect(() => RawEditor.merge([]), throwsArgumentError);
+    test('merge of an empty activity list is empty', () {
+      expect(RawEditor.merge([]).points, isEmpty);
     });
 
     test('merge supports custom creator and inherits first activity sport', () {
@@ -298,64 +298,6 @@ void main() {
         expect(splits.containsKey(Sport.walking), isTrue);
       },
     );
-  });
-
-  group('Sport inference', () {
-    test('inferSport resolves nested object values', () {
-      final source = {
-        'metadata': {
-          'activity': {'type': 'cycling'},
-        },
-      };
-      expect(ActivityFiles.inferSport(source), equals(Sport.cycling));
-    });
-
-    test('inferSport resolves iterable values', () {
-      final source = [
-        'unknown',
-        {'sport': 'swimming'},
-      ];
-      expect(ActivityFiles.inferSport(source), equals(Sport.swimming));
-    });
-
-    test('inferSport resolves numeric sport codes', () {
-      expect(ActivityFiles.inferSport(0), equals(Sport.other));
-      expect(ActivityFiles.inferSport(1), equals(Sport.running));
-      expect(ActivityFiles.inferSport(2), equals(Sport.cycling));
-      expect(ActivityFiles.inferSport(3), equals(Sport.swimming));
-      expect(ActivityFiles.inferSport(4), equals(Sport.walking));
-      expect(ActivityFiles.inferSport(5), equals(Sport.hiking));
-      expect(ActivityFiles.inferSport(99), equals(Sport.unknown));
-    });
-
-    test('clearSportMappers removes all registered mappers', () {
-      Sport? mapper1(dynamic source) => source == 1 ? Sport.cycling : null;
-      Sport? mapper2(dynamic source) => source == 2 ? Sport.running : null;
-      ActivityFiles.registerSportMapper(mapper1);
-      ActivityFiles.registerSportMapper(mapper2);
-      addTearDown(ActivityFiles.clearSportMappers);
-
-      expect(ActivityFiles.inferSport(1), equals(Sport.cycling));
-      expect(ActivityFiles.inferSport(2), equals(Sport.running));
-
-      ActivityFiles.clearSportMappers();
-
-      // After clearing custom mappers, built-in primitive mappers still work
-      expect(ActivityFiles.inferSport(1), equals(Sport.running));
-      expect(ActivityFiles.inferSport(2), equals(Sport.cycling));
-    });
-
-    test('unregisterSportMapper returns true when mapper removed', () {
-      Sport? mapper(dynamic source) => null;
-      ActivityFiles.registerSportMapper(mapper);
-      addTearDown(ActivityFiles.clearSportMappers);
-
-      final removed = ActivityFiles.unregisterSportMapper(mapper);
-      expect(removed, isTrue);
-
-      final removedAgain = ActivityFiles.unregisterSportMapper(mapper);
-      expect(removedAgain, isFalse);
-    });
   });
 
   group('Format detection', () {

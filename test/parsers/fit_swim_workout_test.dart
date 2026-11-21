@@ -5,6 +5,8 @@ library;
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -24,7 +26,7 @@ void main() {
         subSport: 0,
         totalCycles: 0xFFFFFFFF, // FIT invalid sentinel → null
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       final summary = result.activity.summary;
       expect(summary, isNotNull);
       expect(summary!.poolLengthMeters, closeTo(50.0, 0.001));
@@ -49,7 +51,7 @@ void main() {
           numActiveLengths: 20,
           swimStroke: entry.key,
         );
-        final summary = ActivityParser.parseBytes(
+        final summary = ParserRouter.parseBytes(
           bytes,
           ActivityFileFormat.fit,
         ).activity.summary;
@@ -68,7 +70,7 @@ void main() {
         numActiveLengths: 10,
         swimStroke: 7, // out of range → null
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -83,7 +85,7 @@ void main() {
         swimStroke: 0,
         subSport: 45, // jump rope
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -98,7 +100,7 @@ void main() {
         swimStroke: 0,
         subSport: 0,
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -113,7 +115,7 @@ void main() {
         swimStroke: 0,
         totalCycles: 1200,
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -128,7 +130,7 @@ void main() {
         swimStroke: 0,
         totalCycles: 0xFFFFFFFF,
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -142,7 +144,7 @@ void main() {
         numActiveLengths: 8,
         swimStroke: 0,
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -158,7 +160,7 @@ void main() {
         swimStroke: 1, // backstroke
         numActiveLengths: 20,
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       expect(result.activity.laps, hasLength(1));
       final lap = result.activity.laps.first;
       expect(lap.swimStroke, equals(SwimStroke.backstroke));
@@ -174,7 +176,7 @@ void main() {
           swimStroke: 2,
           numActiveLengths: 10,
         );
-        final lap = ActivityParser.parseBytes(
+        final lap = ParserRouter.parseBytes(
           bytes,
           ActivityFileFormat.fit,
         ).activity.laps.first;
@@ -189,7 +191,7 @@ void main() {
         swimStroke: 9, // out of range
         numActiveLengths: 10,
       );
-      final lap = ActivityParser.parseBytes(
+      final lap = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.laps.first;
@@ -206,7 +208,7 @@ void main() {
         swimStroke: 0,
         avgStrokeCountRaw: 135, // 135 / 10 = 13.5
       );
-      final summary = ActivityParser.parseBytes(
+      final summary = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.summary;
@@ -223,7 +225,7 @@ void main() {
           swimStroke: 0,
           avgStrokeCountRaw: 0xFFFFFFFF,
         );
-        final summary = ActivityParser.parseBytes(
+        final summary = ParserRouter.parseBytes(
           bytes,
           ActivityFileFormat.fit,
         ).activity.summary;
@@ -242,7 +244,7 @@ void main() {
         weightRaw: 800, // 800 / 16 = 50.0 kg
         exerciseCategoryRaw: 28, // Squat
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       expect(result.activity.sets, hasLength(1));
       final s = result.activity.sets.first;
       expect(s.isRest, isFalse);
@@ -261,7 +263,7 @@ void main() {
         weightRaw: 0,
         exerciseCategoryRaw: 0,
       );
-      final s = ActivityParser.parseBytes(
+      final s = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.sets.first;
@@ -277,7 +279,7 @@ void main() {
         weightRaw: 320,
         exerciseCategoryRaw: 0,
       );
-      final s = ActivityParser.parseBytes(
+      final s = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.sets.first;
@@ -293,7 +295,7 @@ void main() {
         weightRaw: 0xFFFF, // FIT invalid sentinel
         exerciseCategoryRaw: 0,
       );
-      final s = ActivityParser.parseBytes(
+      final s = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.sets.first;
@@ -309,7 +311,7 @@ void main() {
         weightRaw: 1600, // 1600 / 16 = 100.0 kg
         exerciseCategoryRaw: 8, // Deadlift
       );
-      final s = ActivityParser.parseBytes(
+      final s = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity.sets.first;
@@ -319,7 +321,7 @@ void main() {
 
     test('multiple sets are accumulated in order', () {
       final bytes = _buildMultiSetFit(baseTs: baseTs);
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       expect(result.activity.sets, hasLength(2));
       expect(result.activity.sets[0].isRest, isFalse);
       expect(result.activity.sets[1].isRest, isTrue);

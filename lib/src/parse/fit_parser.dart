@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:collection/collection.dart';
-
 import '../fit/fit_crc.dart';
 import '../fit/fit_epoch.dart';
 import '../fit/fit_record_fields.dart';
@@ -12,6 +10,7 @@ import '../fit/fit_sport.dart';
 import '../geo_math.dart';
 import '../identifier_sanitizer.dart';
 import '../models.dart';
+import '../stable_sort.dart';
 import 'activity_parser.dart';
 import 'integrity_mode.dart';
 import 'parse_result.dart';
@@ -26,15 +25,28 @@ import 'parse_result.dart';
 class FitParser implements ActivityFormatParser {
   const FitParser();
 
+  /// Parses a base64-encoded FIT payload. Text that is not base64, or a
+  /// payload without a readable FIT header, comes back as an empty activity
+  /// with an error diagnostic.
   @override
   ActivityParseResult parse(String input) {
-    final diagnostics = <ParseDiagnostic>[];
-    final payload = _decodePayload(input.trim(), diagnostics);
-    return _parsePayload(payload, diagnostics);
+    try {
+      final diagnostics = <ParseDiagnostic>[];
+      final payload = _decodePayload(input.trim(), diagnostics);
+      return _parsePayload(payload, diagnostics);
+    } on FormatException catch (error) {
+      return formatExceptionResult(ActivityFileFormat.fit, error);
+    }
   }
 
+  /// Parses raw FIT bytes. A payload without a readable FIT header comes
+  /// back as an empty activity with an error diagnostic.
   ActivityParseResult parseBytes(Uint8List payload) {
-    return _parsePayload(payload, <ParseDiagnostic>[]);
+    try {
+      return _parsePayload(payload, <ParseDiagnostic>[]);
+    } on FormatException catch (error) {
+      return formatExceptionResult(ActivityFileFormat.fit, error);
+    }
   }
 
   /// Parse FIT bytes with configurable integrity handling.
@@ -51,7 +63,7 @@ class FitParser implements ActivityFormatParser {
   /// truncated sections that the diagnostics report.
   @Deprecated(
     'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse '
-    'damaged files. Will be removed in 0.10.0.',
+    'damaged files. Will be removed in 0.11.0.',
   )
   ActivityParseResult parseBytesWithIntegrity(
     Uint8List payload, {
@@ -1221,6 +1233,18 @@ class FitParser implements ActivityFormatParser {
         ),
       );
     }
+    if (reader.nonFiniteFloats > 0) {
+      diagnostics.add(
+        ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'fit.field.non_finite',
+          message:
+              '${reader.nonFiniteFloats} float field value(s) were NaN or '
+              'infinite and were left out.',
+          node: const ParseNodeReference(path: 'fit.file'),
+        ),
+      );
+    }
     if (unknownDefinitionCount > 5) {
       diagnostics.add(
         ParseDiagnostic(
@@ -1465,7 +1489,7 @@ Uint8List _decodePayload(String input, List<ParseDiagnostic> diagnostics) {
   } on FormatException {
     throw FormatException(
       'FIT payloads must be base64-encoded when provided as String. '
-      'Use ActivityParser.parseBytes for raw binary data.',
+      'Pass raw binary data as bytes instead.',
     );
   }
 }
@@ -1588,7 +1612,7 @@ List<GeoPoint> _filterContiguousPoints(
   // clamp to the same value, e.g. a pre-FIT-epoch source) must keep their
   // original relative order, not get shuffled by an unstable sort.
   final sorted = [...points];
-  mergeSort(sorted, compare: (a, b) => a.time.compareTo(b.time));
+  stableSort(sorted, (a, b) => a.time.compareTo(b.time));
 
   // Find groups where consecutive points are within a reasonable time window (24 hours)
   final groups = <List<GeoPoint>>[];
@@ -2084,6 +2108,11 @@ class _FitByteReader {
   _FitByteReader(this.bytes);
   final Uint8List bytes;
   int position = 0;
+
+  /// Float values read as `NaN` or infinity other than the invalid
+  /// sentinel; each is dropped like an invalid value and counted here so
+  /// the parser can report them.
+  int nonFiniteFloats = 0;
   int readUint8() {
     return bytes[position++];
   }
@@ -2311,7 +2340,12 @@ class _FitByteReader {
             data.getUint32(offset + 4, endian) == 0xFFFFFFFF;
         raw = data.getFloat64(offset, endian);
       }
-      if (!invalid) values.add(raw);
+      if (invalid) continue;
+      if (!raw.isFinite) {
+        nonFiniteFloats++;
+        continue;
+      }
+      values.add(raw);
     }
     position += safe;
     if (values.isEmpty) return null;

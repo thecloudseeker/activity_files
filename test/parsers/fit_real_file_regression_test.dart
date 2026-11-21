@@ -12,6 +12,8 @@ library;
 import 'dart:io';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -23,7 +25,7 @@ void main() {
       final bytes = File(
         'test/fixtures/real_world/sample.fit',
       ).readAsBytesSync();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(result.activity.sport, equals(Sport.running));
       expect(result.activity.laps, hasLength(2));
@@ -45,7 +47,7 @@ void main() {
       return;
     }
 
-    final result = ActivityParser.parseBytes(
+    final result = ParserRouter.parseBytes(
       file.readAsBytesSync(),
       ActivityFileFormat.fit,
     );
@@ -80,7 +82,7 @@ void main() {
       return;
     }
 
-    final activity = ActivityParser.parseBytes(
+    final activity = ParserRouter.parseBytes(
       file.readAsBytesSync(),
       ActivityFileFormat.fit,
     ).activity;
@@ -103,7 +105,7 @@ void main() {
     final bytes = File(
       'test/fixtures/real_world/garmin-fenix-5-bike.fit',
     ).readAsBytesSync();
-    final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+    final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
     final activity = result.activity;
 
     expect(activity.points, hasLength(19));
@@ -163,7 +165,7 @@ void main() {
         return;
       }
 
-      final result = ActivityParser.parseBytes(
+      final result = ParserRouter.parseBytes(
         file.readAsBytesSync(),
         ActivityFileFormat.fit,
       );

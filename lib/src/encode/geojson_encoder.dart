@@ -16,6 +16,17 @@ class GeojsonEncoder {
     'altitude',
   };
 
+  /// Whether [value] can be written as JSON: null, a string, a bool, a
+  /// finite number, or a list or string-keyed map of such values.
+  static bool isJsonValue(Object? value) => switch (value) {
+    null || String() || bool() || int() => true,
+    final double d => d.isFinite,
+    final List<Object?> list => list.every(isJsonValue),
+    final Map<Object?, Object?> map =>
+      map.keys.every((k) => k is String) && map.values.every(isJsonValue),
+    _ => false,
+  };
+
   /// Encode activity to GeoJSON FeatureCollection format
   ///
   /// Returns GeoJSON string with activity as LineString feature
@@ -59,27 +70,43 @@ class GeojsonEncoder {
   static double _round(double value, int precision) =>
       double.parse(value.toStringAsFixed(precision));
 
+  /// Running mean, so values near the double limit cannot overflow a sum
+  /// into infinity, which JSON cannot hold.
+  static double _mean(List<double> values) {
+    var mean = 0.0;
+    for (var i = 0; i < values.length; i++) {
+      mean += values[i] / (i + 1) - mean / (i + 1);
+    }
+    return mean;
+  }
+
   /// Build GeoJSON Feature from activity
   static Map<String, dynamic> _buildFeature(
     RawActivity activity,
     EncoderOptions options,
-  ) => {
-    'type': 'Feature',
-    'geometry': {
-      'type': 'LineString',
-      // Third coordinate is elevation per the GeoJSON spec (RFC 7946 §3.1.1);
-      // omitted when the point has none so nulls round-trip as null.
-      'coordinates': [
-        for (final p in activity.points)
-          [
-            _round(p.longitude, options.precisionLatLon),
-            _round(p.latitude, options.precisionLatLon),
-            if (p.elevation != null) _round(p.elevation!, options.precisionEle),
-          ],
-      ],
-    },
-    'properties': _getProperties(activity),
-  };
+  ) {
+    // Third coordinate is elevation per the GeoJSON spec (RFC 7946 §3.1.1);
+    // omitted when the point has none so nulls round-trip as null.
+    final coordinates = [
+      for (final p in activity.points)
+        [
+          _round(p.longitude, options.precisionLatLon),
+          _round(p.latitude, options.precisionLatLon),
+          if (p.elevation != null) _round(p.elevation!, options.precisionEle),
+        ],
+    ];
+    return {
+      'type': 'Feature',
+      // A LineString needs two positions (RFC 7946 §3.1.4): one position is
+      // a Point, and none is a null geometry, which keeps the properties.
+      'geometry': switch (coordinates.length) {
+        0 => null,
+        1 => {'type': 'Point', 'coordinates': coordinates.single},
+        _ => {'type': 'LineString', 'coordinates': coordinates},
+      },
+      'properties': _getProperties(activity),
+    };
+  }
 
   /// Extract GeoJSON properties from activity
   static Map<String, dynamic> _getProperties(RawActivity activity) {
@@ -98,10 +125,7 @@ class GeojsonEncoder {
         'total_calories': activity.summary!.calories,
       if (laps.isNotEmpty) ...{
         'num_laps': laps.length,
-        if (avgHeartRates.isNotEmpty)
-          'avg_heart_rate':
-              avgHeartRates.fold<double>(0, (sum, hr) => sum + hr) /
-              avgHeartRates.length,
+        if (avgHeartRates.isNotEmpty) 'avg_heart_rate': _mean(avgHeartRates),
         'max_heart_rate': laps
             .map((lap) => lap.maxHeartRate)
             .nonNulls
@@ -115,7 +139,8 @@ class GeojsonEncoder {
       // Preserved source properties win over the computed defaults above, so a
       // GeoJSON round-trip keeps every original feature property verbatim.
       // Empty for non-GeoJSON sources, leaving the computed defaults intact.
-      ...activity.metadata,
+      for (final MapEntry(:key, :value) in activity.metadata.entries)
+        if (isJsonValue(value)) key: value,
       // Per-point timestamps are always regenerated from the current points
       // (togeojson/Mapbox convention); GeoJSON has no native time field.
       if (points.isNotEmpty)
@@ -152,6 +177,14 @@ class GeojsonEncoder {
     EncoderOptions options = const EncoderOptions(),
   }) {
     activity = activity.flattened();
+    // No points is one feature with a null geometry, as in the LineString
+    // form, so the activity's properties still have a place.
+    if (activity.points.isEmpty) {
+      return jsonEncode({
+        'type': 'FeatureCollection',
+        'features': [_buildFeature(activity, options)],
+      });
+    }
     final channelsByTime = includeChannels
         ? channelValuesByTime(activity.channels)
         : const <DateTime, Map<Channel, double>>{};

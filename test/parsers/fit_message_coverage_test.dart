@@ -5,6 +5,8 @@ library;
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -13,7 +15,7 @@ void main() {
   group('FIT message coverage', () {
     test('parses device_info, activity, and file_creator messages', () {
       final bytes = _buildFitWithDeviceActivityAndCreator();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(result.activity.points, hasLength(1));
 
@@ -37,7 +39,7 @@ void main() {
 
     test('sensor device_info messages do not override the creator device', () {
       final bytes = _buildFitWithCreatorAndSensorDeviceInfo();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       final device = result.activity.device;
       expect(device, isNotNull);

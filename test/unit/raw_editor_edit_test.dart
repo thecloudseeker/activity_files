@@ -645,7 +645,7 @@ void main() {
         () => RawEditor(
           activity,
         ).deleteRange(base.add(const Duration(seconds: 20)), base),
-        throwsArgumentError,
+        throwsA(isA<AssertionError>()),
       );
     });
 

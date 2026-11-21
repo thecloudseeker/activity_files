@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 /// TCX round-trip coverage for Notes, Author, lap Intensity/TriggerMethod, and
 /// multi-sport activity structure.
 void main() {
   RawActivity parse(String tcx) =>
-      ActivityParser.parse(tcx, ActivityFileFormat.tcx).activity;
+      ParserRouter.parse(tcx, ActivityFileFormat.tcx).activity;
   String encode(RawActivity a) =>
       ActivityEncoder.encode(a, ActivityFileFormat.tcx);
   RawActivity roundTrip(String tcx) => parse(encode(parse(tcx)));

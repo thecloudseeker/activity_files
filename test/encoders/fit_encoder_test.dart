@@ -9,6 +9,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -32,7 +34,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -59,7 +61,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -91,7 +93,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -113,7 +115,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -124,7 +126,7 @@ void main() {
 
     test('parser skips developer data payloads without misalignment', () {
       final bytes = buildFitFileWithDeveloperData();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       expect(result.activity.points.length, equals(1));
       expect(result.diagnostics, isEmpty);
     });
@@ -133,10 +135,7 @@ void main() {
       final bytes = await File('example/assets/sample.fit').readAsBytes();
       final corrupted = Uint8List.fromList(bytes);
       corrupted[corrupted.length - 1] ^= 0xFF;
-      final result = ActivityParser.parseBytes(
-        corrupted,
-        ActivityFileFormat.fit,
-      );
+      final result = ParserRouter.parseBytes(corrupted, ActivityFileFormat.fit);
       final hasCrcError = result.diagnostics.any(
         (d) =>
             d.severity == ParseSeverity.error &&
@@ -162,7 +161,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -188,7 +187,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -224,7 +223,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -260,7 +259,7 @@ void main() {
         to: ActivityFileFormat.fit,
         normalize: false,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         exportResult.asBytes(),
         ActivityFileFormat.fit,
       );
@@ -327,7 +326,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -362,7 +361,7 @@ void main() {
         activity,
         ActivityFileFormat.fit,
       );
-      final parsed = ActivityParser.parseBytes(
+      final parsed = ParserRouter.parseBytes(
         base64Decode(fitPayload),
         ActivityFileFormat.fit,
       );
@@ -385,7 +384,7 @@ void main() {
         recordTimestamp: 1000,
         lapTimestamp: 1010,
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       final fitEpoch = DateTime.utc(1989, 12, 31);
       expect(result.activity.laps, hasLength(1));
@@ -414,7 +413,7 @@ void main() {
         firstLapTimestamp: 1010,
         secondLapTimestamp: 1005,
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       final fitEpoch = DateTime.utc(1989, 12, 31);
       expect(result.activity.laps, hasLength(2));

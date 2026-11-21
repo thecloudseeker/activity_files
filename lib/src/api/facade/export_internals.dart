@@ -9,6 +9,7 @@ ActivityExportResult _exportFromActivity({
   required Iterable<ParseDiagnostic> diagnostics,
   required bool runValidation,
   ValidationResult? validation,
+  ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
 }) {
   var working = activity;
   // See convert()'s matching comment: flatten before normalizing/ordering
@@ -20,7 +21,15 @@ ActivityExportResult _exportFromActivity({
   }
   NormalizationStats? normalizationStats;
   var repairDiagnostics = const <ValidationDiagnostic>[];
+  var autoFixDiagnostics = const <ParseDiagnostic>[];
   if (!normalize) {
+    // As in convert(): auto-fix sees the data before ordering nudges shared
+    // timestamps apart.
+    (working, autoFixDiagnostics) = _applyAutoFix(
+      working,
+      autoFix,
+      autoFixDiagnostics,
+    );
     final ordered = _ensureOrderedForExport(working);
     working = ordered.activity;
     repairDiagnostics = ordered.diagnostics;
@@ -44,6 +53,17 @@ ActivityExportResult _exportFromActivity({
     working = trackResult.activity;
     repairDiagnostics = [...repairDiagnostics, ...trackResult.diagnostics];
   }
+  // Auto-fix runs where convert() runs it: after flattening and
+  // normalizing, so every track is repaired and the output is the same.
+  if (normalize) {
+    (working, autoFixDiagnostics) = _applyAutoFix(
+      working,
+      autoFix,
+      autoFixDiagnostics,
+    );
+  }
+  final List<ParseDiagnostic> nonFinite;
+  (working, nonFinite) = _dropNonFiniteForExport(working);
   final encoded = ActivityEncoder.encode(working, to, options: options);
   final binary = to == ActivityFileFormat.fit
       ? Uint8List.fromList(base64Decode(encoded))
@@ -66,6 +86,8 @@ ActivityExportResult _exportFromActivity({
   final mergedDiagnostics = <ParseDiagnostic>[
     ...diagnostics,
     ...repairDiagnostics.map((d) => d.toParseDiagnostic()),
+    ...autoFixDiagnostics,
+    ...nonFinite,
     ..._lossyDiagnostics(
       working,
       to,
@@ -86,6 +108,33 @@ ActivityExportResult _exportFromActivity({
       normalization: normalizationStats,
       validationDuration: validationDuration,
     ),
+  );
+}
+
+/// Removes `NaN` and infinite values before encoding, and reports them,
+/// so an activity built in code never makes an encoder throw or write a
+/// literal `NaN`.
+(RawActivity, List<ParseDiagnostic>) _dropNonFiniteForExport(
+  RawActivity activity,
+) {
+  final report = NonFiniteReport();
+  final cleaned = dropNonFinite(activity, report);
+  if (report.isEmpty) return (activity, const []);
+  return (
+    cleaned,
+    [
+      ParseDiagnostic(
+        severity: ParseSeverity.warning,
+        code: '${DiagnosticCategory.repaired}.non_finite_dropped',
+        message:
+            'Left out values that are not finite numbers (NaN or '
+            'infinity): ${report.describe()}.',
+        suggestedFix:
+            'Check how these values were computed; a division by zero is '
+            'the usual cause.',
+        priority: 3,
+      ),
+    ],
   );
 }
 
@@ -280,6 +329,71 @@ List<ParseDiagnostic> _lossyDiagnostics(
       );
     }
   }
+  if (to == ActivityFileFormat.tcx) {
+    // TCX names only running and biking; every other sport is Other.
+    const tcxSports = {
+      Sport.running,
+      Sport.cycling,
+      Sport.other,
+      Sport.unknown,
+    };
+    final generalized =
+        {activity.sport, for (final lap in activity.laps) ?lap.sport}
+            .where((sport) => !tcxSports.contains(sport))
+            .map((s) => s.name)
+            .toList()
+          ..sort();
+    if (generalized.isNotEmpty) {
+      add(
+        'sport_generalized',
+        'TCX names only running and biking, so ${generalized.join(', ')} '
+            'is written as Other.',
+        fix: 'Export to FIT, GPX, GeoJSON, or CSV to keep the sport.',
+      );
+    }
+    // The TCX schema's heart rate starts at 1 bpm.
+    final zeroHeartRates =
+        activity
+            .channel(Channel.heartRate)
+            .where((s) => s.value.round() < 1)
+            .length +
+        [
+          for (final lap in activity.laps) ...[
+            lap.avgHeartRate,
+            lap.maxHeartRate,
+          ],
+        ].where((v) => v != null && v.round() < 1).length;
+    if (zeroHeartRates > 0) {
+      add(
+        'heart_rate_zero_dropped',
+        '$zeroHeartRates heart rate value(s) below 1 bpm cannot be '
+            'represented in TCX and are dropped.',
+      );
+    }
+  }
+  if (to == ActivityFileFormat.geojson) {
+    final unwritable = activity.metadata.values
+        .where((value) => !GeojsonEncoder.isJsonValue(value))
+        .length;
+    if (unwritable > 0) {
+      add(
+        'metadata_values_dropped',
+        '$unwritable metadata value(s) are not JSON values and are dropped.',
+        fix: 'Store metadata as strings, numbers, booleans, lists or maps.',
+      );
+    }
+  }
+  // FIT has no value for "a sport the model has no name for"; it is written
+  // as generic, which reads back as unknown.
+  if (to == ActivityFileFormat.fit &&
+      (activity.sport == Sport.other ||
+          activity.laps.any((lap) => lap.sport == Sport.other))) {
+    add(
+      'sport_generalized',
+      'FIT has no sport for "other"; it is written as generic, which reads '
+          'back as unknown.',
+    );
+  }
   // FIT timestamps are seconds (unsigned) since the FIT epoch
   // (1989-12-31); anything earlier has no valid representation and is
   // clamped to the epoch by the encoder.
@@ -288,6 +402,25 @@ List<ParseDiagnostic> _lossyDiagnostics(
       'pre_fit_epoch_timestamps_clamped',
       'Some timestamp(s) predate the FIT epoch (1989-12-31) and were '
           'clamped to it; FIT cannot represent earlier dates.',
+    );
+  }
+  // FIT keeps no file without records as an activity; the encoder writes a
+  // valid file that holds only what is left, and this says so.
+  if (to == ActivityFileFormat.fit &&
+      activity.points.isEmpty &&
+      activity.channels.values.every((samples) => samples.isEmpty)) {
+    diagnostics.add(
+      const ParseDiagnostic(
+        severity: ParseSeverity.error,
+        code: 'fit.export.no_records',
+        message:
+            'The activity has no points or channel samples, so the FIT file '
+            'holds no records.',
+        suggestedFix:
+            'Check the source: an empty or unreadable file parses to an '
+            'empty activity.',
+        priority: 0,
+      ),
     );
   }
   return diagnostics;

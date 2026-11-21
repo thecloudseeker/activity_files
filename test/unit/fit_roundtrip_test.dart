@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -15,7 +17,7 @@ void main() {
 
   RawActivity roundTrip(RawActivity activity) {
     final encoded = ActivityEncoder.encode(activity, ActivityFileFormat.fit);
-    final result = ActivityParser.parseBytes(
+    final result = ParserRouter.parseBytes(
       base64Decode(encoded),
       ActivityFileFormat.fit,
     );
@@ -376,7 +378,7 @@ void main() {
       final bytes = _buildMinimalFitWithEnhancedAltitude(
         rawEnhancedAltitude: 3728, // (245.6 + 500) * 5
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(
         result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -393,7 +395,7 @@ void main() {
       final bytes = _buildMinimalFitWithEnhancedAltitude(
         rawEnhancedAltitude: 0xFFFFFFFF,
       );
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(result.activity.points, hasLength(1));
       expect(result.activity.points.single.elevation, isNull);
@@ -611,7 +613,7 @@ void main() {
         to: ActivityFileFormat.fit,
         useIsolate: false,
       );
-      final reparsed = ActivityParser.parseBytes(
+      final reparsed = ParserRouter.parseBytes(
         converted.asBytes(),
         ActivityFileFormat.fit,
       ).activity;

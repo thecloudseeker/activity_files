@@ -5,7 +5,7 @@
     <desc>Synthetic sample for tests/examples.</desc>
     <time>2024-01-10T07:00:00.000Z</time>
     <extensions>
-      <device>
+      <device xmlns="https://schemas.eikedreier.com/activity_files/v1">
         <manufacturer>Example Labs</manufacturer>
         <product>Synthetic 1</product>
         <serialNumber>SYN-0001</serialNumber>

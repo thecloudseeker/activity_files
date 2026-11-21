@@ -11,6 +11,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/sample_data.dart';
@@ -26,29 +28,6 @@ void main() {
       expect(result.diagnostics, isEmpty);
     });
 
-    test('inferSport applies registered mappers before fallbacks', () {
-      Sport? mapper(dynamic source) {
-        return source is int && source == 42 ? Sport.cycling : null;
-      }
-
-      ActivityFiles.registerSportMapper(mapper);
-      addTearDown(() => ActivityFiles.unregisterSportMapper(mapper));
-      expect(ActivityFiles.inferSport(42), equals(Sport.cycling));
-      expect(ActivityFiles.inferSport('running'), equals(Sport.running));
-    });
-
-    test('inferSport derives sport hints from descriptive labels', () {
-      expect(ActivityFiles.inferSport('Morning Run'), equals(Sport.running));
-      expect(
-        ActivityFiles.inferSport('Lunch Ride 40km'),
-        equals(Sport.cycling),
-      );
-      expect(
-        ActivityFiles.inferSport('Sunset Walk With Dog'),
-        equals(Sport.walking),
-      );
-    });
-
     test('convert returns binary FIT payload', () async {
       final conversion = await ActivityFiles.convert(
         source: sampleGpx,
@@ -58,7 +37,7 @@ void main() {
       expect(conversion.isBinary, isTrue);
       final bytes = conversion.asBytes();
       expect(bytes.length, greaterThan(0));
-      final parsed = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final parsed = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
       expect(parsed.activity.points.length, greaterThan(0));
       final stats = conversion.processingStats;
       expect(stats.normalization, isNotNull);
@@ -211,7 +190,7 @@ void main() {
 
     test('parseStream surfaces format exceptions as diagnostics', () async {
       final stream = Stream<List<int>>.fromIterable([utf8.encode(sampleGpx)]);
-      final result = await ActivityParser.parseStream(
+      final result = await ParserRouter.parseStream(
         stream,
         ActivityFileFormat.gpx,
         useIsolate: false,
@@ -276,41 +255,6 @@ void main() {
       expect(result.activity.points, isNotEmpty);
       expect(result.validation, isNotNull);
       expect(result.asString(), contains('<gpx'));
-    });
-
-    test('import requires allowFilePaths for string paths', () async {
-      final path = 'example/assets/sample.gpx';
-      await expectLater(
-        () => ActivityFiles.import(path, useIsolate: false),
-        throwsArgumentError,
-      );
-      final allowed = await ActivityFiles.import(
-        path,
-        useIsolate: false,
-        allowFilePaths: true,
-      );
-      expect(allowed.activity.points, isNotEmpty);
-      expect(allowed.sourceDescription, equals(path));
-    });
-
-    test('convert requires allowFilePaths for string paths', () async {
-      final path = 'example/assets/sample.gpx';
-      await expectLater(
-        () => ActivityFiles.convert(
-          source: path,
-          to: ActivityFileFormat.fit,
-          useIsolate: false,
-        ),
-        throwsArgumentError,
-      );
-      final conversion = await ActivityFiles.convert(
-        source: path,
-        to: ActivityFileFormat.fit,
-        useIsolate: false,
-        allowFilePaths: true,
-      );
-      expect(conversion.sourceFormat, equals(ActivityFileFormat.gpx));
-      expect(conversion.activity.points, isNotEmpty);
     });
 
     test('convert runs validation by default', () async {
@@ -397,10 +341,7 @@ void main() {
       final headerSize = corrupted[0];
       corrupted[headerSize - 1] ^= 0xFF;
 
-      final result = ActivityParser.parseBytes(
-        corrupted,
-        ActivityFileFormat.fit,
-      );
+      final result = ParserRouter.parseBytes(corrupted, ActivityFileFormat.fit);
 
       expect(
         result.diagnostics.where((d) => d.code == 'fit.header.crc_mismatch'),
@@ -433,8 +374,8 @@ void main() {
         },
         device: device,
         creator: 'withings-exporter',
-        label: 'Morning Run',
-        sportSource: {'category': 'running'},
+        gpxTrackName: 'Morning Run',
+        sport: Sport.running,
         gpxMetadataName: 'Morning Run',
         gpxMetadataDescription: 'Withings export',
         includeCreatorInGpxMetadataDescription: false,
@@ -487,9 +428,9 @@ void main() {
           ],
         },
         laps: [lap],
-        label: 'Lunch Ride',
+        gpxTrackName: 'Lunch Ride',
         creator: 'stream-integration',
-        sportSource: 'cycling',
+        sport: Sport.cycling,
         timestampConverter: decode,
         to: ActivityFileFormat.gpx,
         normalize: true,
@@ -891,10 +832,13 @@ void main() {
       fixDistanceDrift: false,
       fixTimestampGaps: false,
     );
+    // Normalization would remove the point first; with it off, auto-fix
+    // does the trimming it counts.
     Future<ActivityExportResult> export(List<LocationStreamSample> location) =>
         ActivityFiles.buildAndExport(
           location: location,
           to: ActivityFileFormat.gpx,
+          normalize: false,
           autoFix: options,
         );
     Iterable<String> trimmed(ActivityExportResult result) => result.diagnostics

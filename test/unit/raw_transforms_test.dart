@@ -48,7 +48,7 @@ void main() {
 
         expect(
           () => RawTransforms.resample(activity, step: Duration.zero),
-          throwsArgumentError,
+          throwsA(isA<AssertionError>()),
         );
       });
 

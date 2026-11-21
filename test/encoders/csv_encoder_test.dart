@@ -5,6 +5,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -280,7 +282,7 @@ void main() {
         final header = csv.split('\n')[0].split(',');
 
         expect(header.where((h) => h == 'elevation'), hasLength(1));
-        final reparsed = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final reparsed = ParserRouter.parse(csv, ActivityFileFormat.csv);
         expect(reparsed.activity.points.first.elevation, equals(1600.0));
       });
     });
@@ -439,7 +441,7 @@ void main() {
         );
 
         final csv = ActivityEncoder.encode(activity, ActivityFileFormat.csv);
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
         final parsed = result.activity;
 
         expect(parsed.points.length, equals(2));
@@ -458,7 +460,7 @@ void main() {
         );
 
         final csv = ActivityEncoder.encode(activity, ActivityFileFormat.csv);
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
         final parsed = result.activity;
 
         expect(parsed.points[0].latitude, closeTo(40.123, 0.001));

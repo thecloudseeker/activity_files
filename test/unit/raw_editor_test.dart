@@ -572,10 +572,44 @@ void main() {
       }
     });
 
-    test('stops at the lap limit on an implausibly large distance', () {
+    test('skips a distance step faster than 100 m/s', () {
+      // A FIT invalid value read as distance: 42,949 km within a minute.
+      final editor = RawEditor(withDistances([0, 600, 42949672.95, 1200, 2500]))
+        ..markLapsByDistance(1000);
+
+      expect(editor.activity.laps.map((lap) => lap.distanceMeters), [
+        1000,
+        1000,
+        500,
+      ]);
+      expect(
+        editor.repairDiagnostics.map((d) => d.code),
+        contains('repaired.distance_jumps_skipped'),
+      );
+    });
+
+    test('keeps a fast but plausible step', () {
+      // 5,000 m in a minute is 83 m/s, under the ceiling.
+      final editor = RawEditor(withDistances([0, 5000]))
+        ..markLapsByDistance(1000);
+
+      expect(editor.activity.laps, hasLength(5));
+      expect(editor.repairDiagnostics, isEmpty);
+    });
+
+    test('stops at the lap limit on samples sharing a timestamp', () {
       for (final huge in [1e300, 1e308, 4294967.295 * 10]) {
-        final editor = RawEditor(withDistances([0, 600, huge]))
-          ..markLapsByDistance(0.001);
+        final editor = RawEditor(
+          RawActivity(
+            points: [GeoPoint(latitude: 47, longitude: 8, time: start)],
+            channels: {
+              Channel.distance: [
+                Sample(time: start, value: 0),
+                Sample(time: start, value: huge),
+              ],
+            },
+          ),
+        )..markLapsByDistance(0.001);
 
         expect(editor.activity.laps, hasLength(100001), reason: '$huge');
         expect(

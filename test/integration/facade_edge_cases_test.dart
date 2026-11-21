@@ -11,6 +11,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/sample_data.dart';
@@ -321,27 +323,6 @@ void main() {
       expect(activity.gpxTrackExtensions, isEmpty);
     });
 
-    test('registerSportMapper ignores duplicate mappers', () {
-      Sport? mapper(dynamic source) => null;
-      ActivityFiles.registerSportMapper(mapper);
-      ActivityFiles.registerSportMapper(mapper); // Should be ignored
-      addTearDown(ActivityFiles.clearSportMappers);
-
-      final removed = ActivityFiles.unregisterSportMapper(mapper);
-      expect(removed, isTrue);
-
-      final removedAgain = ActivityFiles.unregisterSportMapper(mapper);
-      expect(removedAgain, isFalse); // Already removed
-    });
-
-    test('inferSport uses custom fallback', () {
-      final result = ActivityFiles.inferSport(
-        'unknown sport type',
-        fallback: Sport.other,
-      );
-      expect(result, equals(Sport.other));
-    });
-
     test('export with normalize=false but unsorted data auto-sorts', () {
       final base = DateTime.utc(2024, 12, 10, 12);
       final activity = RawActivity(
@@ -436,9 +417,9 @@ void main() {
             (timestamp: ts + 60000, value: 145),
           ],
         },
-        label: 'Test Activity',
+        gpxTrackName: 'Test Activity',
         creator: 'test-suite',
-        sportSource: Sport.running,
+        sport: Sport.running,
         to: ActivityFileFormat.gpx,
         normalize: true,
         runValidation: true,
@@ -447,22 +428,6 @@ void main() {
       expect(result.activity.sport, equals(Sport.running));
       expect(result.activity.points.length, equals(2));
       expect(result.validation, isNotNull);
-    });
-
-    test('detectFormat with allowFilePaths reads from disk', () async {
-      final format = ActivityFiles.detectFormat(
-        'example/assets/sample.gpx',
-        allowFilePaths: true,
-      );
-      expect(format, equals(ActivityFileFormat.gpx));
-    });
-
-    test('detectFormat without allowFilePaths treats string as content', () {
-      final format = ActivityFiles.detectFormat(
-        'example/assets/sample.gpx',
-        allowFilePaths: false,
-      );
-      expect(format, isNull); // Path string doesn't look like any format
     });
 
     test(
@@ -509,36 +474,26 @@ void main() {
   });
 
   group('Error messages and diagnostics', () {
-    test('format detection error message guides user', () {
+    test('format detection error message guides user', () async {
+      final result = await ActivityFiles.import(
+        'not a valid format',
+        useIsolate: false,
+      );
+      expect(result.format, isNull);
       expect(
-        () => ActivityFiles.import('not a valid format', useIsolate: false),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            contains('specified explicitly'),
-          ),
-        ),
+        _error(result.diagnostics, 'parser.format_undetected').message,
+        contains('Pass `format`'),
       );
     });
 
-    test('format detection error hints about allowFilePaths', () {
+    test('format detection error hints at passing a File', () async {
+      final result = await ActivityFiles.import(
+        'example/assets/sample.gpx',
+        useIsolate: false,
+      );
       expect(
-        () => ActivityFiles.import(
-          'example/assets/sample.gpx',
-          allowFilePaths: false,
-          useIsolate: false,
-        ),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            allOf([
-              contains('specified explicitly'),
-              contains('allowFilePaths'),
-            ]),
-          ),
-        ),
+        _error(result.diagnostics, 'parser.format_undetected').message,
+        contains('pass a File'),
       );
     });
 
@@ -567,26 +522,23 @@ void main() {
       );
     });
 
-    test(
-      'payload limit error message hints at streaming and maxPayloadBytes',
-      () {
-        expect(
-          () =>
-              ActivityFiles.import('x' * (65 * 1024 * 1024), useIsolate: false),
-          throwsA(
-            isA<FormatException>().having(
-              (e) => e.message,
-              'message',
-              allOf([
-                contains('exceeds'),
-                contains('bytes'),
-                contains('maxPayloadBytes'),
-              ]),
-            ),
-          ),
-        );
-      },
-    );
+    test('payload limit error message hints at maxPayloadBytes', () async {
+      final result = await ActivityFiles.import(
+        'x' * 2048,
+        format: ActivityFileFormat.gpx,
+        maxPayloadBytes: 1024,
+        useIsolate: false,
+      );
+      expect(result.format, ActivityFileFormat.gpx);
+      expect(
+        _error(result.diagnostics, 'import.payload.too_large').message,
+        allOf([
+          contains('exceeds'),
+          contains('bytes'),
+          contains('maxPayloadBytes'),
+        ]),
+      );
+    });
 
     test('a file over maxPayloadBytes is refused before it is read', () async {
       if (Platform.isWindows) {
@@ -608,15 +560,14 @@ void main() {
       } on FileSystemException {
         // Expected: the file is unreadable.
       }
-      await expectLater(
-        ActivityFiles.import(file, maxPayloadBytes: 1024, useIsolate: false),
-        throwsA(
-          isA<FormatException>().having(
-            (e) => e.message,
-            'message',
-            contains('exceeds 1024 bytes'),
-          ),
-        ),
+      final result = await ActivityFiles.import(
+        file,
+        maxPayloadBytes: 1024,
+        useIsolate: false,
+      );
+      expect(
+        _error(result.diagnostics, 'import.payload.too_large').message,
+        contains('exceeds 1024 bytes'),
       );
     });
 
@@ -629,15 +580,13 @@ void main() {
         );
         // More than the sniffing window, and the stream never ends.
         controller.add(List.filled(70 * 1024, 0x20));
-        await expectLater(
-          ActivityFiles.import(
-            controller.stream,
-            format: ActivityFileFormat.gpx,
-            maxPayloadBytes: 1024,
-            useIsolate: false,
-          ),
-          throwsA(isA<FormatException>()),
+        final result = await ActivityFiles.import(
+          controller.stream,
+          format: ActivityFileFormat.gpx,
+          maxPayloadBytes: 1024,
+          useIsolate: false,
         );
+        _error(result.diagnostics, 'import.payload.too_large');
         expect(cancelled, isTrue);
       },
     );
@@ -645,24 +594,23 @@ void main() {
     test('parser format exception includes actionable hints', () {
       // Valid GPX with format mismatch: parser detects format errors gracefully
       const gpxContent = '<?xml version="1.0"?><gpx></gpx>';
-      final result = ActivityParser.parse(gpxContent, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpxContent, ActivityFileFormat.gpx);
 
       // Valid GPX should parse (even if empty), diagnostics list is available
       expect(result, isNotNull);
       expect(result.diagnostics, isNotNull);
     });
 
-    test('FIT integrity and payload limit errors have actionable context', () {
-      // Verify error message structure for limit exceeded
+    test('a payload limit error suggests a fix', () async {
+      final result = await ActivityFiles.import(
+        List<int>.filled(2048, 0x20),
+        format: ActivityFileFormat.gpx,
+        maxPayloadBytes: 1024,
+        useIsolate: false,
+      );
       expect(
-        () => ActivityFiles.import('x' * (65 * 1024 * 1024), useIsolate: false),
-        throwsA(
-          isA<FormatException>().having(
-            (e) => e.message,
-            'message',
-            contains('maxPayloadBytes'),
-          ),
-        ),
+        _error(result.diagnostics, 'import.payload.too_large').suggestedFix,
+        contains('maxPayloadBytes'),
       );
     });
 
@@ -683,10 +631,7 @@ void main() {
 </gpx>
 ''';
 
-      final result = ActivityParser.parse(
-        problematicGpx,
-        ActivityFileFormat.gpx,
-      );
+      final result = ParserRouter.parse(problematicGpx, ActivityFileFormat.gpx);
 
       final summary = DiagnosticsFormatter(
         result.diagnostics,
@@ -715,10 +660,7 @@ void main() {
         '</TrainingCenterDatabase>',
       );
 
-      final result = ActivityParser.parseBytes(
-        validTcx,
-        ActivityFileFormat.tcx,
-      );
+      final result = ParserRouter.parseBytes(validTcx, ActivityFileFormat.tcx);
 
       // Well-formed TCX should parse successfully
       expect(result.activity, isNotNull);
@@ -726,3 +668,9 @@ void main() {
     });
   });
 }
+
+/// The error with [code] in [diagnostics]; fails the test when there is none.
+ParseDiagnostic _error(Iterable<ParseDiagnostic> diagnostics, String code) =>
+    diagnostics.singleWhere(
+      (d) => d.severity == ParseSeverity.error && d.code == code,
+    );

@@ -6,6 +6,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -16,7 +18,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0
 2024-01-01T10:00:10Z,40.0005,-105.0005''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -32,7 +34,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,1600
 2024-01-01T10:00:10Z,40.0005,-105.0005,1610''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points[0].elevation, equals(1600));
         expect(result.activity.points[1].elevation, equals(1610));
@@ -43,7 +45,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,140
 2024-01-01T10:00:10Z,40.0005,-105.0005,145''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         final hrChannel = result.activity.channel(Channel.heartRate);
         expect(hrChannel.length, equals(2));
@@ -57,7 +59,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,140,80,200,5.5
 2024-01-01T10:00:10Z,40.0005,-105.0005,145,84,220,6.0''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.channel(Channel.heartRate).length, equals(2));
         expect(result.activity.channel(Channel.cadence).length, equals(2));
@@ -70,7 +72,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,cycling
 2024-01-01T10:00:10Z,40.0005,-105.0005,cycling''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.sport, equals(Sport.cycling));
       });
@@ -82,7 +84,7 @@ void main() {
 40.0,2024-01-01T10:00:00Z,-105.0,140
 40.0005,2024-01-01T10:00:10Z,-105.0005,145''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
         expect(result.activity.points[0].latitude, equals(40.0));
@@ -94,7 +96,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,some_value,140
 2024-01-01T10:00:10Z,40.0005,-105.0005,other_value,145''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
         expect(result.activity.channel(Channel.heartRate).length, equals(2));
@@ -105,7 +107,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,140,
 2024-01-01T10:00:10Z,40.0005,-105.0005,,84''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         final hrChannel = result.activity.channel(Channel.heartRate);
         final cadChannel = result.activity.channel(Channel.cadence);
@@ -118,7 +120,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,140
 2024-01-01T10:00:10Z,40.0005,-105.0005,145''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         // Some CSV implementations may trim whitespace, others may not
         // This test verifies robustness
@@ -130,7 +132,7 @@ void main() {
         const csv = '''timestamp,lat,lng,ele,hr
 2024-01-01T10:00:00Z,40.0,-105.0,1600,140''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points, hasLength(1));
         expect(result.activity.points.first.latitude, equals(40.0));
@@ -144,7 +146,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude,latitude
 2024-01-01T10:00:00Z,40.0,-105.0,41.0''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.first.latitude, equals(41.0));
         expect(
@@ -165,7 +167,7 @@ void main() {
             'timestamp,latitude,longitude,heart_rate,heart_rate\n'
             '2024-01-01T10:00:00Z,40.0,-105.0,100,200\n';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(
           result.activity.channel(Channel.heartRate).single.value,
@@ -188,7 +190,7 @@ void main() {
       test('handles empty CSV file', () {
         const csv = '';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(
           result.diagnostics.where((d) => d.severity == ParseSeverity.error),
@@ -200,7 +202,7 @@ void main() {
       test('handles CSV with header only', () {
         const csv = 'timestamp,latitude,longitude,heart_rate';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points, isEmpty);
       });
@@ -211,7 +213,7 @@ void main() {
 2024-01-01T10:00:10Z,,-105.0005
 2024-01-01T10:00:20Z,40.001,-105.001''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
         expect(
@@ -228,7 +230,7 @@ void main() {
 2024-01-01T10:00:10Z,40.0005,
 2024-01-01T10:00:20Z,40.001,-105.001''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
         expect(
@@ -245,7 +247,7 @@ void main() {
 ,40.0005,-105.0005
 2024-01-01T10:00:20Z,40.001,-105.001''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
         expect(
@@ -260,7 +262,7 @@ void main() {
 
 2024-01-01T10:00:10Z,40.0005,-105.0005,145''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
       });
@@ -275,7 +277,7 @@ void main() {
               '\n'
               'not-a-date,40.001,-105.001';
 
-          final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+          final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
           final diagnostic = result.diagnostics.firstWhere(
             (d) => d.code == 'csv.row.invalid_timestamp',
@@ -289,7 +291,7 @@ void main() {
 2024-01-01T10:00:00Z,40,-105,140
 2024-01-01T10:00:10Z,40.0005,-105.0005,145.5''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points.length, equals(2));
         expect(
@@ -305,7 +307,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0
 2024-01-01T10:00:10Z,40.0005,-105.0005''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points[0].time, isA<DateTime>());
         expect(
@@ -320,7 +322,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude
 2024-01-01T10:00:00+02:00,40.0,-105.0''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.points[0].time.isUtc, isTrue);
       });
@@ -329,7 +331,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude
 2024-01-01T10:00:00,40.0,-105.0''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(
           result.activity.points[0].time,
@@ -343,7 +345,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude,sport
 2024-01-01T10:00:00Z,40.0,-105.0,cycling''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.sport, equals(Sport.cycling));
       });
@@ -352,7 +354,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude,sport
 2024-01-01T10:00:00Z,40.0,-105.0,running''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.sport, equals(Sport.running));
       });
@@ -361,7 +363,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude
 2024-01-01T10:00:00Z,40.0,-105.0''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.sport, equals(Sport.unknown));
       });
@@ -370,7 +372,7 @@ void main() {
         const csv = '''timestamp,latitude,longitude,sport
 2024-01-01T10:00:00Z,40.0,-105.0,unknown_sport''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         expect(result.activity.sport, equals(Sport.unknown));
       });
@@ -382,7 +384,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,21.5
 2024-01-01T10:00:10Z,40.0005,-105.0005,22.0''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         final tempChannel = result.activity.channel(Channel.temperature);
         expect(tempChannel.length, equals(2));
@@ -394,7 +396,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,0
 2024-01-01T10:00:10Z,40.0005,-105.0005,50.5''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         final distChannel = result.activity.channel(Channel.distance);
         expect(distChannel.length, equals(2));
@@ -406,7 +408,7 @@ void main() {
 2024-01-01T10:00:00Z,40.0,-105.0,140
 2024-01-01T10:00:10Z,40.0005,-105.0005,145''';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         final hrChannel = result.activity.channel(Channel.heartRate);
         expect(hrChannel[0].time, equals(result.activity.points[0].time));
@@ -423,7 +425,7 @@ void main() {
             '2024-01-01T10:00:10Z,40.001,Infinity,142\n'
             '2024-01-01T10:00:20Z,40.002,-105.002,-Infinity\n';
 
-        final result = ActivityParser.parse(csv, ActivityFileFormat.csv);
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
 
         for (final point in result.activity.points) {
           expect(point.latitude.isFinite, isTrue);
@@ -441,5 +443,39 @@ void main() {
         );
       });
     });
+  });
+
+  group('Delimiter', () {
+    test('quoted semicolons do not change a comma file\'s delimiter', () {
+      const csv =
+          'timestamp,latitude,longitude,note\n'
+          '2024-01-01T10:00:00Z,46.0,13.0,"a;b;c;d;e"\n'
+          '2024-01-01T10:00:10Z,46.001,13.001,"f;g;h;i;j"\n';
+      final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
+      expect(result.activity.points, hasLength(2));
+      expect(
+        result.diagnostics.map((d) => d.code),
+        isNot(contains('csv.header.delimiter')),
+      );
+    });
+
+    for (final (name, delimiter) in [
+      ('semicolons', ';'),
+      ('tabs', '\t'),
+      ('pipes', '|'),
+    ]) {
+      test('a file separated by $name reads and says so', () {
+        final csv = [
+          ['timestamp', 'latitude', 'longitude'],
+          ['2024-01-01T10:00:00Z', '46.0', '13.0'],
+        ].map((row) => row.join(delimiter)).join('\n');
+        final result = ParserRouter.parse(csv, ActivityFileFormat.csv);
+        expect(result.activity.points, hasLength(1));
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('csv.header.delimiter'),
+        );
+      });
+    }
   });
 }

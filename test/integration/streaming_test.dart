@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/builders.dart';
@@ -21,8 +23,8 @@ void main() {
 
   group('Async parsing', () {
     test('parseAsync mirrors synchronous GPX parser', () async {
-      final sync = ActivityParser.parse(sampleGpx, ActivityFileFormat.gpx);
-      final asyncResult = await ActivityParser.parseAsync(
+      final sync = ParserRouter.parse(sampleGpx, ActivityFileFormat.gpx);
+      final asyncResult = await ParserRouter.parseAsync(
         sampleGpx,
         ActivityFileFormat.gpx,
         useIsolate: false,
@@ -39,7 +41,7 @@ void main() {
         options: encoderOptions,
       );
       final bytes = base64Decode(fitPayload);
-      final result = await ActivityParser.parseBytesAsync(
+      final result = await ParserRouter.parseBytesAsync(
         bytes,
         ActivityFileFormat.fit,
       );
@@ -59,7 +61,7 @@ void main() {
         bytes.sublist(0, bytes.length ~/ 2),
         bytes.sublist(bytes.length ~/ 2),
       ]);
-      final result = await ActivityParser.parseStream(
+      final result = await ParserRouter.parseStream(
         stream,
         ActivityFileFormat.fit,
         useIsolate: false,
@@ -140,43 +142,41 @@ void main() {
 
     for (final format in [ActivityFileFormat.gpx, null]) {
       final label = format == null ? 'detected format' : 'given format';
-      test('import throws FormatException to the caller ($label)', () async {
-        Object? caught;
+      test('import reports the limit as an error ($label)', () async {
+        ActivityImportResult? result;
         final unhandled = await unhandledErrorsOf(() async {
-          try {
-            await ActivityFiles.import(
-              oversized(),
-              format: format,
-              useIsolate: false,
-              maxPayloadBytes: limit,
-            );
-          } catch (error) {
-            caught = error;
-          }
+          result = await ActivityFiles.import(
+            oversized(),
+            format: format,
+            useIsolate: false,
+            maxPayloadBytes: limit,
+          );
         });
 
-        expect(caught, isA<FormatException>());
-        expect('$caught', contains('exceeds $limit bytes'));
+        final error = result!.diagnostics.singleWhere(
+          (d) => d.code == 'import.payload.too_large',
+        );
+        expect(error.severity, ParseSeverity.error);
+        expect(error.message, contains('exceeds $limit bytes'));
         expect(unhandled, isEmpty);
       });
     }
 
-    test('convert throws FormatException to the caller', () async {
-      Object? caught;
+    test('convert reports the limit as an error', () async {
+      ActivityConversionResult? result;
       final unhandled = await unhandledErrorsOf(() async {
-        try {
-          await ActivityFiles.convert(
-            source: oversized(),
-            to: ActivityFileFormat.tcx,
-            useIsolate: false,
-            maxPayloadBytes: limit,
-          );
-        } catch (error) {
-          caught = error;
-        }
+        result = await ActivityFiles.convert(
+          source: oversized(),
+          to: ActivityFileFormat.tcx,
+          useIsolate: false,
+          maxPayloadBytes: limit,
+        );
       });
 
-      expect(caught, isA<FormatException>());
+      expect(
+        result!.diagnostics.map((d) => d.code),
+        contains('import.payload.too_large'),
+      );
       expect(unhandled, isEmpty);
     });
 

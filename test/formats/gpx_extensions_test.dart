@@ -7,6 +7,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 void main() {
@@ -40,7 +42,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
       expect(result.activity.points.length, 1);
 
       final channels = result.activity.channels;
@@ -158,12 +160,12 @@ void main() {
   </trk>
 </gpx>''';
 
-      final parsed = ActivityParser.parse(original, ActivityFileFormat.gpx);
+      final parsed = ParserRouter.parse(original, ActivityFileFormat.gpx);
       final encoded = ActivityEncoder.encode(
         parsed.activity,
         ActivityFileFormat.gpx,
       );
-      final reparsed = ActivityParser.parse(encoded, ActivityFileFormat.gpx);
+      final reparsed = ParserRouter.parse(encoded, ActivityFileFormat.gpx);
 
       expect(
         reparsed.activity.channels[Channel.waterTemperature]?.first.value,
@@ -191,7 +193,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
       expect(
         result.activity.channels[Channel.waterTemperature]?.first.value,
         18,
@@ -260,7 +262,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
       expect(result.activity.points.length, 3);
       expect(result.activity.points.first.latitude, closeTo(47.6062, 0.0001));
@@ -344,7 +346,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
       expect(result.activity.points.length, 3);
 
@@ -399,7 +401,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final parsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final parsed = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
       final encoded = ActivityEncoder.encode(
         parsed.activity,
         ActivityFileFormat.gpx,
@@ -421,7 +423,7 @@ void main() {
       expect(encoded, contains('<gpxtpx:course>'));
 
       // Re-parse to verify data integrity
-      final reparsed = ActivityParser.parse(encoded, ActivityFileFormat.gpx);
+      final reparsed = ParserRouter.parse(encoded, ActivityFileFormat.gpx);
       expect(reparsed.activity.points.length, 1);
       expect(reparsed.activity.channels[Channel.heartRate]?.first.value, 145);
       expect(reparsed.activity.channels[Channel.cadence]?.first.value, 90);
@@ -455,7 +457,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final result = ActivityParser.parse(gpxV1, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpxV1, ActivityFileFormat.gpx);
 
       expect(result.activity.points.length, 1);
 
@@ -521,7 +523,7 @@ void main() {
   </trk>
 </gpx>''';
 
-      final result = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final result = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
 
       expect(result.activity.points.length, 4);
 
@@ -623,7 +625,7 @@ void main() {
       expect(gpx, contains('lon="2.352200"'));
 
       // Parse back to verify data integrity
-      final reparsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final reparsed = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
       expect(reparsed.activity.points.length, 3);
       expect(reparsed.activity.channels[Channel.heartRate]?.length, 3);
       expect(reparsed.activity.channels[Channel.cadence]?.length, 3);

@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:collection/collection.dart';
 import 'package:xml/xml.dart';
+import '../library_namespace.dart';
 import '../models.dart';
 import 'activity_parser.dart';
+import 'library_extensions.dart';
+import 'number_utils.dart';
 import 'parse_result.dart';
 import 'timestamp_utils.dart';
+
+/// The TCX namespaces, which an extension element written without one
+/// inherits.
+const Set<String> _tcxNamespaces = {
+  'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2',
+  'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v1',
+};
 
 /// Parser for the TCX file format.
 ///
@@ -13,6 +22,9 @@ import 'timestamp_utils.dart';
 /// sport-specific laps.
 class TcxParser implements ActivityFormatParser {
   const TcxParser();
+
+  /// TPX trackpoint extension elements read into channels.
+  static const Set<String> _tpxValueElements = {'Speed', 'Watts', 'RunCadence'};
 
   static final _sportCache = <String, Sport>{};
   static const _sportMap = {
@@ -139,9 +151,30 @@ class TcxParser implements ActivityFormatParser {
         droppedActivityMetadata = true;
       }
 
+      // The library writes the device and creator label into the
+      // activity's extensions, since <Creator> cannot hold them all.
+      ActivityDeviceMetadata? extensionDevice;
+      String? extensionCreator;
+      var libraryForm = false;
       for (final child in activityElement.childElements) {
-        if (child.name.local == 'Extensions') {
-          metadataExtensions.addAll(_parseExtensionChildren(child));
+        if (child.name.local != 'Extensions') continue;
+        for (final extension in child.childElements) {
+          if (isLibraryElement(
+            extension,
+            'device',
+            formatNamespaces: _tcxNamespaces,
+          )) {
+            libraryForm = true;
+            extensionDevice ??= readLibraryDevice(extension);
+          } else if (isLibraryElement(extension, 'trackExtensions')) {
+            trackExtensions.addAll(_parseExtensionChildren(extension));
+          } else if (isLibraryElement(extension, 'creator')) {
+            libraryForm = true;
+            final label = extension.innerText.trim();
+            if (label.isNotEmpty) extensionCreator ??= label;
+          } else {
+            metadataExtensions.add(_extensionNodeFromXml(extension));
+          }
         }
       }
 
@@ -151,7 +184,11 @@ class TcxParser implements ActivityFormatParser {
       // label with no device). Each field gets its own "first non-null
       // wins" backfill and distinctness check, gated on that field's own
       // null-ness.
-      final creatorInfo = _extractCreatorInfo(activityElement);
+      // A file in the library's form says everything in its extensions;
+      // its <Creator>, if any, only repeats part of it.
+      final creatorInfo = libraryForm
+          ? (creator: extensionCreator, device: extensionDevice)
+          : _extractCreatorInfo(activityElement);
       if (creator == null) {
         creator = creatorInfo.creator;
       } else if (creatorInfo.creator != null &&
@@ -187,35 +224,64 @@ class TcxParser implements ActivityFormatParser {
             continue;
           }
         }
-        final lapDistanceText = _firstText(lapElement, 'DistanceMeters');
-        final lapDistance = lapDistanceText != null
-            ? double.tryParse(lapDistanceText)
-            : null;
+        // A lap total that is not a finite number is left out with a
+        // warning rather than kept as NaN or Infinity.
+        double? lapNumber(String name, String? text) {
+          if (text == null) return null;
+          final value = parseFiniteDouble(text);
+          if (value == null) {
+            diagnostics.add(
+              ParseDiagnostic(
+                severity: ParseSeverity.warning,
+                code: 'tcx.lap.invalid_number',
+                message: 'Invalid lap $name "$text"; value left out.',
+                node: ParseNodeReference(
+                  path: 'tcx.activities.activity.lap.$name',
+                  description: lapStartAttribute,
+                ),
+              ),
+            );
+          }
+          return value;
+        }
+
+        final lapDistance = lapNumber(
+          'DistanceMeters',
+          _firstText(lapElement, 'DistanceMeters'),
+        );
         // Lap statistics: plain elements plus HR wrappers (<...Bpm><Value>)
         // and LX lap extensions (ActivityExtension/v2).
-        double? lapValueOf(String name) {
-          final text = _firstText(lapElement, name);
-          return text != null ? double.tryParse(text) : null;
-        }
+        double? lapValueOf(String name) =>
+            lapNumber(name, _firstText(lapElement, name));
 
         double? lapHrOf(String name) {
           final node = _firstChild(lapElement, name);
-          final text = node != null ? _firstText(node, 'Value') : null;
-          return text != null ? double.tryParse(text) : null;
+          return lapNumber(
+            name,
+            node != null ? _firstText(node, 'Value') : null,
+          );
         }
 
         double? lapAvgSpeed;
         double? lapAvgWatts;
         double? lapMaxWatts;
         double? lapMaxBikeCadence;
+        // Required elements this library filled with a schema default.
+        final defaulted = <String>{};
         for (final extensions in _childElements(lapElement, 'Extensions')) {
           for (final lx in extensions.childElements) {
+            if (lx.name.local == tcxDefaultedFieldsElement &&
+                lx.name.namespaceUri == libraryNamespace) {
+              defaulted.addAll(lx.innerText.trim().split(RegExp(r'\s+')));
+              continue;
+            }
             if (lx.name.local != 'LX') continue;
-            lapAvgSpeed ??= double.tryParse(_firstText(lx, 'AvgSpeed') ?? '');
-            lapAvgWatts ??= double.tryParse(_firstText(lx, 'AvgWatts') ?? '');
-            lapMaxWatts ??= double.tryParse(_firstText(lx, 'MaxWatts') ?? '');
-            lapMaxBikeCadence ??= double.tryParse(
-              _firstText(lx, 'MaxBikeCadence') ?? '',
+            lapAvgSpeed ??= lapNumber('AvgSpeed', _firstText(lx, 'AvgSpeed'));
+            lapAvgWatts ??= lapNumber('AvgWatts', _firstText(lx, 'AvgWatts'));
+            lapMaxWatts ??= lapNumber('MaxWatts', _firstText(lx, 'MaxWatts'));
+            lapMaxBikeCadence ??= lapNumber(
+              'MaxBikeCadence',
+              _firstText(lx, 'MaxBikeCadence'),
             );
           }
         }
@@ -280,8 +346,8 @@ class TcxParser implements ActivityFormatParser {
             final lonText = position != null
                 ? _firstText(position, 'LongitudeDegrees')
                 : null;
-            final lat = latText != null ? double.tryParse(latText) : null;
-            final lon = lonText != null ? double.tryParse(lonText) : null;
+            final lat = parseFiniteDouble(latText);
+            final lon = parseFiniteDouble(lonText);
             if (lat == null || lon == null) {
               diagnostics.add(
                 ParseDiagnostic(
@@ -297,7 +363,7 @@ class TcxParser implements ActivityFormatParser {
               );
             }
             final altText = _firstText(trackpoint, 'AltitudeMeters');
-            final altitude = altText != null ? double.tryParse(altText) : null;
+            final altitude = parseFiniteDouble(altText);
             if (altText != null && altitude == null) {
               diagnostics.add(
                 ParseDiagnostic(
@@ -326,9 +392,7 @@ class TcxParser implements ActivityFormatParser {
             final hrValueText = hrNode != null
                 ? _firstText(hrNode, 'Value')
                 : null;
-            final hrValue = hrValueText != null
-                ? double.tryParse(hrValueText)
-                : null;
+            final hrValue = parseFiniteDouble(hrValueText);
             if (hrValueText != null && hrValue == null) {
               diagnostics.add(
                 ParseDiagnostic(
@@ -346,9 +410,7 @@ class TcxParser implements ActivityFormatParser {
               allHrSamples.add(Sample(time: time, value: hrValue));
             }
             final cadenceText = _firstText(trackpoint, 'Cadence');
-            final cadenceValue = cadenceText != null
-                ? double.tryParse(cadenceText)
-                : null;
+            final cadenceValue = parseFiniteDouble(cadenceText);
             if (cadenceText != null && cadenceValue == null) {
               diagnostics.add(
                 ParseDiagnostic(
@@ -366,9 +428,7 @@ class TcxParser implements ActivityFormatParser {
               allCadenceSamples.add(Sample(time: time, value: cadenceValue));
             }
             final distanceText = _firstText(trackpoint, 'DistanceMeters');
-            final distanceValue = distanceText != null
-                ? double.tryParse(distanceText)
-                : null;
+            final distanceValue = parseFiniteDouble(distanceText);
             if (distanceText != null && distanceValue == null) {
               diagnostics.add(
                 ParseDiagnostic(
@@ -391,9 +451,27 @@ class TcxParser implements ActivityFormatParser {
               for (final tpx in extensions.childElements) {
                 if (tpx.name.local != 'TPX') continue;
                 for (final child in tpx.childElements) {
-                  final value = double.tryParse(child.innerText.trim());
-                  if (value == null) continue;
-                  switch (child.name.local) {
+                  final name = child.name.local;
+                  if (!_tpxValueElements.contains(name)) continue;
+                  final text = child.innerText.trim();
+                  if (text.isEmpty) continue;
+                  final value = parseFiniteDouble(text);
+                  if (value == null) {
+                    diagnostics.add(
+                      ParseDiagnostic(
+                        severity: ParseSeverity.warning,
+                        code: 'tcx.trackpoint.invalid_extension_value',
+                        message: 'Invalid $name "$text" at $time.',
+                        node: ParseNodeReference(
+                          path:
+                              'tcx.activities.activity.lap.track.trackpoint.extensions.$name',
+                          description: time.toIso8601String(),
+                        ),
+                      ),
+                    );
+                    continue;
+                  }
+                  switch (name) {
                     case 'Speed':
                       allSpeedSamples.add(Sample(time: time, value: value));
                       break;
@@ -431,7 +509,9 @@ class TcxParser implements ActivityFormatParser {
               distanceMeters: lapDistance,
               name: 'Lap ${allLaps.length + 1}',
               sport: activitySport,
-              calories: lapValueOf('Calories'),
+              calories: defaulted.contains('Calories')
+                  ? null
+                  : lapValueOf('Calories'),
               maxSpeed: lapValueOf('MaximumSpeed'),
               avgHeartRate: lapHrOf('AverageHeartRateBpm'),
               maxHeartRate: lapHrOf('MaximumHeartRateBpm'),
@@ -440,8 +520,12 @@ class TcxParser implements ActivityFormatParser {
               avgSpeed: lapAvgSpeed,
               avgPower: lapAvgWatts,
               maxPower: lapMaxWatts,
-              tcxIntensity: _firstText(lapElement, 'Intensity'),
-              tcxTriggerMethod: _firstText(lapElement, 'TriggerMethod'),
+              tcxIntensity: defaulted.contains('Intensity')
+                  ? null
+                  : _firstText(lapElement, 'Intensity'),
+              tcxTriggerMethod: defaulted.contains('TriggerMethod')
+                  ? null
+                  : _firstText(lapElement, 'TriggerMethod'),
             ),
           );
         }

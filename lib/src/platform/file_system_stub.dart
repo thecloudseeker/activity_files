@@ -16,6 +16,11 @@ String? platformFilePath(Object? file) => null;
 /// Stub implementation for platforms without `dart:io`; always returns `null`.
 Future<int?> platformFileLength(Object? file) async => null;
 
+/// Reads the start of [file], or `null` when unsupported.
+///
+/// Stub implementation for platforms without `dart:io`; always returns `null`.
+Future<Uint8List?> readPlatformFileHead(Object? file, int length) async => null;
+
 /// Attempts to read [file] bytes, returning `null` when unsupported.
 ///
 /// Stub implementation for platforms without `dart:io`; always returns `null`.

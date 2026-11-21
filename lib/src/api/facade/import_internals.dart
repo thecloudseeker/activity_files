@@ -4,10 +4,15 @@ part of '../activity_files_facade.dart';
 Future<_ResolvedSource> _resolveSource(
   Object source, {
   required bool allowFilePaths,
-  // Governs how much of a stream may be buffered for replay. Null means the
-  // caller disabled the cap; the facade's own default supplies 64 MiB when
-  // the caller says nothing.
+  // Governs how much of a stream may be buffered for replay. Null means no
+  // hard cap: the caller disabled it, or left the limit soft.
   int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+  // With a soft limit, a file over 64 MB whose format is neither given nor
+  // known from its extension is checked from its start, and refused without
+  // being loaded when it is not an activity file.
+  bool softLimit = false,
+  ActivityFileFormat? format,
+  Encoding encoding = utf8,
 }) async {
   if (source is _ResolvedSource) {
     return source;
@@ -66,64 +71,102 @@ Future<_ResolvedSource> _resolveSource(
       description: 'bytes',
     );
   }
-  // A file is measured before it is read, so an oversized one is refused
-  // without loading it.
-  final fileLength = await file_system.platformFileLength(source);
-  if (maxPayloadBytes != null &&
-      fileLength != null &&
-      fileLength > maxPayloadBytes) {
-    throw _payloadTooLarge(maxPayloadBytes);
-  }
-  final fileRead = await file_system.readPlatformFile(source);
-  if (fileRead != null) {
-    return _ResolvedSource(
-      payload: fileRead.bytes,
-      description: fileRead.path,
-      fileExtension: _extensionForPath(fileRead.path),
-    );
+  final filePath = file_system.platformFilePath(source);
+  if (filePath != null) {
+    // A file is measured before it is read, so an oversized one is refused
+    // without loading it.
+    final extension = _extensionForPath(filePath);
+    try {
+      final fileLength = await file_system.platformFileLength(source);
+      if (maxPayloadBytes != null &&
+          fileLength != null &&
+          fileLength > maxPayloadBytes) {
+        throw _payloadTooLarge(maxPayloadBytes);
+      }
+      if (softLimit &&
+          fileLength != null &&
+          fileLength > _defaultStreamBufferLimitBytes &&
+          format == null &&
+          _detectFromExtension(extension) == null) {
+        final head = await file_system.readPlatformFileHead(
+          source,
+          _maxFormatDetectBytes,
+        );
+        if (head == null ||
+            _detectFromPayload(head, encoding: encoding) == null) {
+          throw _ImportFailure.undetected(filePath);
+        }
+      }
+      final fileRead = await file_system.readPlatformFile(source);
+      if (fileRead != null) {
+        return _ResolvedSource(
+          payload: fileRead.bytes,
+          description: fileRead.path,
+          fileExtension: extension,
+        );
+      }
+    } on _ImportFailure {
+      rethrow;
+    } on _PayloadLimitException {
+      rethrow;
+    } on Exception catch (error) {
+      throw _ImportFailure.unreadable(
+        filePath,
+        error,
+        format: format ?? _detectFromExtension(extension),
+      );
+    }
   }
   if (source is String) {
     if (allowFilePaths && file_system.platformPathExists(source)) {
-      if (maxPayloadBytes != null &&
-          await file_system.platformPathLength(source) > maxPayloadBytes) {
-        throw _payloadTooLarge(maxPayloadBytes);
+      final extension = _extensionForPath(source);
+      try {
+        if (maxPayloadBytes != null &&
+            await file_system.platformPathLength(source) > maxPayloadBytes) {
+          throw _payloadTooLarge(maxPayloadBytes);
+        }
+        final bytes = await file_system.readPlatformPath(source);
+        return _ResolvedSource(
+          payload: bytes,
+          description: source,
+          fileExtension: extension,
+        );
+      } on _PayloadLimitException {
+        rethrow;
+      } on Exception catch (error) {
+        throw _ImportFailure.unreadable(
+          source,
+          error,
+          format: format ?? _detectFromExtension(extension),
+        );
       }
-      final bytes = await file_system.readPlatformPath(source);
-      return _ResolvedSource(
-        payload: bytes,
-        description: source,
-        fileExtension: _extensionForPath(source),
-      );
     }
     return _ResolvedSource(payload: source, description: 'inline');
   }
-  throw ArgumentError(
-    'Unsupported source type: ${source.runtimeType}.\n'
-    '\n'
-    'Supported input types:\n'
-    '  • String: inline text content or filesystem path (with allowFilePaths: true)\n'
-    '  • File: dart:io File instance\n'
-    '  • List<int> or Uint8List: raw binary data\n'
-    '  • Stream<List<int>>: chunked/streaming data\n'
-    '\n'
-    'For filesystem paths passed as String, enable: import(source, allowFilePaths: true)\n'
-    '\n'
-    'Received: ${source.runtimeType}',
+  throw _ImportFailure(
+    code: 'import.source.unsupported',
+    format: format,
+    description: source.runtimeType.toString(),
+    message:
+        'Unsupported source type: ${source.runtimeType}.\n'
+        '\n'
+        'Supported input types:\n'
+        '  • String: inline text content or filesystem path (with allowFilePaths: true)\n'
+        '  • File: dart:io File instance\n'
+        '  • List<int> or Uint8List: raw binary data\n'
+        '  • Stream<List<int>>: chunked/streaming data\n'
+        '\n'
+        'For filesystem paths passed as String, enable: import(source, allowFilePaths: true)\n'
+        '\n'
+        'Received: ${source.runtimeType}',
   );
 }
 
+/// Detection reads only the start of a payload, so no size limit applies.
 ActivityFileFormat? _detectFormat(
   _ResolvedSource resolved, {
   required Encoding encoding,
-  int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
 }) {
-  if (maxPayloadBytes != null) {
-    _enforcePayloadLimit(
-      resolved.detectionBytes ?? resolved.payload,
-      encoding: encoding,
-      limit: maxPayloadBytes,
-    );
-  }
   final detectedFromExt = _detectFromExtension(resolved.fileExtension);
   if (detectedFromExt != null) {
     return detectedFromExt;
@@ -142,9 +185,9 @@ ActivityParseResult _parseSync(
   Encoding encoding,
 ) {
   return switch (payload) {
-    String text => ActivityParser.parse(text, format),
+    String text => ParserRouter.parse(text, format),
     Uint8List bytes => _parseBytesWithBom(bytes, format, encoding),
-    List<int> bytes => ActivityParser.parseBytes(
+    List<int> bytes => ParserRouter.parseBytes(
       bytes,
       format,
       encoding: encoding,
@@ -155,7 +198,7 @@ ActivityParseResult _parseSync(
       'Expected: String or List<int> (bytes)\n'
       '\n'
       'If using a Stream, parse with parseStream() instead:\n'
-      '  ActivityParser.parseStream(stream, format)\n'
+      '  ParserRouter.parseStream(stream, format)\n'
       '\n'
       'Received type: ${payload.runtimeType}',
     ),
@@ -174,7 +217,7 @@ Future<ActivityParseResult> _parseResolved(
     return await _parseBytesIsolated(bytes, format, encoding, useIsolate);
   }
   if (payload is Stream<List<int>>) {
-    return await ActivityParser.parseStream(
+    return await ParserRouter.parseStream(
       payload,
       format,
       useIsolate: useIsolate,
@@ -213,23 +256,7 @@ Future<ActivityParseResult> _parseBytesIsolated(
 ActivityParseResult _failedParseResult({
   required ActivityFileFormat format,
   required FormatException error,
-}) {
-  final formatName = format.name.toUpperCase();
-  final trimmed = error.message.trim();
-  final message = trimmed.isEmpty ? error.toString() : trimmed;
-  return ActivityParseResult(
-    activity: RawActivity(),
-    diagnostics: <ParseDiagnostic>[
-      ParseDiagnostic(
-        severity: ParseSeverity.error,
-        code: 'parser.format_exception',
-        message:
-            'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`import(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
-        node: ParseNodeReference(path: '${format.name}.document'),
-      ),
-    ],
-  );
-}
+}) => formatExceptionResult(format, error);
 
 Future<({Object payload, bool unavailable})> _materializePayload(
   Object payload, {
@@ -252,24 +279,9 @@ ActivityFileFormat? _detectFormatSync(
   Object source, {
   required Encoding encoding,
   required bool allowFilePaths,
-  int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
 }) {
   if (source is _ResolvedSource) {
-    if (maxPayloadBytes != null) {
-      _enforcePayloadLimit(
-        source.detectionBytes ?? source.payload,
-        encoding: encoding,
-        limit: maxPayloadBytes,
-      );
-    }
-    return _detectFormat(
-      source,
-      encoding: encoding,
-      maxPayloadBytes: maxPayloadBytes,
-    );
-  }
-  if (maxPayloadBytes != null) {
-    _enforcePayloadLimit(source, encoding: encoding, limit: maxPayloadBytes);
+    return _detectFormat(source, encoding: encoding);
   }
   final filePath = file_system.platformFilePath(source);
   if (filePath != null) {
@@ -315,14 +327,9 @@ ActivityFileFormat? _detectFromPayload(
   final bytes = sniffed.bytes;
   final bomDecoder = _decoderForBom(bytes);
   if (bomDecoder != null) {
-    final decoded = bomDecoder(bytes);
-    final detectedFromBom = _detectFromText(
-      decoded,
-      allowPartial: sniffed.truncated,
-    );
-    if (detectedFromBom != null) {
-      return detectedFromBom;
-    }
+    // A text byte-order mark rules out FIT, whose first byte is its header
+    // size (12 or 14): what the text does not reveal stays undetected.
+    return _detectFromText(bomDecoder(bytes), allowPartial: sniffed.truncated);
   }
   if (_looksBinary(bytes)) {
     return ActivityFileFormat.fit;
@@ -563,10 +570,10 @@ ActivityParseResult _parseBytesWithBom(
     final bomDecoder = _decoderForBom(bytes);
     if (bomDecoder != null) {
       final decoded = bomDecoder(bytes);
-      return ActivityParser.parse(decoded, format);
+      return ParserRouter.parse(decoded, format);
     }
   }
-  return ActivityParser.parseBytes(bytes, format, encoding: encoding);
+  return ParserRouter.parseBytes(bytes, format, encoding: encoding);
 }
 
 bool _shouldFailFitIntegrity(
@@ -590,11 +597,13 @@ bool _resolveStrictFitHandling({
     // ignore: deprecated_member_use_from_same_package
     strictFitIntegrity || fitCorruptionHandling == FitCorruptionHandling.strict;
 
-FormatException _fitIntegrityFailure(Iterable<ParseDiagnostic> diagnostics) {
+_FitIntegrityException _fitIntegrityFailure(
+  Iterable<ParseDiagnostic> diagnostics,
+) {
   final diagnosticInfo = diagnostics.isEmpty
       ? ''
       : '\nDiagnostics: ${diagnostics.map((d) => "${d.code} (${d.severity.name})").join(", ")}\n';
-  return FormatException(
+  return _FitIntegrityException(
     'FIT integrity check failed. The file may be corrupted or incomplete.$diagnosticInfo'
     '\n'
     'Troubleshooting steps:\n'
@@ -630,6 +639,99 @@ class _ResolvedSource {
 class _PayloadLimitException extends FormatException {
   const _PayloadLimitException(super.message);
 }
+
+/// The one failure [ActivityFiles.import] still throws: the caller asked
+/// for it with `strictFitIntegrity`.
+class _FitIntegrityException extends FormatException {
+  const _FitIntegrityException(super.message);
+}
+
+/// A source `import` cannot read, turned into an error diagnostic at the
+/// import boundary instead of an exception.
+class _ImportFailure implements Exception {
+  const _ImportFailure({
+    required this.code,
+    required this.message,
+    required this.description,
+    this.format,
+  });
+
+  _ImportFailure.undetected(String description, {bool inline = false})
+    : this(
+        code: 'parser.format_undetected',
+        description: description,
+        message:
+            'The format of $description could not be detected: it has no '
+            'known extension (.gpx, .tcx, .fit, .csv, .geojson) and its '
+            'content is not GPX, TCX, FIT, CSV or GeoJSON. Pass `format` if '
+            'you know it.'
+            '${inline ? ' A String is read as content; pass a File for a path.' : ''}',
+      );
+
+  _ImportFailure.unreadable(
+    String path,
+    Object error, {
+    ActivityFileFormat? format,
+  }) : this(
+         code: 'import.source.unreadable',
+         description: path,
+         format: format,
+         message: 'Could not read $path: $error',
+       );
+
+  final String code;
+  final String message;
+  final String description;
+  final ActivityFileFormat? format;
+}
+
+/// A short description of [source] for a failure result.
+String _describeSource(Object source) =>
+    file_system.platformFilePath(source) ??
+    switch (source) {
+      Stream<List<int>>() => 'stream',
+      List<int>() => 'bytes',
+      String() => 'inline',
+      _ => source.runtimeType.toString(),
+    };
+
+/// The format a file's extension names, when [source] is a file.
+ActivityFileFormat? _formatFromSourcePath(Object source) {
+  final path = file_system.platformFilePath(source);
+  return path == null ? null : _detectFromExtension(_extensionForPath(path));
+}
+
+/// A lower bound of [payload]'s size in bytes; a string counts one byte per
+/// code unit, which no encoding undercuts.
+int _payloadSizeAtLeast(Object payload) => switch (payload) {
+  List<int> bytes => bytes.length,
+  String text => text.length,
+  _ => 0,
+};
+
+/// The result `import` returns for a source it could not read: an empty
+/// activity and one error.
+ActivityImportResult _failedImport({
+  required String code,
+  required String message,
+  required String description,
+  required ActivityFileFormat? format,
+  String? suggestedFix,
+}) => ActivityImportResult._(
+  activity: RawActivity(),
+  diagnostics: [
+    ParseDiagnostic(
+      severity: ParseSeverity.error,
+      code: code,
+      message: message,
+      suggestedFix: suggestedFix,
+      priority: 0,
+    ),
+  ],
+  format: format,
+  sourceDescription: description,
+  payload: Uint8List(0),
+);
 
 class _ReplayableStreamPayload extends Stream<List<int>> {
   _ReplayableStreamPayload(Stream<List<int>> source, {this.bufferLimit})
@@ -771,6 +873,6 @@ void _enforcePayloadLimit(
   if (sizeBytes > limit) throw _payloadTooLarge(limit);
 }
 
-FormatException _payloadTooLarge(int limit) => FormatException(
+_PayloadLimitException _payloadTooLarge(int limit) => _PayloadLimitException(
   'Payload exceeds $limit bytes. Hint: raise `maxPayloadBytes` on `import`/`convert`, or pass `null` to disable the limit if you fully trust the input size.',
 );

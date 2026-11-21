@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: BSD-3-Clause
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 /// GPX round-trip coverage for waypoints, routes, per-point GPS attributes,
 /// and multi-segment tracks.
 void main() {
   RawActivity roundTrip(String gpx) {
-    final activity = ActivityParser.parse(gpx, ActivityFileFormat.gpx).activity;
+    final activity = ParserRouter.parse(gpx, ActivityFileFormat.gpx).activity;
     final encoded = ActivityEncoder.encode(activity, ActivityFileFormat.gpx);
-    return ActivityParser.parse(encoded, ActivityFileFormat.gpx).activity;
+    return ParserRouter.parse(encoded, ActivityFileFormat.gpx).activity;
   }
 
   group('GPX lossless round-trip', () {
@@ -94,10 +96,7 @@ void main() {
     </trkseg>
   </trk>
 </gpx>''';
-      final activity = ActivityParser.parse(
-        gpx,
-        ActivityFileFormat.gpx,
-      ).activity;
+      final activity = ParserRouter.parse(gpx, ActivityFileFormat.gpx).activity;
       expect(activity.points, hasLength(4));
       expect(activity.gpxTrackSegments, [0, 2]);
 
@@ -107,7 +106,7 @@ void main() {
         2,
         reason: 'two segments must round-trip to two <trkseg> elements',
       );
-      final reparsed = ActivityParser.parse(
+      final reparsed = ParserRouter.parse(
         encoded,
         ActivityFileFormat.gpx,
       ).activity;

@@ -58,7 +58,7 @@ Add the package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  activity_files: ^0.8.5
+  activity_files: ^0.9.0
 ```
 
 Then install dependencies:
@@ -137,13 +137,15 @@ option, the exit codes, and the JSON output for scripts.
 
 ## Working with large or malformed files
 
-- Parsing/export never throw on malformed input; check `hasErrors` and
-  `diagnosticsSummary()` on the result (see
-  [error handling](doc/usage_guide.md#error-handling)).
-- Inline payloads/streams are capped at 64MB
-  (`ActivityFiles.defaultMaxPayloadBytes`); use `useIsolate`/`exportInIsolate`
-  and the streaming APIs for bigger files (see
-  [async export & streaming](doc/usage_guide.md#async-export--streaming)).
+- Import, conversion and export never throw because of their input: a
+  missing file, an unknown format or a malformed value comes back as a
+  diagnostic. Check `hasErrors` and `diagnosticsSummary()` on the result (see
+  [error handling](doc/usage_guide.md#error-handling)). A call with impossible
+  arguments stops at an `assert` during development and changes nothing in a
+  release build (see
+  [impossible arguments](doc/usage_guide.md#impossible-arguments)).
+- Sources over 64 MB are read with a warning; pass `maxPayloadBytes` for a
+  hard cap (see [payload limits](doc/usage_guide.md#payload-limits)).
 - GPX multi-track inputs are flattened when exported to single-track formats
   (no points lost); TCX multi-activity inputs are merged on parse instead,
   with per-lap sport preserved. See

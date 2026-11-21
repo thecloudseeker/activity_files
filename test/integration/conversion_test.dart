@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../fixtures/builders.dart';
@@ -31,7 +33,7 @@ void main() {
       expect(result.isBinary, isFalse);
       expect(result.asString(), contains('timestamp,latitude,longitude'));
 
-      final reparsed = ActivityParser.parse(
+      final reparsed = ParserRouter.parse(
         result.asString(),
         ActivityFileFormat.csv,
       );
@@ -59,7 +61,7 @@ void main() {
       expect(result.isBinary, isFalse);
       expect(result.asString(), contains('"FeatureCollection"'));
 
-      final reparsed = ActivityParser.parse(
+      final reparsed = ParserRouter.parse(
         result.asString(),
         ActivityFileFormat.geojson,
       );
@@ -71,7 +73,7 @@ void main() {
     });
 
     test('GPX → Raw → TCX preserves HR and cadence', () {
-      final gpxResult = ActivityParser.parse(sampleGpx, ActivityFileFormat.gpx);
+      final gpxResult = ParserRouter.parse(sampleGpx, ActivityFileFormat.gpx);
       expect(gpxResult.warningDiagnostics, isEmpty);
       final activity = gpxResult.activity;
 
@@ -81,7 +83,7 @@ void main() {
         options: encoderOptions,
       );
 
-      final tcxResult = ActivityParser.parse(tcxString, ActivityFileFormat.tcx);
+      final tcxResult = ParserRouter.parse(tcxString, ActivityFileFormat.tcx);
       expect(tcxResult.warningDiagnostics, isEmpty);
 
       final tolerance = encoderOptions.defaultMaxDelta;
@@ -99,7 +101,7 @@ void main() {
     });
 
     test('TCX → Raw → GPX preserves HR and cadence extensions', () {
-      final tcxResult = ActivityParser.parse(sampleTcx, ActivityFileFormat.tcx);
+      final tcxResult = ParserRouter.parse(sampleTcx, ActivityFileFormat.tcx);
       expect(tcxResult.warningDiagnostics, isEmpty);
 
       final gpx = ActivityEncoder.encode(
@@ -108,7 +110,7 @@ void main() {
         options: encoderOptions,
       );
 
-      final gpxResult = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+      final gpxResult = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
       expect(gpxResult.warningDiagnostics, isEmpty);
 
       final originalHr = tcxResult.activity.channel(Channel.heartRate);
@@ -136,7 +138,7 @@ void main() {
       );
       expect(fitString, isNotEmpty);
 
-      final parsed = ActivityParser.parse(fitString, ActivityFileFormat.fit);
+      final parsed = ParserRouter.parse(fitString, ActivityFileFormat.fit);
       expect(parsed.warningDiagnostics, isEmpty);
       expect(parsed.activity.points.length, activity.points.length);
       expect(
@@ -182,7 +184,7 @@ void main() {
         options: encoderOptions,
       );
 
-      final parsed = ActivityParser.parse(fitString, ActivityFileFormat.fit);
+      final parsed = ParserRouter.parse(fitString, ActivityFileFormat.fit);
 
       expect(parsed.activity.points, isEmpty);
       final parsedHr = parsed.activity.channel(Channel.heartRate);
@@ -224,10 +226,7 @@ void main() {
       final tampered = Uint8List.fromList(fitBytes);
       tampered[tampered.length - 1] ^= 0xFF;
 
-      final result = ActivityParser.parseBytes(
-        tampered,
-        ActivityFileFormat.fit,
-      );
+      final result = ParserRouter.parseBytes(tampered, ActivityFileFormat.fit);
 
       expect(
         result.diagnostics.where(
@@ -246,10 +245,7 @@ void main() {
         fitBytes.sublist(0, fitBytes.length - 2),
       );
 
-      final result = ActivityParser.parseBytes(
-        truncated,
-        ActivityFileFormat.fit,
-      );
+      final result = ParserRouter.parseBytes(truncated, ActivityFileFormat.fit);
 
       expect(
         result.diagnostics.where(
@@ -266,7 +262,7 @@ void main() {
         ActivityFileFormat.fit,
         options: encoderOptions,
       );
-      final parsed = ActivityParser.parse(firstFit, ActivityFileFormat.fit);
+      final parsed = ParserRouter.parse(firstFit, ActivityFileFormat.fit);
       expect(parsed.warningDiagnostics, isEmpty);
 
       final secondFit = ActivityEncoder.encode(
@@ -279,13 +275,13 @@ void main() {
       // re-encode carries as a device_info message — so the stable fixed
       // point is reached from the second encode onward.
       final thirdFit = ActivityEncoder.encode(
-        ActivityParser.parse(secondFit, ActivityFileFormat.fit).activity,
+        ParserRouter.parse(secondFit, ActivityFileFormat.fit).activity,
         ActivityFileFormat.fit,
         options: encoderOptions,
       );
       expect(base64Decode(thirdFit), equals(base64Decode(secondFit)));
 
-      final secondParsed = ActivityParser.parse(
+      final secondParsed = ParserRouter.parse(
         secondFit,
         ActivityFileFormat.fit,
       ).activity;
@@ -305,16 +301,13 @@ void main() {
     });
 
     test('GPX round-trip retains point count and timestamps', () {
-      final parseResult = ActivityParser.parse(
-        sampleGpx,
-        ActivityFileFormat.gpx,
-      );
+      final parseResult = ParserRouter.parse(sampleGpx, ActivityFileFormat.gpx);
       final encoded = ActivityEncoder.encode(
         parseResult.activity,
         ActivityFileFormat.gpx,
         options: encoderOptions,
       );
-      final roundTrip = ActivityParser.parse(encoded, ActivityFileFormat.gpx);
+      final roundTrip = ParserRouter.parse(encoded, ActivityFileFormat.gpx);
 
       final originalTimes = parseResult.activity.points
           .map((p) => p.time)
@@ -326,7 +319,7 @@ void main() {
 
     test('FIT compressed headers parsed from raw bytes', () {
       final bytes = _buildCompressedFitSample();
-      final result = ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      final result = ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
       expect(result.warningDiagnostics, isEmpty);
 

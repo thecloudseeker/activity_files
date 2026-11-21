@@ -30,7 +30,6 @@ const _exports = <String, String>{
   'validateChannels': '$_noCommandYet: channel checks',
   // Lower-level ways to read and write; every command reads and writes
   // through the same parsers and encoders.
-  'ActivityParser': 'inspect --input',
   'FitParser': 'inspect --input',
   'ActivityEncoder': 'convert --to',
   'DiagnosticsFormatter': 'validate',
@@ -87,10 +86,8 @@ const _noCommandYet = 'no command yet';
 
 const _isolates = 'excluded: isolate setting';
 const _building = 'excluded: builds activities in code';
-const _sportMapping = 'excluded: sport-mapper callbacks (decision 27)';
 const _callerDiagnostics =
     'excluded: a caller passing its own diagnostics through';
-const _filePaths = 'excluded: the command line always reads paths as files';
 const _optionsHelper = 'excluded: a helper on the options object';
 
 /// Every public member of the `members` classes, as `Class.member` or
@@ -101,7 +98,6 @@ const _members = <String, String>{
   'ActivityFiles.import.format': 'inspect --from',
   'ActivityFiles.import.useIsolate': _isolates,
   'ActivityFiles.import.encoding': 'inspect --encoding',
-  'ActivityFiles.import.allowFilePaths': _filePaths,
   'ActivityFiles.import.strictFitIntegrity': 'inspect --strict-fit',
   'ActivityFiles.import.maxPayloadBytes': 'inspect --max-payload-bytes',
   'ActivityFiles.importBatch': 'inspect --input',
@@ -112,8 +108,6 @@ const _members = <String, String>{
   'ActivityFiles.importBatch.maxPayloadBytes': 'inspect --max-payload-bytes',
   'ActivityFiles.detectFormat': 'inspect --input',
   'ActivityFiles.detectFormat.encoding': 'inspect --encoding',
-  'ActivityFiles.detectFormat.allowFilePaths': _filePaths,
-  'ActivityFiles.detectFormat.maxPayloadBytes': 'inspect --max-payload-bytes',
   'ActivityFiles.convert': 'convert --input',
   'ActivityFiles.convert.source': 'convert --input',
   'ActivityFiles.convert.to': 'convert --to',
@@ -122,7 +116,6 @@ const _members = <String, String>{
   'ActivityFiles.convert.normalize': 'convert --normalize',
   'ActivityFiles.convert.useIsolate': _isolates,
   'ActivityFiles.convert.encoding': 'convert --encoding',
-  'ActivityFiles.convert.allowFilePaths': _filePaths,
   'ActivityFiles.convert.exportInIsolate': _isolates,
   'ActivityFiles.convert.runValidation': 'convert --validate',
   'ActivityFiles.convert.strictFitIntegrity': 'convert --strict-fit',
@@ -158,10 +151,6 @@ const _members = <String, String>{
   'ActivityFiles.channelSamplesFrom': _building,
   'ActivityFiles.channelSnapshot':
       'excluded: channel lookups for code (channelSnapshot)',
-  'ActivityFiles.inferSport': _sportMapping,
-  'ActivityFiles.registerSportMapper': _sportMapping,
-  'ActivityFiles.unregisterSportMapper': _sportMapping,
-  'ActivityFiles.clearSportMappers': _sportMapping,
   // RawEditor
   'RawEditor.RawEditor': 'edit --input',
   'RawEditor.activity': 'edit --input',

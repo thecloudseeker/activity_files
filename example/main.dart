@@ -162,7 +162,7 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
     return;
   }
   print(
-    'Loaded ${loaded.format.name}: '
+    'Loaded ${loaded.format?.name}: '
     '${loaded.activity.points.length} points, '
     '${loaded.activity.channels.length} channel(s)',
   );
@@ -256,23 +256,12 @@ Future<void> _demoLoadAndConvert(Uint8List sampleBytes) async {
 Future<void> _demoFilePathHandling(File sampleFile) async {
   print('=== File path handling ===');
 
-  // Option 1: Pass File object directly (recommended)
+  // A path is passed as a File; a String is always the file's content.
   final viaFileObject = await ActivityFiles.import(
     sampleFile,
     useIsolate: supportsIsolates,
   );
   print('Via File object: ${viaFileObject.activity.points.length} points');
-
-  // Option 2: Use allowFilePaths flag with string path
-  final viaStringPath = await ActivityFiles.import(
-    sampleFile.path,
-    allowFilePaths: true,
-    useIsolate: supportsIsolates,
-  );
-  print('Via string path: ${viaStringPath.activity.points.length} points');
-
-  // Note: Without allowFilePaths, string is treated as inline content:
-  // await ActivityFiles.import('/path/to/file.gpx'); // Would fail!
 }
 
 Future<void> _buildAndExportSyntheticActivity() async {
@@ -354,9 +343,9 @@ Future<void> _exportFromRawStreams() async {
         (timestamp: ts0 + 1000, value: 141),
       ],
     },
-    label: 'Stream Demo',
+    gpxTrackName: 'Stream Demo',
     creator: 'example-main.dart',
-    sportSource: 'running',
+    sport: Sport.running,
     device: device,
     gpxMetadataDescription: 'Stream helper export',
     includeCreatorInGpxMetadataDescription: false,

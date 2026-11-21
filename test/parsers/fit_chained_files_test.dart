@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 /// Coverage for chained FIT files: several complete FIT files (header, data,
@@ -33,7 +35,7 @@ void main() {
   final second = fitBytes(segmentActivity(DateTime.utc(2024, 5, 1, 9)));
 
   ActivityParseResult parse(List<int> bytes) =>
-      ActivityParser.parseBytes(bytes, ActivityFileFormat.fit);
+      ParserRouter.parseBytes(bytes, ActivityFileFormat.fit);
 
   Iterable<String> codes(ActivityParseResult result) =>
       result.diagnostics.map((d) => d.code);

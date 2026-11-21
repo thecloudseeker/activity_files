@@ -178,6 +178,14 @@ class RawEditor {
   ///
   /// Repair diagnostics for both repairs are appended to [repairDiagnostics].
   RawEditor trimInvalid() {
+    _trimInvalidGps();
+    _trimChannelDrift();
+    return this;
+  }
+
+  /// The GPS half of [trimInvalid]: drops invalid and Null Island points
+  /// and clears sentinel elevations.
+  void _trimInvalidGps() {
     var allValid = true;
     var sentinelCoordCount = 0;
     var sentinelElevationCount = 0;
@@ -238,10 +246,13 @@ class RawEditor {
         ),
       );
     }
-    final retainedPoints = allValid
-        ? _activity
-              .points // No invalid points, no copy needed
-        : validPoints;
+    if (!allValid) _activity = _activity.copyWith(points: validPoints);
+  }
+
+  /// The channel half of [trimInvalid]: cuts channel samples and laps to the
+  /// time the points cover. A sensor-only activity keeps them all.
+  void _trimChannelDrift() {
+    final retainedPoints = _activity.points;
     final start = retainedPoints.isNotEmpty ? retainedPoints.first.time : null;
     final end = retainedPoints.isNotEmpty ? retainedPoints.last.time : null;
     final trimmedChannels = _activity.channels.map((channel, samples) {
@@ -282,9 +293,25 @@ class RawEditor {
           .toList();
     }
     _activity = _activity.copyWith(
-      points: retainedPoints,
       channels: trimmedChannels,
       laps: trimmedLaps,
+    );
+  }
+
+  /// Rejects a call whose arguments cannot mean anything: an assertion
+  /// stops it during development and in tests, and in a release build,
+  /// where assertions are off, the activity stays unchanged and
+  /// [repairDiagnostics] gets a `call.invalid_argument` error.
+  RawEditor _rejectArguments(String call, String problem) {
+    assert(false, '$call was called with $problem.');
+    _repairDiagnostics.add(
+      ValidationDiagnostic(
+        severity: ValidationSeverity.error,
+        code: 'call.invalid_argument',
+        message: '$call was called with $problem; nothing was changed.',
+        suggestedFix: 'Check the arguments before the call.',
+        priority: 0,
+      ),
     );
     return this;
   }
@@ -295,7 +322,10 @@ class RawEditor {
   /// mismatches if the activity contains laps.
   RawEditor crop(DateTime start, DateTime end) {
     if (end.isBefore(start)) {
-      throw ArgumentError.value(end, 'end', 'must be after start');
+      return _rejectArguments(
+        'crop',
+        'an end ($end) before its start ($start)',
+      );
     }
     final startUtc = start.toUtc();
     final endUtc = end.toUtc();
@@ -449,7 +479,7 @@ class RawEditor {
     // time that still falls between the same neighbors leaves the list
     // sorted. Every other sort site in this file guards the same way.
     if (time != null && !_isSortedByTime(points)) {
-      mergeSort(points, compare: (a, b) => a.time.compareTo(b.time));
+      stableSort(points, (a, b) => a.time.compareTo(b.time));
     }
     _activity = _activity.copyWith(points: points);
     return this;
@@ -479,10 +509,13 @@ class RawEditor {
   /// (inclusive), adjusts lap/set/length boundaries accordingly, and drops
   /// any event falling in that window.
   ///
-  /// Throws [ArgumentError] if [to] is before [from].
+  /// A [to] before [from] is rejected (see [_rejectArguments]).
   RawEditor deleteRange(DateTime from, DateTime to) {
     if (to.isBefore(from)) {
-      throw ArgumentError.value(to, 'to', 'must not be before from');
+      return _rejectArguments(
+        'deleteRange',
+        'a to ($to) before its from ($from)',
+      );
     }
     final fromUtc = from.toUtc();
     final toUtc = to.toUtc();
@@ -540,10 +573,10 @@ class RawEditor {
   /// inserting a pause at that point in time.
   ///
   /// Laps that straddle [at] have only their endTime extended.
-  /// Throws [ArgumentError] if [duration] is negative.
+  /// A negative [duration] is rejected (see [_rejectArguments]).
   RawEditor insertPause(DateTime at, Duration duration) {
     if (duration.isNegative) {
-      throw ArgumentError.value(duration, 'duration', 'must not be negative');
+      return _rejectArguments('insertPause', 'a negative duration ($duration)');
     }
     if (duration == Duration.zero) {
       return this;
@@ -598,10 +631,13 @@ class RawEditor {
   /// (exclusive both boundaries) and shifting everything >= to back by
   /// gap = to.difference(from).
   ///
-  /// Throws [ArgumentError] if [to] is before [from].
+  /// A [to] before [from] is rejected (see [_rejectArguments]).
   RawEditor removePause(DateTime from, DateTime to) {
     if (to.isBefore(from)) {
-      throw ArgumentError.value(to, 'to', 'must not be before from');
+      return _rejectArguments(
+        'removePause',
+        'a to ($to) before its from ($from)',
+      );
     }
     final fromUtc = from.toUtc();
     final toUtc = to.toUtc();
@@ -667,7 +703,7 @@ class RawEditor {
   /// Down-samples by the minimum [step] between consecutive timestamps.
   RawEditor downsampleTime(Duration step) {
     if (step.isNegative || step == Duration.zero) {
-      throw ArgumentError.value(step, 'step', 'must be positive');
+      return _rejectArguments('downsampleTime', 'a step of $step');
     }
     if (_activity.points.length <= 1) {
       return this;
@@ -733,8 +769,8 @@ class RawEditor {
 
   /// Down-samples by requiring at least [meters] between consecutive points.
   RawEditor downsampleDistance(double meters) {
-    if (meters <= 0) {
-      throw ArgumentError.value(meters, 'meters', 'must be positive');
+    if (meters.isNaN || meters <= 0) {
+      return _rejectArguments('downsampleDistance', 'a distance of $meters m');
     }
     if (_activity.points.length < 2) {
       return this;
@@ -847,8 +883,8 @@ class RawEditor {
   /// 100,000 laps and reports `repaired.lap_split_limit_reached`, so a
   /// corrupt distance value cannot exhaust memory.
   RawEditor markLapsByDistance(double meters) {
-    if (meters <= 0) {
-      throw ArgumentError.value(meters, 'meters', 'must be positive');
+    if (meters.isNaN || meters <= 0) {
+      return _rejectArguments('markLapsByDistance', 'a distance of $meters m');
     }
     // A non-finite distance can never be reached by a split boundary.
     final distanceSamples = [
@@ -866,6 +902,8 @@ class RawEditor {
     var lapStartDistance = normalizedDistance;
     var nextSplit = lapStartDistance + meters;
     var previousRaw = firstSample.value;
+    var previousTime = firstSample.time;
+    var skippedJumps = 0;
     for (var i = 0; i < distanceSamples.length; i++) {
       final sample = distanceSamples[i];
       if (i == 0) {
@@ -873,10 +911,22 @@ class RawEditor {
       } else {
         final rawValue = sample.value;
         final delta = rawValue - previousRaw;
+        final seconds =
+            sample.time.difference(previousTime).inMicroseconds / 1e6;
+        // A step faster than any sport is a corrupt sample (a FIT invalid
+        // value read as distance, say); it is skipped, not split into laps.
+        // Samples sharing a timestamp are left to the lap limit below.
+        if (delta > 0 &&
+            seconds > 0 &&
+            delta / seconds > _maxPlausibleSpeedMetersPerSecond) {
+          skippedJumps++;
+          continue;
+        }
         if (delta >= 0) {
           normalizedDistance += delta;
         }
         previousRaw = rawValue;
+        previousTime = sample.time;
       }
       while (normalizedDistance >= nextSplit) {
         if (laps.length >= _maxDistanceSplits) {
@@ -920,6 +970,22 @@ class RawEditor {
         ),
       );
     }
+    if (skippedJumps > 0) {
+      _repairDiagnostics.add(
+        ValidationDiagnostic(
+          severity: ValidationSeverity.warning,
+          code: '${DiagnosticCategory.repaired}.distance_jumps_skipped',
+          message:
+              'Skipped $skippedJumps distance sample(s) implying more than '
+              '${_maxPlausibleSpeedMetersPerSecond.round()} m/s when '
+              'splitting laps.',
+          suggestedFix:
+              'Recompute the distance channel with '
+              'recomputeDistanceAndSpeed() if the samples are corrupt.',
+          priority: 3,
+        ),
+      );
+    }
     if (splitLimitReached) {
       _repairDiagnostics.add(
         ValidationDiagnostic(
@@ -946,17 +1012,18 @@ class RawEditor {
   /// what each flag controls.
   RawEditor autoFix(ActivityAutoFixOptions options) {
     sortAndDedup();
-    if (options.fixInvalidGps || options.fixChannelDrift) {
-      trimInvalid();
-    }
-    if (options.fixDistanceDrift) {
-      recomputeDistanceAndSpeed();
-    }
+    if (options.fixInvalidGps) _trimInvalidGps();
+    if (options.fixChannelDrift) _trimChannelDrift();
+    // Gaps are filled before distance and speed are recomputed, so the
+    // points they add get both channels too.
     if (options.fixTimestampGaps && options.maxInsertedGapPoints > 0) {
       _fillTimestampGaps(
         options.gapThreshold,
         maxInsertedPoints: options.maxInsertedGapPoints,
       );
+    }
+    if (options.fixDistanceDrift) {
+      recomputeDistanceAndSpeed();
     }
     if (options.autoLapByDistance) {
       // Generate auto-laps if:
@@ -1012,10 +1079,9 @@ class RawEditor {
       if (thresholdMicros <= 0) {
         continue;
       }
-      final steps = gap.inMicroseconds ~/ thresholdMicros;
-      if (steps <= 1) {
-        continue;
-      }
+      // Rounded up, so no interval left is longer than the threshold.
+      final steps =
+          (gap.inMicroseconds + thresholdMicros - 1) ~/ thresholdMicros;
       for (var j = 1; j < steps; j++) {
         if (inserted >= maxInsertedPoints) {
           break;
@@ -1128,17 +1194,8 @@ class RawEditor {
     bool normalize = true,
     String? creator,
   }) {
-    if (activities.isEmpty) {
-      throw ArgumentError(
-        'Cannot merge activities: the input list is empty.\n'
-        '\n'
-        'You must provide at least one activity to merge:\n'
-        '  final merged = RawEditor.merge(activities);\n'
-        '\n'
-        'To combine multiple activities, ensure the list contains at least one element.\n'
-        'To split a multi-sport activity instead, use: RawEditor.splitBySport(activity)',
-      );
-    }
+    // Merging nothing gives nothing.
+    if (activities.isEmpty) return RawActivity();
     if (activities.length == 1) {
       final single = activities.first;
       if (!normalize || _isAlreadyNormalized(single)) {
@@ -1332,6 +1389,10 @@ class RawEditor {
 // activity, low enough that a corrupt distance value stays cheap.
 const _maxDistanceSplits = 100_000;
 
+// Fastest distance gain markLapsByDistance accepts between two samples;
+// above any sport in the Sport enum.
+const _maxPlausibleSpeedMetersPerSecond = 100.0;
+
 bool _isSortedBy<T>(List<T> items, DateTime Function(T item) timeOf) {
   for (var i = 1; i < items.length; i++) {
     final previousTime = timeOf(items[i - 1]);
@@ -1404,7 +1465,7 @@ bool _isAlreadyNormalized(RawActivity activity) {
 /// unspecified (and in practice non-stable, above ~32 elements) tie-break.
 List<T> _stableSortByTime<T>(List<T> items, DateTime Function(T item) timeOf) {
   final sorted = List<T>.of(items);
-  mergeSort(sorted, compare: (a, b) => timeOf(a).compareTo(timeOf(b)));
+  stableSort(sorted, (a, b) => timeOf(a).compareTo(timeOf(b)));
   return sorted;
 }
 

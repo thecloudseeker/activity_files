@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
-import 'package:collection/collection.dart';
 
 import 'geo_math.dart';
+import 'stable_sort.dart';
 
 /// Supported file formats for activities.
 enum ActivityFileFormat { gpx, tcx, fit, csv, geojson }
@@ -1451,23 +1451,14 @@ class RawActivity {
     // Stable sorts: tracks commonly share timestamps (e.g. all-epoch
     // fallback when none of the source points had a <time>), and an
     // unstable sort would shuffle which track's points end up where.
-    mergeSort(mergedPoints, compare: (a, b) => a.time.compareTo(b.time));
+    stableSort(mergedPoints, (a, b) => a.time.compareTo(b.time));
     for (final samples in mergedChannels.values) {
-      mergeSort(samples, compare: (a, b) => a.time.compareTo(b.time));
+      stableSort(samples, (a, b) => a.time.compareTo(b.time));
     }
-    mergeSort(
-      mergedLaps,
-      compare: (a, b) => a.startTime.compareTo(b.startTime),
-    );
-    mergeSort(
-      mergedSets,
-      compare: (a, b) => a.startTime.compareTo(b.startTime),
-    );
-    mergeSort(mergedEvents, compare: (a, b) => a.time.compareTo(b.time));
-    mergeSort(
-      mergedLengths,
-      compare: (a, b) => a.startTime.compareTo(b.startTime),
-    );
+    stableSort(mergedLaps, (a, b) => a.startTime.compareTo(b.startTime));
+    stableSort(mergedSets, (a, b) => a.startTime.compareTo(b.startTime));
+    stableSort(mergedEvents, (a, b) => a.time.compareTo(b.time));
+    stableSort(mergedLengths, (a, b) => a.startTime.compareTo(b.startTime));
     return copyWith(
       points: mergedPoints,
       channels: mergedChannels,
@@ -1517,7 +1508,9 @@ class RawActivity {
     }
     double total = 0;
     for (var i = 1; i < points.length; i++) {
-      total += haversineMeters(points[i - 1], points[i]);
+      final step = haversineMeters(points[i - 1], points[i]);
+      // Coordinates far outside their range give no usable distance.
+      if (step.isFinite) total += step;
     }
     return total;
   }

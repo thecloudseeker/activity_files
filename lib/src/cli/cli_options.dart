@@ -29,7 +29,7 @@ const _valueSteps = {
   'resample': 'DURATION',
 };
 
-/// Options kept working as hidden aliases until 0.10.0, with what replaces
+/// Options kept working as hidden aliases until 0.11.0, with what replaces
 /// them; using one prints a warning.
 const _deprecatedOptions = {
   'format': '--from',
@@ -129,8 +129,9 @@ ArgParser _commandParser({
     )
     ..addOption(
       'max-payload-bytes',
-      defaultsTo: '${ActivityFiles.defaultMaxPayloadBytes}',
-      help: 'Largest input in bytes, or none.',
+      help:
+          'Largest input in bytes, or none. Left out, an input over 64 MB '
+          'is read with a warning.',
       valueHelp: 'BYTES',
     )
     ..addFlag(
@@ -334,7 +335,7 @@ void _warnDeprecatedOptions(ArgResults command) {
     if (command.options.contains(entry.key) && command.wasParsed(entry.key)) {
       final warning =
           '--${entry.key} is deprecated, use ${entry.value}; removed in '
-          '0.10.0';
+          '0.11.0';
       if (command.options.contains('json') && command['json'] == true) {
         _printJson(stderr, {'warning': warning});
       } else {
@@ -396,7 +397,8 @@ Duration _durationOption(
 );
 
 int? _maxPayloadBytes(ArgResults command) {
-  final raw = _string(command, 'max-payload-bytes')!;
+  final raw = _string(command, 'max-payload-bytes');
+  if (raw == null) return softPayloadLimit;
   if (raw == 'none') return null;
   return _intOption(command, 'max-payload-bytes', min: 1);
 }

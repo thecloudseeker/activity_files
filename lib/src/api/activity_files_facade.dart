@@ -8,6 +8,7 @@ import '../encode/activity_encoder.dart';
 import '../encode/csv_encoder.dart';
 import '../encode/encoder_options.dart';
 import '../encode/encoder_utils.dart';
+import '../encode/finite_guard.dart';
 import '../encode/geojson_encoder.dart';
 import '../fit/fit_epoch.dart';
 import '../models.dart';
@@ -23,6 +24,7 @@ import '../validation.dart';
 import 'activity_export_request.dart';
 import 'export_serialization.dart';
 import 'export_stats.dart';
+import 'payload_limit.dart';
 
 part 'facade/edit_internals.dart';
 part 'facade/export_internals.dart';
@@ -34,10 +36,23 @@ part 'facade/results.dart';
 part 'facade/transform_internals.dart';
 
 /// Callback used to translate arbitrary identifiers into [Sport] values.
+@Deprecated(
+  'Pass the Sport you mean; it is no longer guessed from text. '
+  'Will be removed in 0.11.0.',
+)
 typedef SportMapper = Sport? Function(dynamic source);
 
 const int _defaultStreamBufferLimitBytes = 64 * 1024 * 1024;
 const int _maxFormatDetectBytes = 128 * 1024;
+
+/// Codes of the errors `import` reports for a source it could not read.
+const Set<String> _sourceFailureCodes = {
+  'parser.format_undetected',
+  'import.source.unsupported',
+  'import.source.unreadable',
+  'import.source.read_failed',
+  'import.payload.too_large',
+};
 
 /// Top-level facade exposing ergonomic helpers for app integrations.
 class ActivityFiles {
@@ -78,58 +93,113 @@ class ActivityFiles {
   /// extensions or by inspecting the payload. Specify [format] when the input
   /// is ambiguous (e.g. a FIT payload provided as a base64 string).
   ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes, files and buffered streams; a file is measured before it
-  /// is read. Pass `null` to disable the limit.
+  /// Never throws because of [source]: a missing or unreadable file, an
+  /// unsupported source type, a format that cannot be detected or a payload
+  /// over [maxPayloadBytes] comes back as an empty activity with an error
+  /// diagnostic, and [ActivityImportResult.format] is null when no format is
+  /// known. Only [strictFitIntegrity], which asks for it, throws.
+  ///
+  /// Left out, [maxPayloadBytes] is a soft limit: a source over 64 MB is
+  /// read with an `import.payload.large` warning, except a file of no known
+  /// format, which is reported without being loaded. A number is a hard cap
+  /// (a file is measured before it is read), even when it is 64 MB. Pass
+  /// `null` for no limit.
   static Future<ActivityImportResult> import(
     Object source, {
     ActivityFileFormat? format,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    @Deprecated(
+      'Pass a File for a path; a String is always content. '
+      'Will be removed in 0.11.0.',
+    )
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
-    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
+    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.11.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
+  }) async {
+    final softLimit = maxPayloadBytes == softPayloadLimit;
+    final hardLimit = softLimit ? null : maxPayloadBytes;
+    try {
+      return await _importChecked(
+        source,
+        format: format,
+        useIsolate: useIsolate,
+        encoding: encoding,
+        allowFilePaths: allowFilePaths,
+        strictFitHandling: _resolveStrictFitHandling(
+          strictFitIntegrity: strictFitIntegrity,
+          fitCorruptionHandling: fitCorruptionHandling,
+        ),
+        hardLimit: hardLimit,
+        softLimit: softLimit,
+      );
+    } on _FitIntegrityException {
+      rethrow;
+    } on _ImportFailure catch (failure) {
+      return _failedImport(
+        code: failure.code,
+        message: failure.message,
+        description: failure.description,
+        format: failure.format ?? format,
+      );
+    } on _PayloadLimitException catch (error) {
+      return _failedImport(
+        code: 'import.payload.too_large',
+        message: error.message,
+        description: _describeSource(source),
+        format: format ?? _formatFromSourcePath(source),
+        suggestedFix:
+            'Raise maxPayloadBytes, or leave it out for the soft default.',
+      );
+    } catch (error) {
+      // Anything else comes from the source itself, such as a stream that
+      // reports an error while it is read.
+      return _failedImport(
+        code: 'import.source.read_failed',
+        message: 'Reading the source failed: $error',
+        description: _describeSource(source),
+        format: format ?? _formatFromSourcePath(source),
+      );
+    }
+  }
+
+  static Future<ActivityImportResult> _importChecked(
+    Object source, {
+    required ActivityFileFormat? format,
+    required bool useIsolate,
+    required Encoding encoding,
+    required bool allowFilePaths,
+    required bool strictFitHandling,
+    required int? hardLimit,
+    required bool softLimit,
   }) async {
     final resolved = await _resolveSource(
       source,
       allowFilePaths: allowFilePaths,
-      maxPayloadBytes: maxPayloadBytes,
+      maxPayloadBytes: hardLimit,
+      softLimit: softLimit,
+      format: format,
+      encoding: encoding,
     );
     final ActivityFileFormat detected;
     try {
-      if (maxPayloadBytes != null) {
+      if (hardLimit != null) {
         _enforcePayloadLimit(
           resolved.detectionBytes ?? resolved.payload,
           encoding: encoding,
-          limit: maxPayloadBytes,
+          limit: hardLimit,
         );
       }
-      final found =
-          format ??
-          _detectFormat(
-            resolved,
-            encoding: encoding,
-            maxPayloadBytes: maxPayloadBytes,
-          );
+      final found = format ?? _detectFormat(resolved, encoding: encoding);
       if (found == null) {
-        throw ArgumentError(
-          'Unable to infer activity format from source. The format must be specified explicitly.\n'
-          '\n'
-          'To fix this, try one of the following:\n'
-          '  1. Provide the format parameter: import(source, format: ActivityFileFormat.gpx)\n'
-          '  2. Use a file with a recognized extension (.gpx, .tcx, .fit, .csv, .geojson)\n'
-          '  3. If passing a filesystem path as a String, enable: import(source, allowFilePaths: true)\n'
-          '\n'
-          'Tips for common formats:\n'
-          '  • GPX/TCX: Usually detected automatically from file extension\n'
-          '  • FIT (binary): For base64-encoded FIT data, use import(bytes, format: ActivityFileFormat.fit)\n'
-          '  • CSV/GeoJSON: Detectable from extension or content sniffing\n'
-          '  • Inline content: Always specify format for text passed as a String\n'
-          '\n'
-          'Received: ${resolved.description} (extension: ${resolved.fileExtension ?? "none"})',
+        throw _ImportFailure.undetected(
+          resolved.fileExtension == null
+              ? resolved.description
+              : '${resolved.description} (extension: ${resolved.fileExtension})',
+          inline: resolved.description == 'inline',
         );
       }
       detected = found;
@@ -145,7 +215,7 @@ class ActivityFiles {
         detected,
         useIsolate: useIsolate,
         encoding: encoding,
-        maxPayloadBytes: maxPayloadBytes,
+        maxPayloadBytes: hardLimit,
       );
     } on _PayloadLimitException {
       rethrow;
@@ -155,16 +225,13 @@ class ActivityFiles {
     if (_shouldFailFitIntegrity(
       detected,
       parseResult.diagnostics,
-      _resolveStrictFitHandling(
-        strictFitIntegrity: strictFitIntegrity,
-        fitCorruptionHandling: fitCorruptionHandling,
-      ),
+      strictFitHandling,
     )) {
       throw _fitIntegrityFailure(parseResult.diagnostics);
     }
     final materialized = await _materializePayload(
       resolved.payload,
-      maxBytes: maxPayloadBytes,
+      maxBytes: hardLimit,
     );
     var diagnostics = parseResult.diagnostics;
     if (materialized.unavailable) {
@@ -177,6 +244,22 @@ class ActivityFiles {
               'The raw payload could not be re-materialized after parsing '
               '(exceeded maxPayloadBytes); payload/bytesPayload/'
               'stringPayload are empty. The parsed activity is unaffected.',
+        ),
+      ];
+    }
+    if (softLimit &&
+        _payloadSizeAtLeast(materialized.payload) >
+            _defaultStreamBufferLimitBytes) {
+      diagnostics = [
+        ...diagnostics,
+        const ParseDiagnostic(
+          severity: ParseSeverity.warning,
+          code: 'import.payload.large',
+          message:
+              'The source is larger than 64 MB; it was read in full because '
+              'it is an activity file.',
+          suggestedFix:
+              'Pass maxPayloadBytes to refuse sources over a size you choose.',
         ),
       ];
     }
@@ -194,18 +277,24 @@ class ActivityFiles {
   /// This helper is useful when you want to branch your own logic based on
   /// format before calling [import] or [convert].
   ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit; pass `null`
-  /// to disable the limit.
+  /// Detection reads only the start of [source], so no size limit applies.
   static ActivityFileFormat? detectFormat(
     Object source, {
     Encoding encoding = utf8,
+    @Deprecated(
+      'Pass a File for a path; a String is always content. '
+      'Will be removed in 0.11.0.',
+    )
     bool allowFilePaths = false,
+    @Deprecated(
+      'Detection reads only the start of the source, so the limit has no '
+      'effect. Will be removed in 0.11.0.',
+    )
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _detectFormatSync(
     source,
     encoding: encoding,
     allowFilePaths: allowFilePaths,
-    maxPayloadBytes: maxPayloadBytes,
   );
 
   /// Imports multiple sources in sequence and returns a [BatchImportResult].
@@ -231,7 +320,7 @@ class ActivityFiles {
     bool useIsolate = true,
     void Function(int completed, int total)? onProgress,
     bool stopOnError = false,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
   }) async {
     final sourceList = sources.toList();
     final total = sourceList.length;
@@ -240,14 +329,19 @@ class ActivityFiles {
     var completed = 0;
     for (final source in sourceList) {
       try {
-        successes.add(
-          await import(
-            source,
-            format: format,
-            useIsolate: useIsolate,
-            maxPayloadBytes: maxPayloadBytes,
-          ),
+        final result = await import(
+          source,
+          format: format,
+          useIsolate: useIsolate,
+          maxPayloadBytes: maxPayloadBytes,
         );
+        // import reports a source it cannot read instead of throwing; the
+        // batch still lists it as a failure.
+        final unread = result.diagnostics
+            .where((d) => _sourceFailureCodes.contains(d.code))
+            .firstOrNull;
+        if (unread != null) throw FormatException(unread.message);
+        successes.add(result);
       } catch (error, stackTrace) {
         failures.add(
           BatchImportFailure(
@@ -347,9 +441,8 @@ class ActivityFiles {
   /// [runValidation] to append structural validation diagnostics/results;
   /// disable it when conversion throughput matters more than validation output.
   ///
-  /// Set [maxPayloadBytes] to override the default 64MB limit for inline
-  /// strings/bytes, files and buffered streams; a file is measured before it
-  /// is read. Pass `null` to disable the limit.
+  /// Reads [source] as [import] does, with the same [maxPayloadBytes]
+  /// rules, and never throws because of it.
   static Future<ActivityConversionResult> convert({
     required Object source,
     required ActivityFileFormat to,
@@ -358,15 +451,19 @@ class ActivityFiles {
     bool normalize = true,
     bool useIsolate = true,
     Encoding encoding = utf8,
+    @Deprecated(
+      'Pass a File for a path; a String is always content. '
+      'Will be removed in 0.11.0.',
+    )
     bool allowFilePaths = false,
     bool exportInIsolate = false,
     bool runValidation = true,
     bool strictFitIntegrity = false,
-    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
+    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.11.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
     Iterable<ParseDiagnostic> diagnostics = const <ParseDiagnostic>[],
   }) async {
     final loadResult = await import(
@@ -374,6 +471,7 @@ class ActivityFiles {
       format: from,
       useIsolate: useIsolate,
       encoding: encoding,
+      // ignore: deprecated_member_use_from_same_package
       allowFilePaths: allowFilePaths,
       strictFitIntegrity: strictFitIntegrity,
       // ignore: deprecated_member_use_from_same_package
@@ -409,7 +507,14 @@ class ActivityFiles {
     collected.addAll(repairDiagnostics.map((d) => d.toParseDiagnostic()));
     var exportActivity = activity;
     if (!normalize) {
-      final ordered = _ensureOrderedForExport(activity);
+      // Auto-fix sees the data as read: the ordering step below nudges
+      // shared timestamps apart, which would leave it no duplicates to drop.
+      (exportActivity, collected) = _applyAutoFix(
+        exportActivity,
+        autoFix,
+        collected,
+      );
+      final ordered = _ensureOrderedForExport(exportActivity);
       exportActivity = ordered.activity;
       collected.addAll(ordered.diagnostics.map((d) => d.toParseDiagnostic()));
     }
@@ -423,14 +528,19 @@ class ActivityFiles {
         trackResult.diagnostics.map((d) => d.toParseDiagnostic()),
       );
     }
-    (exportActivity, collected) = _applyAutoFix(
-      exportActivity,
-      autoFix,
-      collected,
-    );
+    if (normalize) {
+      (exportActivity, collected) = _applyAutoFix(
+        exportActivity,
+        autoFix,
+        collected,
+      );
+    }
     if (!exportInIsolate) {
+      final List<ParseDiagnostic> nonFinite;
+      (exportActivity, nonFinite) = _dropNonFiniteForExport(exportActivity);
       collected = [
         ...collected,
+        ...nonFinite,
         ..._lossyDiagnostics(
           exportActivity,
           to,
@@ -510,7 +620,7 @@ class ActivityFiles {
 
   /// Converts a [source] stream, normalizes, and exports to [to].
   ///
-  /// Parsing occurs via [ActivityParser.parseStream]. Toggle [parseInIsolate]
+  /// The stream is read as [import] reads one. Toggle [parseInIsolate]
   /// and [exportInIsolate] to control isolate offloading for parse and export.
   ///
   /// Set [maxPayloadBytes] to override the default 64MB limit for buffered
@@ -525,7 +635,7 @@ class ActivityFiles {
     'Use ActivityFiles.convert, which accepts a Stream<List<int>> source and '
     'produces identical output. Pass useIsolate for parseInIsolate, and pass '
     'from explicitly if the format is not detectable from the first 64KB. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> convertStream({
     required Stream<List<int>> source,
@@ -583,7 +693,7 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.convert for source-based calls, or '
     'ActivityFiles.buildAndExport for location/channels-based calls. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> convertAndExport({
     Object? source,
@@ -621,46 +731,33 @@ class ActivityFiles {
   }) {
     final hasSource = source != null;
     final hasStreams = location != null;
-    if (hasSource && hasStreams) {
-      throw ArgumentError(
-        'Cannot specify both source and location/channels inputs.\n'
-        '\n'
-        'Choose one input method:\n'
-        '\n'
-        'Option A: Convert from file/bytes\n'
-        '  convertAndExport(source: File("activity.gpx"), to: ActivityFileFormat.tcx)\n'
-        '\n'
-        'Option B: Build from location and channel data\n'
-        '  convertAndExport(\n'
-        '    location: [LocationStreamSample(...)],\n'
-        '    channels: {Channel.heartRate: [ChannelStreamSample(...)]},\n'
-        '    to: ActivityFileFormat.gpx,\n'
-        '  )\n'
-        '\n'
-        'You specified both source and location. Please use only one.',
-      );
-    }
-    if (!hasSource && !hasStreams) {
-      throw ArgumentError(
-        'No input provided to convertAndExport. You must specify either source or location/channels.\n'
-        '\n'
-        'Example 1: Convert a file\n'
-        '  final result = await convertAndExport(\n'
-        '    source: File("activity.gpx"),\n'
-        '    to: ActivityFileFormat.fit,\n'
-        '  );\n'
-        '\n'
-        'Example 2: Convert from raw sensor data\n'
-        '  final result = await convertAndExport(\n'
-        '    location: gpsPoints,\n'
-        '    channels: {\n'
-        '      Channel.heartRate: heartRateSamples,\n'
-        '      Channel.cadence: cadenceSamples,\n'
-        '    },\n'
-        '    to: ActivityFileFormat.gpx,\n'
-        '  );\n'
-        '\n'
-        'Please provide one of: source (File, bytes, Stream) or location + channels.',
+    // Exactly one input is meaningful: an assertion stops any other call
+    // during development, and a release build returns an empty export with
+    // an error.
+    if (hasSource == hasStreams) {
+      final problem = hasSource
+          ? 'both a source and location/channels'
+          : 'neither a source nor location/channels';
+      assert(false, 'convertAndExport was called with $problem.');
+      return Future.value(
+        ActivityFiles.export(
+          activity: RawActivity(),
+          to: to,
+          options: options,
+          normalize: false,
+          runValidation: false,
+          diagnostics: [
+            ParseDiagnostic(
+              severity: ParseSeverity.error,
+              code: 'call.invalid_argument',
+              message:
+                  'convertAndExport was called with $problem; nothing was '
+                  'read.',
+              suggestedFix: 'Pass either source or location (with channels).',
+              priority: 0,
+            ),
+          ],
+        ),
       );
     }
 
@@ -720,7 +817,7 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.convert or ActivityFiles.export instead; convert '
     'accepts a Stream<List<int>> source for the stream case. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> runPipeline(
     ActivityExportRequest request,
@@ -817,7 +914,11 @@ class ActivityFiles {
     Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
     Iterable<Lap> laps = const <Lap>[],
     Sport? sport,
+    @Deprecated('Pass sport instead. Will be removed in 0.11.0.')
     Object? sportSource,
+    @Deprecated(
+      'Pass sport and gpxTrackName instead. Will be removed in 0.11.0.',
+    )
     String? label,
     String? creator,
     ActivityDeviceMetadata? device,
@@ -840,10 +941,10 @@ class ActivityFiles {
     final primarySport =
         sport ??
         (sportSource != null
-            ? inferSport(sportSource, fallback: Sport.unknown)
+            ? _resolveSport(sportSource) ?? Sport.unknown
             : Sport.unknown);
     final derivedSport = (primarySport == Sport.unknown && label != null)
-        ? inferSport(label, fallback: Sport.unknown)
+        ? _resolveSport(label) ?? Sport.unknown
         : primarySport;
     final builder = builderFromStreams(
       location: location,
@@ -931,6 +1032,11 @@ class ActivityFiles {
   // channel queries) that don't act on a RawActivity lifecycle stage.
   /// Registers a [SportMapper] used by [inferSport]. New mappers are checked
   /// last-in-first-out so callers can override earlier defaults.
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.11.0.',
+  )
+  // ignore: deprecated_member_use_from_same_package
   static void registerSportMapper(SportMapper mapper) {
     if (_sportMappers.contains(mapper)) {
       return;
@@ -939,13 +1045,26 @@ class ActivityFiles {
   }
 
   /// Removes a previously registered [mapper].
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.11.0.',
+  )
+  // ignore: deprecated_member_use_from_same_package
   static bool unregisterSportMapper(SportMapper mapper) =>
       _sportMappers.remove(mapper);
 
   /// Clears all registered sport mappers.
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.11.0.',
+  )
   static void clearSportMappers() => _sportMappers.clear();
 
   /// Resolves [Sport] by applying registered mappers and built-in heuristics.
+  @Deprecated(
+    'Pass the Sport you mean; it is no longer guessed from text. '
+    'Will be removed in 0.11.0.',
+  )
   static Sport inferSport(dynamic source, {Sport fallback = Sport.unknown}) {
     final resolved = _resolveSport(source);
     return resolved ?? fallback;
@@ -965,10 +1084,10 @@ class ActivityFiles {
   }) => ChannelMapper.mapAt(timestamp, activity.channels, maxDelta: maxDelta);
 
   // Deprecated -- kept as forwarders for compatibility; scheduled for
-  // removal in 0.10.0. See each method's @Deprecated message for its
+  // removal in 0.11.0. See each method's @Deprecated message for its
   // replacement.
   /// Deprecated name for [import]; forwards with identical behavior.
-  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.10.0.')
+  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.11.0.')
   static Future<ActivityImportResult> load(
     Object source, {
     ActivityFileFormat? format,
@@ -978,7 +1097,7 @@ class ActivityFiles {
     bool strictFitIntegrity = false,
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
   }) => import(
     source,
     format: format,
@@ -992,7 +1111,7 @@ class ActivityFiles {
 
   /// Deprecated name for [importBatch]; forwards with identical behavior.
   @Deprecated(
-    'Use ActivityFiles.importBatch instead. Will be removed in 0.10.0.',
+    'Use ActivityFiles.importBatch instead. Will be removed in 0.11.0.',
   )
   static Future<BatchImportResult> loadBatch(
     Iterable<Object> sources, {
@@ -1000,7 +1119,7 @@ class ActivityFiles {
     bool useIsolate = true,
     void Function(int completed, int total)? onProgress,
     bool stopOnError = false,
-    int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
+    int? maxPayloadBytes = softPayloadLimit,
   }) => importBatch(
     sources,
     format: format,
@@ -1012,10 +1131,8 @@ class ActivityFiles {
 
   /// Import a CSV payload into a [RawActivity].
   @Deprecated(
-    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead '
-    '(async). For a sync parse, use '
-    'ActivityParser.parse(input, ActivityFileFormat.csv). '
-    'Will be removed in 0.10.0.',
+    'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead. '
+    'Will be removed in 0.11.0.',
   )
   static ActivityParseResult importFromCsv(String input) =>
       const CsvParser().parse(input);
@@ -1023,9 +1140,7 @@ class ActivityFiles {
   /// Import a GeoJSON payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
-    'instead (async). For a sync parse, use '
-    'ActivityParser.parse(input, ActivityFileFormat.geojson). '
-    'Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static ActivityParseResult importFromGeojson(String input) =>
       const GeojsonParser().parse(input);
@@ -1033,14 +1148,14 @@ class ActivityFiles {
   /// Export an activity to CSV format.
   @Deprecated(
     'Use ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv) '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static String exportToCsv(RawActivity activity) =>
       CsvEncoder.encode(activity);
 
   /// Export multiple activities to CSV format.
   @Deprecated(
-    'Will be removed in 0.10.0 with no exact replacement. This concatenates '
+    'Will be removed in 0.11.0 with no exact replacement. This concatenates '
     'each activity\'s rows under one header, in input order, keeping every '
     'row. The closest alternative, RawEditor.merge() followed by '
     'ActivityFiles.export(), is NOT equivalent: it sorts all points by time '
@@ -1053,7 +1168,7 @@ class ActivityFiles {
   /// Export an activity to GeoJSON FeatureCollection (LineString).
   @Deprecated(
     'Use ActivityFiles.export(activity: activity, to: '
-    'ActivityFileFormat.geojson) instead. Will be removed in 0.10.0.',
+    'ActivityFileFormat.geojson) instead. Will be removed in 0.11.0.',
   )
   static String exportToGeojson(RawActivity activity) =>
       GeojsonEncoder.encode(activity);
@@ -1063,7 +1178,7 @@ class ActivityFiles {
     'Use ActivityFiles.export(activity: activity, to: '
     'ActivityFileFormat.geojson, options: EncoderOptions(geojsonGeometry: '
     'GeojsonGeometry.points, geojsonIncludeChannels: includeChannels)) '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static String exportToGeojsonPoints(
     RawActivity activity, {
@@ -1075,7 +1190,7 @@ class ActivityFiles {
   /// Deprecated name for [convertStream]; forwards with identical behavior.
   @Deprecated(
     'Use ActivityFiles.convert, which accepts a Stream<List<int>> source. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> convertAndExportStream({
     required Stream<List<int>> source,
@@ -1115,7 +1230,7 @@ class ActivityFiles {
   /// [ActivityFiles.edit].
   @Deprecated(
     'Use ActivityFiles.edit(activity).sortAndDedup().trimInvalid().activity '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static RawActivity normalizeActivity(
     RawActivity activity, {
@@ -1131,7 +1246,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.sortAndDedup].
   @Deprecated(
     'Use ActivityFiles.edit(activity).sortAndDedup().activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity sortAndDedup(RawActivity activity) =>
       RawEditor(activity).sortAndDedup().activity;
@@ -1139,7 +1254,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.trimInvalid].
   @Deprecated(
     'Use ActivityFiles.edit(activity).trimInvalid().activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity trimInvalid(RawActivity activity) =>
       RawEditor(activity).trimInvalid().activity;
@@ -1147,7 +1262,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.crop].
   @Deprecated(
     'Use ActivityFiles.edit(activity).crop(start, end).activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity crop(
     RawActivity activity, {
@@ -1158,7 +1273,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.smoothHR].
   @Deprecated(
     'Use ActivityFiles.edit(activity).smoothHR(window).activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity smoothHeartRate(RawActivity activity, {int window = 5}) =>
       RawEditor(activity).smoothHR(window).activity;
@@ -1166,13 +1281,13 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.recomputeDistanceAndSpeed].
   @Deprecated(
     'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed().activity '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
       RawEditor(activity).recomputeDistanceAndSpeed().activity;
 
   /// Deprecated name for [RawEditor.merge]; forwards with identical behavior.
-  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.10.0.')
+  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.11.0.')
   static RawActivity merge(
     List<RawActivity> activities, {
     bool preserveSportPerLap = false,
@@ -1187,7 +1302,7 @@ class ActivityFiles {
 
   /// Deprecated name for [RawEditor.splitBySport]; forwards with identical
   /// behavior.
-  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.10.0.')
+  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.11.0.')
   static Map<Sport, RawActivity> splitBySport(
     RawActivity activity, {
     bool normalize = true,
@@ -1196,7 +1311,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.activityLabelNode]; forwards
   /// with identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.10.0.',
+    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.11.0.',
   )
   static GpxExtensionNode gpxActivityLabelNode(
     String label, {
@@ -1213,7 +1328,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.deviceNode]; forwards with
   /// identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.10.0.',
+    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.11.0.',
   )
   static GpxExtensionNode gpxDeviceNode(
     ActivityDeviceMetadata metadata, {
@@ -1232,7 +1347,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.deviceSummaryNode]; forwards
   /// with identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.10.0.',
+    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.11.0.',
   )
   static GpxExtensionNode gpxDeviceSummaryNode(
     ActivityDeviceMetadata metadata, {

@@ -124,7 +124,7 @@ mixin _DiagnosticSummaryMixin {
 /// Deprecated name for [ActivityImportResult], kept as an alias so existing
 /// variable declarations and signatures keep compiling. Renamed alongside
 /// `load` -> `import` so the result type matches the verb that returns it.
-@Deprecated('Use ActivityImportResult instead. Will be removed in 0.10.0.')
+@Deprecated('Use ActivityImportResult instead. Will be removed in 0.11.0.')
 typedef ActivityLoadResult = ActivityImportResult;
 
 /// Result of [ActivityFiles.import].
@@ -147,8 +147,10 @@ class ActivityImportResult with _DiagnosticSummaryMixin {
   @override
   final List<ParseDiagnostic> diagnostics;
 
-  /// Detected format of the payload.
-  final ActivityFileFormat format;
+  /// Format of the payload: the one passed to `import`, or the one detected.
+  /// Null when no format was given and none could be detected; the
+  /// diagnostics then hold a `parser.format_undetected` error.
+  final ActivityFileFormat? format;
 
   /// Human-readable description of the source (e.g. file path).
   final String sourceDescription;
@@ -264,8 +266,9 @@ class ActivityConversionResult extends ActivityExportResult {
     super.processingStats = const ActivityProcessingStats(),
   }) : super._();
 
-  /// Detected format of the source payload.
-  final ActivityFileFormat sourceFormat;
+  /// Format of the source payload: the one passed as `from`, or the one
+  /// detected. Null when neither is known; see [ActivityImportResult.format].
+  final ActivityFileFormat? sourceFormat;
 
   /// Clones the conversion result with overrides.
   @override

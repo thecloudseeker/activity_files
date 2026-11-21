@@ -5,6 +5,8 @@
 library;
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 import 'package:xml/xml.dart';
 
@@ -399,7 +401,7 @@ void main() {
           original,
           ActivityFileFormat.gpx,
         );
-        final parsed = ActivityParser.parse(gpxString, ActivityFileFormat.gpx);
+        final parsed = ParserRouter.parse(gpxString, ActivityFileFormat.gpx);
 
         expect(parsed.activity.points.length, equals(original.points.length));
       });
@@ -427,7 +429,7 @@ void main() {
             '<trk><extensions><ext:activity>Run</ext:activity></extensions>'
             '<trkseg><trkpt lat="40.0" lon="-105.0">'
             '<time>2024-01-01T10:00:00Z</time></trkpt></trkseg></trk></gpx>';
-        final parsed = ActivityParser.parse(source, ActivityFileFormat.gpx);
+        final parsed = ParserRouter.parse(source, ActivityFileFormat.gpx);
         expect(
           parsed.activity.gpxTrackExtensions.single.namespaceUri,
           equals(legacy),
@@ -440,7 +442,7 @@ void main() {
 
         expect(gpx, contains('xmlns:ext="$current"'));
         expect(gpx, isNot(contains(legacy)));
-        final reparsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final reparsed = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
         expect(reparsed.diagnostics, isEmpty);
         final metadataNode = reparsed.activity.gpxMetadataExtensions.single;
         expect(metadataNode.namespaceUri, equals(current));
@@ -465,7 +467,7 @@ void main() {
 
         expect(gpx, contains('xmlns:ext="$current"'));
         expect(gpx, isNot(contains(legacy)));
-        final reparsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final reparsed = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
         expect(
           reparsed.activity.gpxTrackExtensions.map((n) => n.namespaceUri),
           everyElement(equals(current)),
@@ -526,7 +528,7 @@ void main() {
     </trkseg>
   </trk>
 </gpx>''';
-        final parsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final parsed = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
         final reencoded = ActivityEncoder.encode(
           parsed.activity,
           ActivityFileFormat.gpx,
@@ -560,7 +562,7 @@ void main() {
     <rtept lat="47.0" lon="11.0"></rtept>
   </rte>
 </gpx>''';
-        final parsed = ActivityParser.parse(gpx, ActivityFileFormat.gpx);
+        final parsed = ParserRouter.parse(gpx, ActivityFileFormat.gpx);
         expect(parsed.activity.gpxRoutes.single.metadata['link'], isNotNull);
 
         final reencoded = ActivityEncoder.encode(
@@ -611,7 +613,7 @@ void main() {
     });
 
     test('the reordered metadata reads back unchanged', () {
-      final parsed = ActivityParser.parse(
+      final parsed = ParserRouter.parse(
         ActivityEncoder.encode(activity(), ActivityFileFormat.gpx),
         ActivityFileFormat.gpx,
       );

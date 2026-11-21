@@ -203,7 +203,7 @@ void main() {
       expect(
         () =>
             RawEditor(activity).insertPause(base, const Duration(seconds: -1)),
-        throwsArgumentError,
+        throwsA(isA<AssertionError>()),
       );
     });
 
@@ -443,7 +443,7 @@ void main() {
         () => RawEditor(
           activity,
         ).removePause(base.add(const Duration(seconds: 20)), base),
-        throwsArgumentError,
+        throwsA(isA<AssertionError>()),
       );
     });
 

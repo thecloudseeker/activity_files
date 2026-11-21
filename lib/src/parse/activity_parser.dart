@@ -19,14 +19,76 @@ abstract class ActivityFormatParser {
   ActivityParseResult parse(String input);
 }
 
-/// Dynamically selects the parser for the requested format.
+/// Reads a payload of a known format. Deprecated in favour of
+/// `ActivityFiles.import`, which also detects the format and reads files and
+/// streams; removed in 0.11.0.
+@Deprecated('Use ActivityFiles.import. Will be removed in 0.11.0.')
 class ActivityParser {
   const ActivityParser._();
+
+  /// Parses [input] according to [format]. See [ParserRouter.parse].
+  static ActivityParseResult parse(String input, ActivityFileFormat format) =>
+      ParserRouter.parse(input, format);
+
+  /// Convenience helper returning only the parsed activity.
+  static RawActivity parseActivity(String input, ActivityFileFormat format) =>
+      ParserRouter.parse(input, format).activity;
+
+  /// Parses [bytes] according to [format]. See [ParserRouter.parseBytes].
+  static ActivityParseResult parseBytes(
+    List<int> bytes,
+    ActivityFileFormat format, {
+    Encoding encoding = utf8,
+  }) => ParserRouter.parseBytes(bytes, format, encoding: encoding);
+
+  /// Offloads [input] parsing to a separate isolate when desired.
+  static Future<ActivityParseResult> parseAsync(
+    String input,
+    ActivityFileFormat format, {
+    bool useIsolate = true,
+  }) => ParserRouter.parseAsync(input, format, useIsolate: useIsolate);
+
+  /// Asynchronous variant of [parseBytes] with optional isolate offloading.
+  static Future<ActivityParseResult> parseBytesAsync(
+    List<int> bytes,
+    ActivityFileFormat format, {
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+  }) => ParserRouter.parseBytesAsync(
+    bytes,
+    format,
+    useIsolate: useIsolate,
+    encoding: encoding,
+  );
+
+  /// Collects the [source] stream before parsing. Useful for file and network IO.
+  static Future<ActivityParseResult> parseStream(
+    Stream<List<int>> source,
+    ActivityFileFormat format, {
+    bool useIsolate = true,
+    Encoding encoding = utf8,
+    int? maxBytes = _defaultStreamParseLimitBytes,
+  }) => ParserRouter.parseStream(
+    source,
+    format,
+    useIsolate: useIsolate,
+    encoding: encoding,
+    maxBytes: maxBytes,
+  );
+}
+
+/// Selects the parser for a format. Internal: the library and its parser
+/// tests read payloads through it; callers use `ActivityFiles.import`.
+class ParserRouter {
+  const ParserRouter._();
 
   /// Parses [input] according to [format].
   ///
   /// For FIT content the [input] should be a base64-encoded payload representing
   /// the binary FIT stream. Use [parseBytes] when working with raw FIT binaries.
+  ///
+  /// Never throws because of [input]: unreadable content comes back as an
+  /// empty activity with an error diagnostic.
   static ActivityParseResult parse(String input, ActivityFileFormat format) {
     final parser = switch (format) {
       ActivityFileFormat.gpx => const GpxParser(),
@@ -35,7 +97,11 @@ class ActivityParser {
       ActivityFileFormat.csv => const CsvParser(),
       ActivityFileFormat.geojson => const GeojsonParser(),
     };
-    return parser.parse(input);
+    try {
+      return parser.parse(input);
+    } on FormatException catch (error) {
+      return formatExceptionResult(format, error);
+    }
   }
 
   /// Convenience helper returning only the parsed activity.
@@ -43,6 +109,10 @@ class ActivityParser {
       parse(input, format).activity;
 
   /// Parses [bytes] according to [format]. Use this for binary FIT payloads.
+  ///
+  /// Never throws because of [bytes]: text that does not decode with
+  /// [encoding] or a damaged FIT header comes back as an empty activity with
+  /// an error diagnostic.
   static ActivityParseResult parseBytes(
     List<int> bytes,
     ActivityFileFormat format, {
@@ -55,10 +125,14 @@ class ActivityParser {
       ActivityFileFormat.csv => const CsvParser(),
       ActivityFileFormat.geojson => const GeojsonParser(),
     };
-    return switch (parser) {
-      FitParser fit => fit.parseBytes(Uint8List.fromList(bytes)),
-      _ => parser.parse(encoding.decode(bytes)),
-    };
+    try {
+      return switch (parser) {
+        FitParser fit => fit.parseBytes(Uint8List.fromList(bytes)),
+        _ => parser.parse(encoding.decode(bytes)),
+      };
+    } on FormatException catch (error) {
+      return formatExceptionResult(format, error);
+    }
   }
 
   /// Offloads [input] parsing to a separate isolate when desired.
@@ -114,7 +188,7 @@ class ActivityParser {
       final text = encoding.decode(bytes);
       return await parseAsync(text, format, useIsolate: useIsolate);
     } on FormatException catch (error) {
-      return _formatExceptionResult(format, error);
+      return formatExceptionResult(format, error);
     }
   }
 
@@ -155,25 +229,27 @@ class ActivityParser {
     List<int> bytes => Uint8List.fromList(bytes),
     _ => payload,
   };
+}
 
-  static ActivityParseResult _formatExceptionResult(
-    ActivityFileFormat format,
-    FormatException error,
-  ) {
-    final formatName = format.name.toUpperCase();
-    final trimmed = error.message.trim();
-    final message = trimmed.isEmpty ? error.toString() : trimmed;
-    return ActivityParseResult(
-      activity: RawActivity(),
-      diagnostics: <ParseDiagnostic>[
-        ParseDiagnostic(
-          severity: ParseSeverity.error,
-          code: 'parser.format_exception',
-          message:
-              'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes` instead of base64 text and verify integrity. If the input is ambiguous, provide `format` explicitly.',
-          node: ParseNodeReference(path: '${format.name}.document'),
-        ),
-      ],
-    );
-  }
+/// The result for a payload a parser cannot read at all: an empty activity
+/// with one `parser.format_exception` error.
+ActivityParseResult formatExceptionResult(
+  ActivityFileFormat format,
+  FormatException error,
+) {
+  final formatName = format.name.toUpperCase();
+  final trimmed = error.message.trim();
+  final message = trimmed.isEmpty ? error.toString() : trimmed;
+  return ActivityParseResult(
+    activity: RawActivity(),
+    diagnostics: <ParseDiagnostic>[
+      ParseDiagnostic(
+        severity: ParseSeverity.error,
+        code: 'parser.format_exception',
+        message:
+            'Failed to parse $formatName payload: $message. Hint: For GPX/TCX/CSV/GeoJSON, ensure the text encoding matches the file (`encoding` parameter). For FIT, pass raw bytes via `parseBytes`/`import(File)` instead of base64 text and check integrity. If the input is ambiguous, provide `format` explicitly.',
+        node: ParseNodeReference(path: '${format.name}.document'),
+      ),
+    ],
+  );
 }

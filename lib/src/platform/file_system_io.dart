@@ -13,6 +13,18 @@ String? platformFilePath(Object? file) => file is File ? file.path : null;
 Future<int?> platformFileLength(Object? file) async =>
     file is File ? await file.length() : null;
 
+/// Reads at most [length] bytes from the start of [file] when [file] is a
+/// `File`.
+Future<Uint8List?> readPlatformFileHead(Object? file, int length) async {
+  if (file is! File) return null;
+  final handle = await file.open();
+  try {
+    return await handle.read(length);
+  } finally {
+    await handle.close();
+  }
+}
+
 /// Reads [file] bytes when [file] is a `File`.
 ///
 /// Returns `null` for non-`File` inputs to simplify conditional call sites.

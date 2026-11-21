@@ -2,6 +2,8 @@
 import 'dart:typed_data';
 
 import 'package:activity_files/activity_files.dart';
+import 'package:activity_files/src/parse/activity_parser.dart'
+    show ParserRouter;
 import 'package:test/test.dart';
 
 import '../helpers/fit_helpers.dart';
@@ -48,7 +50,7 @@ void main() {
         [99, 65, 14], // speed 3.55 m/s, distance 14.25 m
         [0, 224, 18], // speed 0.00 m/s, distance 18.875 m
       ]);
-      final activity = ActivityParser.parseBytes(
+      final activity = ParserRouter.parseBytes(
         bytes,
         ActivityFileFormat.fit,
       ).activity;
@@ -83,7 +85,7 @@ void main() {
       [0xFF, 0xFF, 0xFF], // invalid → no speed/distance
       [98, 1, 0], // speed 3.54, distance 0.0
     ]);
-    final activity = ActivityParser.parseBytes(
+    final activity = ParserRouter.parseBytes(
       bytes,
       ActivityFileFormat.fit,
     ).activity;
@@ -123,7 +125,7 @@ void main() {
       (crc >> 8) & 0xFF,
     ]);
 
-    final activity = ActivityParser.parseBytes(
+    final activity = ParserRouter.parseBytes(
       bytes,
       ActivityFileFormat.fit,
     ).activity;
