@@ -483,8 +483,8 @@ void main() {
         );
       });
 
-      test('merge throws on empty list', () {
-        expect(() => RawEditor.merge([]), throwsArgumentError);
+      test('merge of an empty list is an empty activity', () {
+        expect(RawEditor.merge([]).points, isEmpty);
       });
 
       test('splitBySport divides multi-sport activity', () {

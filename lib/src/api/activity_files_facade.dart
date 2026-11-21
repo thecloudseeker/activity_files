@@ -731,46 +731,33 @@ class ActivityFiles {
   }) {
     final hasSource = source != null;
     final hasStreams = location != null;
-    if (hasSource && hasStreams) {
-      throw ArgumentError(
-        'Cannot specify both source and location/channels inputs.\n'
-        '\n'
-        'Choose one input method:\n'
-        '\n'
-        'Option A: Convert from file/bytes\n'
-        '  convertAndExport(source: File("activity.gpx"), to: ActivityFileFormat.tcx)\n'
-        '\n'
-        'Option B: Build from location and channel data\n'
-        '  convertAndExport(\n'
-        '    location: [LocationStreamSample(...)],\n'
-        '    channels: {Channel.heartRate: [ChannelStreamSample(...)]},\n'
-        '    to: ActivityFileFormat.gpx,\n'
-        '  )\n'
-        '\n'
-        'You specified both source and location. Please use only one.',
-      );
-    }
-    if (!hasSource && !hasStreams) {
-      throw ArgumentError(
-        'No input provided to convertAndExport. You must specify either source or location/channels.\n'
-        '\n'
-        'Example 1: Convert a file\n'
-        '  final result = await convertAndExport(\n'
-        '    source: File("activity.gpx"),\n'
-        '    to: ActivityFileFormat.fit,\n'
-        '  );\n'
-        '\n'
-        'Example 2: Convert from raw sensor data\n'
-        '  final result = await convertAndExport(\n'
-        '    location: gpsPoints,\n'
-        '    channels: {\n'
-        '      Channel.heartRate: heartRateSamples,\n'
-        '      Channel.cadence: cadenceSamples,\n'
-        '    },\n'
-        '    to: ActivityFileFormat.gpx,\n'
-        '  );\n'
-        '\n'
-        'Please provide one of: source (File, bytes, Stream) or location + channels.',
+    // Exactly one input is meaningful: an assertion stops any other call
+    // during development, and a release build returns an empty export with
+    // an error.
+    if (hasSource == hasStreams) {
+      final problem = hasSource
+          ? 'both a source and location/channels'
+          : 'neither a source nor location/channels';
+      assert(false, 'convertAndExport was called with $problem.');
+      return Future.value(
+        ActivityFiles.export(
+          activity: RawActivity(),
+          to: to,
+          options: options,
+          normalize: false,
+          runValidation: false,
+          diagnostics: [
+            ParseDiagnostic(
+              severity: ParseSeverity.error,
+              code: 'call.invalid_argument',
+              message:
+                  'convertAndExport was called with $problem; nothing was '
+                  'read.',
+              suggestedFix: 'Pass either source or location (with channels).',
+              priority: 0,
+            ),
+          ],
+        ),
       );
     }
 

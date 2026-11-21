@@ -832,10 +832,13 @@ void main() {
       fixDistanceDrift: false,
       fixTimestampGaps: false,
     );
+    // Normalization would remove the point first; with it off, auto-fix
+    // does the trimming it counts.
     Future<ActivityExportResult> export(List<LocationStreamSample> location) =>
         ActivityFiles.buildAndExport(
           location: location,
           to: ActivityFileFormat.gpx,
+          normalize: false,
           autoFix: options,
         );
     Iterable<String> trimmed(ActivityExportResult result) => result.diagnostics

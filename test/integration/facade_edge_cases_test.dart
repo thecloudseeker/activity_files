@@ -474,16 +474,15 @@ void main() {
   });
 
   group('Error messages and diagnostics', () {
-    test('format detection error message guides user', () {
+    test('format detection error message guides user', () async {
+      final result = await ActivityFiles.import(
+        'not a valid format',
+        useIsolate: false,
+      );
+      expect(result.format, isNull);
       expect(
-        () => ActivityFiles.import('not a valid format', useIsolate: false),
-        throwsA(
-          isA<ArgumentError>().having(
-            (e) => e.message,
-            'message',
-            contains('specified explicitly'),
-          ),
-        ),
+        _error(result.diagnostics, 'parser.format_undetected').message,
+        contains('Pass `format`'),
       );
     });
 
@@ -523,26 +522,23 @@ void main() {
       );
     });
 
-    test(
-      'payload limit error message hints at streaming and maxPayloadBytes',
-      () {
-        expect(
-          () =>
-              ActivityFiles.import('x' * (65 * 1024 * 1024), useIsolate: false),
-          throwsA(
-            isA<FormatException>().having(
-              (e) => e.message,
-              'message',
-              allOf([
-                contains('exceeds'),
-                contains('bytes'),
-                contains('maxPayloadBytes'),
-              ]),
-            ),
-          ),
-        );
-      },
-    );
+    test('payload limit error message hints at maxPayloadBytes', () async {
+      final result = await ActivityFiles.import(
+        'x' * 2048,
+        format: ActivityFileFormat.gpx,
+        maxPayloadBytes: 1024,
+        useIsolate: false,
+      );
+      expect(result.format, ActivityFileFormat.gpx);
+      expect(
+        _error(result.diagnostics, 'import.payload.too_large').message,
+        allOf([
+          contains('exceeds'),
+          contains('bytes'),
+          contains('maxPayloadBytes'),
+        ]),
+      );
+    });
 
     test('a file over maxPayloadBytes is refused before it is read', () async {
       if (Platform.isWindows) {
@@ -564,15 +560,14 @@ void main() {
       } on FileSystemException {
         // Expected: the file is unreadable.
       }
-      await expectLater(
-        ActivityFiles.import(file, maxPayloadBytes: 1024, useIsolate: false),
-        throwsA(
-          isA<FormatException>().having(
-            (e) => e.message,
-            'message',
-            contains('exceeds 1024 bytes'),
-          ),
-        ),
+      final result = await ActivityFiles.import(
+        file,
+        maxPayloadBytes: 1024,
+        useIsolate: false,
+      );
+      expect(
+        _error(result.diagnostics, 'import.payload.too_large').message,
+        contains('exceeds 1024 bytes'),
       );
     });
 
@@ -585,15 +580,13 @@ void main() {
         );
         // More than the sniffing window, and the stream never ends.
         controller.add(List.filled(70 * 1024, 0x20));
-        await expectLater(
-          ActivityFiles.import(
-            controller.stream,
-            format: ActivityFileFormat.gpx,
-            maxPayloadBytes: 1024,
-            useIsolate: false,
-          ),
-          throwsA(isA<FormatException>()),
+        final result = await ActivityFiles.import(
+          controller.stream,
+          format: ActivityFileFormat.gpx,
+          maxPayloadBytes: 1024,
+          useIsolate: false,
         );
+        _error(result.diagnostics, 'import.payload.too_large');
         expect(cancelled, isTrue);
       },
     );
@@ -608,17 +601,16 @@ void main() {
       expect(result.diagnostics, isNotNull);
     });
 
-    test('FIT integrity and payload limit errors have actionable context', () {
-      // Verify error message structure for limit exceeded
+    test('a payload limit error suggests a fix', () async {
+      final result = await ActivityFiles.import(
+        List<int>.filled(2048, 0x20),
+        format: ActivityFileFormat.gpx,
+        maxPayloadBytes: 1024,
+        useIsolate: false,
+      );
       expect(
-        () => ActivityFiles.import('x' * (65 * 1024 * 1024), useIsolate: false),
-        throwsA(
-          isA<FormatException>().having(
-            (e) => e.message,
-            'message',
-            contains('maxPayloadBytes'),
-          ),
-        ),
+        _error(result.diagnostics, 'import.payload.too_large').suggestedFix,
+        contains('maxPayloadBytes'),
       );
     });
 

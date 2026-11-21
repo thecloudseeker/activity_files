@@ -27,7 +27,8 @@ class RawTransforms {
   /// a lap boundary may no longer line up with a point.
   ///
   /// Returns [activity] unchanged when it has fewer than two points, and
-  /// throws [ArgumentError] when [step] is zero or negative. Interpolating a
+  /// rejects a [step] of zero or less: an assertion during development, the
+  /// activity unchanged in a release build. Interpolating a
   /// multi-hour recording is CPU-heavy, so consider running it off the main
   /// isolate.
   ///
@@ -38,8 +39,11 @@ class RawTransforms {
   /// );
   /// ```
   static RawActivity resample(RawActivity activity, {required Duration step}) {
+    // A step of zero or less means nothing: an assertion stops it during
+    // development, and a release build returns the activity unchanged.
     if (step <= Duration.zero) {
-      throw ArgumentError.value(step, 'step', 'must be positive');
+      assert(false, 'resample was called with a step of $step.');
+      return activity;
     }
     final original = _isSortedByTime(activity.points)
         ? activity.points

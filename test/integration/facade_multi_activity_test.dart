@@ -124,8 +124,8 @@ void main() {
       expect(identical(merged, activity.build()), isFalse);
     });
 
-    test('merge rejects empty activity list', () {
-      expect(() => RawEditor.merge([]), throwsArgumentError);
+    test('merge of an empty activity list is empty', () {
+      expect(RawEditor.merge([]).points, isEmpty);
     });
 
     test('merge supports custom creator and inherits first activity sport', () {

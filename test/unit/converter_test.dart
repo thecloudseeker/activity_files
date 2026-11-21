@@ -116,15 +116,18 @@ void main() {
         expect(csv, isNotEmpty);
       });
 
-      test('rejects invalid input types', () async {
-        await expectLater(
-          () => _convert(
-            12345,
-            from: ActivityFileFormat.gpx,
-            to: ActivityFileFormat.csv,
-          ),
-          throwsArgumentError,
+      test('reports invalid input types', () async {
+        final result = await ActivityFiles.convert(
+          source: 12345,
+          from: ActivityFileFormat.gpx,
+          to: ActivityFileFormat.csv,
+          useIsolate: false,
         );
+        expect(
+          result.diagnostics.map((d) => d.code),
+          contains('import.source.unsupported'),
+        );
+        expect(result.activity.points, isEmpty);
       });
     });
 

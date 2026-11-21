@@ -5,6 +5,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -521,11 +522,11 @@ void main() {
           location: location,
           to: ActivityFileFormat.gpx,
         ),
-        throwsArgumentError,
+        throwsA(isA<AssertionError>()),
       );
       await expectLater(
         () => ActivityFiles.convertAndExport(to: ActivityFileFormat.gpx),
-        throwsArgumentError,
+        throwsA(isA<AssertionError>()),
       );
     });
   });
@@ -556,5 +557,218 @@ void main() {
       // and must be a List<String>.
       expect(warnings, isA<List<String>>());
     });
+  });
+
+  group('Deprecated sport guessing', () {
+    test('inferSport resolves nested object values', () {
+      final source = {
+        'metadata': {
+          'activity': {'type': 'cycling'},
+        },
+      };
+      expect(ActivityFiles.inferSport(source), equals(Sport.cycling));
+    });
+
+    test('inferSport resolves iterable values', () {
+      final source = [
+        'unknown',
+        {'sport': 'swimming'},
+      ];
+      expect(ActivityFiles.inferSport(source), equals(Sport.swimming));
+    });
+
+    test('inferSport resolves numeric sport codes', () {
+      expect(ActivityFiles.inferSport(0), equals(Sport.other));
+      expect(ActivityFiles.inferSport(1), equals(Sport.running));
+      expect(ActivityFiles.inferSport(2), equals(Sport.cycling));
+      expect(ActivityFiles.inferSport(3), equals(Sport.swimming));
+      expect(ActivityFiles.inferSport(4), equals(Sport.walking));
+      expect(ActivityFiles.inferSport(5), equals(Sport.hiking));
+      expect(ActivityFiles.inferSport(99), equals(Sport.unknown));
+    });
+
+    test('clearSportMappers removes all registered mappers', () {
+      Sport? mapper1(dynamic source) => source == 1 ? Sport.cycling : null;
+      Sport? mapper2(dynamic source) => source == 2 ? Sport.running : null;
+      ActivityFiles.registerSportMapper(mapper1);
+      ActivityFiles.registerSportMapper(mapper2);
+      addTearDown(ActivityFiles.clearSportMappers);
+
+      expect(ActivityFiles.inferSport(1), equals(Sport.cycling));
+      expect(ActivityFiles.inferSport(2), equals(Sport.running));
+
+      ActivityFiles.clearSportMappers();
+
+      // After clearing custom mappers, built-in primitive mappers still work
+      expect(ActivityFiles.inferSport(1), equals(Sport.running));
+      expect(ActivityFiles.inferSport(2), equals(Sport.cycling));
+    });
+
+    test('unregisterSportMapper returns true when mapper removed', () {
+      Sport? mapper(dynamic source) => null;
+      ActivityFiles.registerSportMapper(mapper);
+      addTearDown(ActivityFiles.clearSportMappers);
+
+      final removed = ActivityFiles.unregisterSportMapper(mapper);
+      expect(removed, isTrue);
+
+      final removedAgain = ActivityFiles.unregisterSportMapper(mapper);
+      expect(removedAgain, isFalse);
+    });
+
+    test('registerSportMapper ignores duplicate mappers', () {
+      Sport? mapper(dynamic source) => null;
+      ActivityFiles.registerSportMapper(mapper);
+      ActivityFiles.registerSportMapper(mapper); // Should be ignored
+      addTearDown(ActivityFiles.clearSportMappers);
+
+      final removed = ActivityFiles.unregisterSportMapper(mapper);
+      expect(removed, isTrue);
+
+      final removedAgain = ActivityFiles.unregisterSportMapper(mapper);
+      expect(removedAgain, isFalse); // Already removed
+    });
+
+    test('inferSport uses custom fallback', () {
+      final result = ActivityFiles.inferSport(
+        'unknown sport type',
+        fallback: Sport.other,
+      );
+      expect(result, equals(Sport.other));
+    });
+
+    test('inferSport applies registered mappers before fallbacks', () {
+      Sport? mapper(dynamic source) {
+        return source is int && source == 42 ? Sport.cycling : null;
+      }
+
+      ActivityFiles.registerSportMapper(mapper);
+      addTearDown(() => ActivityFiles.unregisterSportMapper(mapper));
+      expect(ActivityFiles.inferSport(42), equals(Sport.cycling));
+      expect(ActivityFiles.inferSport('running'), equals(Sport.running));
+    });
+
+    test('inferSport derives sport hints from descriptive labels', () {
+      expect(ActivityFiles.inferSport('Morning Run'), equals(Sport.running));
+      expect(
+        ActivityFiles.inferSport('Lunch Ride 40km'),
+        equals(Sport.cycling),
+      );
+      expect(
+        ActivityFiles.inferSport('Sunset Walk With Dog'),
+        equals(Sport.walking),
+      );
+    });
+  });
+
+  group('Deprecated allowFilePaths', () {
+    test('detectFormat with allowFilePaths reads from disk', () async {
+      final format = ActivityFiles.detectFormat(
+        'example/assets/sample.gpx',
+        allowFilePaths: true,
+      );
+      expect(format, equals(ActivityFileFormat.gpx));
+    });
+
+    test('detectFormat without allowFilePaths treats string as content', () {
+      final format = ActivityFiles.detectFormat(
+        'example/assets/sample.gpx',
+        allowFilePaths: false,
+      );
+      expect(format, isNull); // Path string doesn't look like any format
+    });
+
+    test('import requires allowFilePaths for string paths', () async {
+      final path = 'example/assets/sample.gpx';
+      final refused = await ActivityFiles.import(path, useIsolate: false);
+      expect(refused.format, isNull);
+      expect(
+        refused.diagnostics.map((d) => d.code),
+        contains('parser.format_undetected'),
+      );
+      final allowed = await ActivityFiles.import(
+        path,
+        useIsolate: false,
+        allowFilePaths: true,
+      );
+      expect(allowed.activity.points, isNotEmpty);
+      expect(allowed.sourceDescription, equals(path));
+    });
+
+    test('convert requires allowFilePaths for string paths', () async {
+      final path = 'example/assets/sample.gpx';
+      final refused = await ActivityFiles.convert(
+        source: path,
+        to: ActivityFileFormat.fit,
+        useIsolate: false,
+      );
+      expect(refused.sourceFormat, isNull);
+      expect(
+        refused.diagnostics.map((d) => d.code),
+        contains('parser.format_undetected'),
+      );
+      final conversion = await ActivityFiles.convert(
+        source: path,
+        to: ActivityFileFormat.fit,
+        useIsolate: false,
+        allowFilePaths: true,
+      );
+      expect(conversion.sourceFormat, equals(ActivityFileFormat.gpx));
+      expect(conversion.activity.points, isNotEmpty);
+    });
+  });
+
+  group('Deprecated convertStream matches convert', () {
+    const twoTracks = '''<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><trkseg>
+    <trkpt lat="46.000" lon="13.000"><time>2024-01-01T10:00:00Z</time></trkpt>
+    <trkpt lat="0" lon="0"><time>2024-01-01T10:00:10Z</time></trkpt>
+    <trkpt lat="46.002" lon="13.002"><time>2024-01-01T10:00:20Z</time></trkpt>
+  </trkseg></trk>
+  <trk><trkseg>
+    <trkpt lat="46.010" lon="13.010"><time>2024-01-01T10:20:00Z</time></trkpt>
+    <trkpt lat="0" lon="0"><time>2024-01-01T10:20:10Z</time></trkpt>
+    <trkpt lat="46.012" lon="13.012"><time>2024-01-01T10:20:20Z</time></trkpt>
+  </trkseg></trk>
+</gpx>''';
+
+    for (final to in [
+      ActivityFileFormat.tcx,
+      ActivityFileFormat.csv,
+      ActivityFileFormat.gpx,
+    ]) {
+      for (final (exportInIsolate, normalize) in [
+        (false, true),
+        (true, true),
+        (false, false),
+      ]) {
+        test('with auto-fix to ${to.name} (exportInIsolate: '
+            '$exportInIsolate, normalize: $normalize)', () async {
+          final converted = await ActivityFiles.convert(
+            source: twoTracks,
+            from: ActivityFileFormat.gpx,
+            to: to,
+            normalize: normalize,
+            autoFix: const ActivityAutoFixOptions(),
+            useIsolate: false,
+          );
+          final streamed = await ActivityFiles.convertStream(
+            source: Stream.value(utf8.encode(twoTracks)),
+            from: ActivityFileFormat.gpx,
+            to: to,
+            normalize: normalize,
+            autoFix: const ActivityAutoFixOptions(),
+            parseInIsolate: false,
+            exportInIsolate: exportInIsolate,
+          );
+          expect(
+            streamed.activity.points,
+            hasLength(converted.activity.points.length),
+          );
+          expect(streamed.encoded, converted.encoded);
+        });
+      }
+    }
   });
 }

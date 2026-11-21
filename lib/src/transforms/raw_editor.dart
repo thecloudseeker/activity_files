@@ -298,13 +298,34 @@ class RawEditor {
     );
   }
 
+  /// Rejects a call whose arguments cannot mean anything: an assertion
+  /// stops it during development and in tests, and in a release build,
+  /// where assertions are off, the activity stays unchanged and
+  /// [repairDiagnostics] gets a `call.invalid_argument` error.
+  RawEditor _rejectArguments(String call, String problem) {
+    assert(false, '$call was called with $problem.');
+    _repairDiagnostics.add(
+      ValidationDiagnostic(
+        severity: ValidationSeverity.error,
+        code: 'call.invalid_argument',
+        message: '$call was called with $problem; nothing was changed.',
+        suggestedFix: 'Check the arguments before the call.',
+        priority: 0,
+      ),
+    );
+    return this;
+  }
+
   /// Crops the activity to the inclusive [start] and [end] times.
   ///
   /// Note: After cropping, use [validateLapBoundaries] to detect lap timing
   /// mismatches if the activity contains laps.
   RawEditor crop(DateTime start, DateTime end) {
     if (end.isBefore(start)) {
-      throw ArgumentError.value(end, 'end', 'must be after start');
+      return _rejectArguments(
+        'crop',
+        'an end ($end) before its start ($start)',
+      );
     }
     final startUtc = start.toUtc();
     final endUtc = end.toUtc();
@@ -488,10 +509,13 @@ class RawEditor {
   /// (inclusive), adjusts lap/set/length boundaries accordingly, and drops
   /// any event falling in that window.
   ///
-  /// Throws [ArgumentError] if [to] is before [from].
+  /// A [to] before [from] is rejected (see [_rejectArguments]).
   RawEditor deleteRange(DateTime from, DateTime to) {
     if (to.isBefore(from)) {
-      throw ArgumentError.value(to, 'to', 'must not be before from');
+      return _rejectArguments(
+        'deleteRange',
+        'a to ($to) before its from ($from)',
+      );
     }
     final fromUtc = from.toUtc();
     final toUtc = to.toUtc();
@@ -549,10 +573,10 @@ class RawEditor {
   /// inserting a pause at that point in time.
   ///
   /// Laps that straddle [at] have only their endTime extended.
-  /// Throws [ArgumentError] if [duration] is negative.
+  /// A negative [duration] is rejected (see [_rejectArguments]).
   RawEditor insertPause(DateTime at, Duration duration) {
     if (duration.isNegative) {
-      throw ArgumentError.value(duration, 'duration', 'must not be negative');
+      return _rejectArguments('insertPause', 'a negative duration ($duration)');
     }
     if (duration == Duration.zero) {
       return this;
@@ -607,10 +631,13 @@ class RawEditor {
   /// (exclusive both boundaries) and shifting everything >= to back by
   /// gap = to.difference(from).
   ///
-  /// Throws [ArgumentError] if [to] is before [from].
+  /// A [to] before [from] is rejected (see [_rejectArguments]).
   RawEditor removePause(DateTime from, DateTime to) {
     if (to.isBefore(from)) {
-      throw ArgumentError.value(to, 'to', 'must not be before from');
+      return _rejectArguments(
+        'removePause',
+        'a to ($to) before its from ($from)',
+      );
     }
     final fromUtc = from.toUtc();
     final toUtc = to.toUtc();
@@ -676,7 +703,7 @@ class RawEditor {
   /// Down-samples by the minimum [step] between consecutive timestamps.
   RawEditor downsampleTime(Duration step) {
     if (step.isNegative || step == Duration.zero) {
-      throw ArgumentError.value(step, 'step', 'must be positive');
+      return _rejectArguments('downsampleTime', 'a step of $step');
     }
     if (_activity.points.length <= 1) {
       return this;
@@ -742,8 +769,8 @@ class RawEditor {
 
   /// Down-samples by requiring at least [meters] between consecutive points.
   RawEditor downsampleDistance(double meters) {
-    if (meters <= 0) {
-      throw ArgumentError.value(meters, 'meters', 'must be positive');
+    if (meters.isNaN || meters <= 0) {
+      return _rejectArguments('downsampleDistance', 'a distance of $meters m');
     }
     if (_activity.points.length < 2) {
       return this;
@@ -856,8 +883,8 @@ class RawEditor {
   /// 100,000 laps and reports `repaired.lap_split_limit_reached`, so a
   /// corrupt distance value cannot exhaust memory.
   RawEditor markLapsByDistance(double meters) {
-    if (meters <= 0) {
-      throw ArgumentError.value(meters, 'meters', 'must be positive');
+    if (meters.isNaN || meters <= 0) {
+      return _rejectArguments('markLapsByDistance', 'a distance of $meters m');
     }
     // A non-finite distance can never be reached by a split boundary.
     final distanceSamples = [
@@ -1167,17 +1194,8 @@ class RawEditor {
     bool normalize = true,
     String? creator,
   }) {
-    if (activities.isEmpty) {
-      throw ArgumentError(
-        'Cannot merge activities: the input list is empty.\n'
-        '\n'
-        'You must provide at least one activity to merge:\n'
-        '  final merged = RawEditor.merge(activities);\n'
-        '\n'
-        'To combine multiple activities, ensure the list contains at least one element.\n'
-        'To split a multi-sport activity instead, use: RawEditor.splitBySport(activity)',
-      );
-    }
+    // Merging nothing gives nothing.
+    if (activities.isEmpty) return RawActivity();
     if (activities.length == 1) {
       final single = activities.first;
       if (!normalize || _isAlreadyNormalized(single)) {

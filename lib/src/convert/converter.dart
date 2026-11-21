@@ -33,8 +33,17 @@ class ActivityConverter {
     final parseResult = switch (input) {
       String text => ParserRouter.parse(text, from),
       List<int> bytes => ParserRouter.parseBytes(bytes, from),
-      _ => throw ArgumentError(
-        'Unsupported input type ${input.runtimeType}; expected String or List<int>.',
+      _ => ActivityParseResult(
+        activity: RawActivity(),
+        diagnostics: [
+          ParseDiagnostic(
+            severity: ParseSeverity.error,
+            code: 'import.source.unsupported',
+            message:
+                'Unsupported input type ${input.runtimeType}; expected '
+                'String or List<int>.',
+          ),
+        ],
       ),
     };
     diagnostics?.addAll(parseResult.diagnostics);
