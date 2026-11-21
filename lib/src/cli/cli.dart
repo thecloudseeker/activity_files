@@ -21,7 +21,7 @@ part 'cli_time.dart';
 
 /// The package version `--version` prints; the release checks keep it equal
 /// to `pubspec.yaml`.
-const cliVersion = '0.8.5';
+const cliVersion = '0.9.0';
 
 /// Exit codes, following the BSD `sysexits.h` convention.
 const _exitOk = 0;
