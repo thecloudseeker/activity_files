@@ -63,7 +63,7 @@ class FitParser implements ActivityFormatParser {
   /// truncated sections that the diagnostics report.
   @Deprecated(
     'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse '
-    'damaged files. Will be removed in 0.10.0.',
+    'damaged files. Will be removed in 0.11.0.',
   )
   ActivityParseResult parseBytesWithIntegrity(
     Uint8List payload, {

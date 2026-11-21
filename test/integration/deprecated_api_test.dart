@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // ignore_for_file: deprecated_member_use_from_same_package
 /// Tests of deprecated API: each deprecated member still behaves like its
-/// replacement until it is removed. The whole file goes with them in 0.10.0.
+/// replacement until it is removed. The whole file goes with them in 0.11.0.
 library;
 
 import 'dart:async';

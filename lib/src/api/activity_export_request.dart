@@ -19,7 +19,7 @@ import '../validation.dart';
 @Deprecated(
   'Use ActivityFiles.convert or ActivityFiles.export instead; convert '
   'accepts a Stream<List<int>> source for the stream case. '
-  'Will be removed in 0.10.0.',
+  'Will be removed in 0.11.0.',
 )
 class ActivityExportRequest {
   ActivityExportRequest._({

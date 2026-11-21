@@ -505,7 +505,7 @@ void main() {
       expect(legacy.stdout, current.stdout);
       expect(legacy.stderr, contains('--format is deprecated'));
       expect(legacy.stderr, contains('--from'));
-      expect(legacy.stderr, contains('0.10.0'));
+      expect(legacy.stderr, contains('0.11.0'));
       expect(current.stderr, isNot(contains('deprecated')));
     });
 

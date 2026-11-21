@@ -38,7 +38,7 @@ part 'facade/transform_internals.dart';
 /// Callback used to translate arbitrary identifiers into [Sport] values.
 @Deprecated(
   'Pass the Sport you mean; it is no longer guessed from text. '
-  'Will be removed in 0.10.0.',
+  'Will be removed in 0.11.0.',
 )
 typedef SportMapper = Sport? Function(dynamic source);
 
@@ -111,11 +111,11 @@ class ActivityFiles {
     Encoding encoding = utf8,
     @Deprecated(
       'Pass a File for a path; a String is always content. '
-      'Will be removed in 0.10.0.',
+      'Will be removed in 0.11.0.',
     )
     bool allowFilePaths = false,
     bool strictFitIntegrity = false,
-    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
+    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.11.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     int? maxPayloadBytes = softPayloadLimit,
@@ -283,12 +283,12 @@ class ActivityFiles {
     Encoding encoding = utf8,
     @Deprecated(
       'Pass a File for a path; a String is always content. '
-      'Will be removed in 0.10.0.',
+      'Will be removed in 0.11.0.',
     )
     bool allowFilePaths = false,
     @Deprecated(
       'Detection reads only the start of the source, so the limit has no '
-      'effect. Will be removed in 0.10.0.',
+      'effect. Will be removed in 0.11.0.',
     )
     int? maxPayloadBytes = _defaultStreamBufferLimitBytes,
   }) => _detectFormatSync(
@@ -453,13 +453,13 @@ class ActivityFiles {
     Encoding encoding = utf8,
     @Deprecated(
       'Pass a File for a path; a String is always content. '
-      'Will be removed in 0.10.0.',
+      'Will be removed in 0.11.0.',
     )
     bool allowFilePaths = false,
     bool exportInIsolate = false,
     bool runValidation = true,
     bool strictFitIntegrity = false,
-    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.10.0.')
+    @Deprecated('Use strictFitIntegrity instead. Will be removed in 0.11.0.')
     FitCorruptionHandling fitCorruptionHandling =
         FitCorruptionHandling.bestEffort,
     ActivityAutoFixOptions autoFix = const ActivityAutoFixOptions.disabled(),
@@ -635,7 +635,7 @@ class ActivityFiles {
     'Use ActivityFiles.convert, which accepts a Stream<List<int>> source and '
     'produces identical output. Pass useIsolate for parseInIsolate, and pass '
     'from explicitly if the format is not detectable from the first 64KB. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> convertStream({
     required Stream<List<int>> source,
@@ -693,7 +693,7 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.convert for source-based calls, or '
     'ActivityFiles.buildAndExport for location/channels-based calls. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> convertAndExport({
     Object? source,
@@ -817,7 +817,7 @@ class ActivityFiles {
   @Deprecated(
     'Use ActivityFiles.convert or ActivityFiles.export instead; convert '
     'accepts a Stream<List<int>> source for the stream case. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> runPipeline(
     ActivityExportRequest request,
@@ -914,10 +914,10 @@ class ActivityFiles {
     Map<Channel, Iterable<ChannelStreamSample>> channels = const {},
     Iterable<Lap> laps = const <Lap>[],
     Sport? sport,
-    @Deprecated('Pass sport instead. Will be removed in 0.10.0.')
+    @Deprecated('Pass sport instead. Will be removed in 0.11.0.')
     Object? sportSource,
     @Deprecated(
-      'Pass sport and gpxTrackName instead. Will be removed in 0.10.0.',
+      'Pass sport and gpxTrackName instead. Will be removed in 0.11.0.',
     )
     String? label,
     String? creator,
@@ -1034,7 +1034,7 @@ class ActivityFiles {
   /// last-in-first-out so callers can override earlier defaults.
   @Deprecated(
     'Pass the Sport you mean; it is no longer guessed from text. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   // ignore: deprecated_member_use_from_same_package
   static void registerSportMapper(SportMapper mapper) {
@@ -1047,7 +1047,7 @@ class ActivityFiles {
   /// Removes a previously registered [mapper].
   @Deprecated(
     'Pass the Sport you mean; it is no longer guessed from text. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   // ignore: deprecated_member_use_from_same_package
   static bool unregisterSportMapper(SportMapper mapper) =>
@@ -1056,14 +1056,14 @@ class ActivityFiles {
   /// Clears all registered sport mappers.
   @Deprecated(
     'Pass the Sport you mean; it is no longer guessed from text. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static void clearSportMappers() => _sportMappers.clear();
 
   /// Resolves [Sport] by applying registered mappers and built-in heuristics.
   @Deprecated(
     'Pass the Sport you mean; it is no longer guessed from text. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Sport inferSport(dynamic source, {Sport fallback = Sport.unknown}) {
     final resolved = _resolveSport(source);
@@ -1084,10 +1084,10 @@ class ActivityFiles {
   }) => ChannelMapper.mapAt(timestamp, activity.channels, maxDelta: maxDelta);
 
   // Deprecated -- kept as forwarders for compatibility; scheduled for
-  // removal in 0.10.0. See each method's @Deprecated message for its
+  // removal in 0.11.0. See each method's @Deprecated message for its
   // replacement.
   /// Deprecated name for [import]; forwards with identical behavior.
-  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.10.0.')
+  @Deprecated('Use ActivityFiles.import instead. Will be removed in 0.11.0.')
   static Future<ActivityImportResult> load(
     Object source, {
     ActivityFileFormat? format,
@@ -1111,7 +1111,7 @@ class ActivityFiles {
 
   /// Deprecated name for [importBatch]; forwards with identical behavior.
   @Deprecated(
-    'Use ActivityFiles.importBatch instead. Will be removed in 0.10.0.',
+    'Use ActivityFiles.importBatch instead. Will be removed in 0.11.0.',
   )
   static Future<BatchImportResult> loadBatch(
     Iterable<Object> sources, {
@@ -1132,7 +1132,7 @@ class ActivityFiles {
   /// Import a CSV payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.csv) instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static ActivityParseResult importFromCsv(String input) =>
       const CsvParser().parse(input);
@@ -1140,7 +1140,7 @@ class ActivityFiles {
   /// Import a GeoJSON payload into a [RawActivity].
   @Deprecated(
     'Use ActivityFiles.import(input, format: ActivityFileFormat.geojson) '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static ActivityParseResult importFromGeojson(String input) =>
       const GeojsonParser().parse(input);
@@ -1148,14 +1148,14 @@ class ActivityFiles {
   /// Export an activity to CSV format.
   @Deprecated(
     'Use ActivityFiles.export(activity: activity, to: ActivityFileFormat.csv) '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static String exportToCsv(RawActivity activity) =>
       CsvEncoder.encode(activity);
 
   /// Export multiple activities to CSV format.
   @Deprecated(
-    'Will be removed in 0.10.0 with no exact replacement. This concatenates '
+    'Will be removed in 0.11.0 with no exact replacement. This concatenates '
     'each activity\'s rows under one header, in input order, keeping every '
     'row. The closest alternative, RawEditor.merge() followed by '
     'ActivityFiles.export(), is NOT equivalent: it sorts all points by time '
@@ -1168,7 +1168,7 @@ class ActivityFiles {
   /// Export an activity to GeoJSON FeatureCollection (LineString).
   @Deprecated(
     'Use ActivityFiles.export(activity: activity, to: '
-    'ActivityFileFormat.geojson) instead. Will be removed in 0.10.0.',
+    'ActivityFileFormat.geojson) instead. Will be removed in 0.11.0.',
   )
   static String exportToGeojson(RawActivity activity) =>
       GeojsonEncoder.encode(activity);
@@ -1178,7 +1178,7 @@ class ActivityFiles {
     'Use ActivityFiles.export(activity: activity, to: '
     'ActivityFileFormat.geojson, options: EncoderOptions(geojsonGeometry: '
     'GeojsonGeometry.points, geojsonIncludeChannels: includeChannels)) '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static String exportToGeojsonPoints(
     RawActivity activity, {
@@ -1190,7 +1190,7 @@ class ActivityFiles {
   /// Deprecated name for [convertStream]; forwards with identical behavior.
   @Deprecated(
     'Use ActivityFiles.convert, which accepts a Stream<List<int>> source. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static Future<ActivityExportResult> convertAndExportStream({
     required Stream<List<int>> source,
@@ -1230,7 +1230,7 @@ class ActivityFiles {
   /// [ActivityFiles.edit].
   @Deprecated(
     'Use ActivityFiles.edit(activity).sortAndDedup().trimInvalid().activity '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static RawActivity normalizeActivity(
     RawActivity activity, {
@@ -1246,7 +1246,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.sortAndDedup].
   @Deprecated(
     'Use ActivityFiles.edit(activity).sortAndDedup().activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity sortAndDedup(RawActivity activity) =>
       RawEditor(activity).sortAndDedup().activity;
@@ -1254,7 +1254,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.trimInvalid].
   @Deprecated(
     'Use ActivityFiles.edit(activity).trimInvalid().activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity trimInvalid(RawActivity activity) =>
       RawEditor(activity).trimInvalid().activity;
@@ -1262,7 +1262,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.crop].
   @Deprecated(
     'Use ActivityFiles.edit(activity).crop(start, end).activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity crop(
     RawActivity activity, {
@@ -1273,7 +1273,7 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.smoothHR].
   @Deprecated(
     'Use ActivityFiles.edit(activity).smoothHR(window).activity instead. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static RawActivity smoothHeartRate(RawActivity activity, {int window = 5}) =>
       RawEditor(activity).smoothHR(window).activity;
@@ -1281,13 +1281,13 @@ class ActivityFiles {
   /// Convenience wrapper for [RawEditor.recomputeDistanceAndSpeed].
   @Deprecated(
     'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed().activity '
-    'instead. Will be removed in 0.10.0.',
+    'instead. Will be removed in 0.11.0.',
   )
   static RawActivity recomputeDistanceAndSpeed(RawActivity activity) =>
       RawEditor(activity).recomputeDistanceAndSpeed().activity;
 
   /// Deprecated name for [RawEditor.merge]; forwards with identical behavior.
-  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.10.0.')
+  @Deprecated('Use RawEditor.merge instead. Will be removed in 0.11.0.')
   static RawActivity merge(
     List<RawActivity> activities, {
     bool preserveSportPerLap = false,
@@ -1302,7 +1302,7 @@ class ActivityFiles {
 
   /// Deprecated name for [RawEditor.splitBySport]; forwards with identical
   /// behavior.
-  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.10.0.')
+  @Deprecated('Use RawEditor.splitBySport instead. Will be removed in 0.11.0.')
   static Map<Sport, RawActivity> splitBySport(
     RawActivity activity, {
     bool normalize = true,
@@ -1311,7 +1311,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.activityLabelNode]; forwards
   /// with identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.10.0.',
+    'Use RawActivityBuilder.activityLabelNode instead. Will be removed in 0.11.0.',
   )
   static GpxExtensionNode gpxActivityLabelNode(
     String label, {
@@ -1328,7 +1328,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.deviceNode]; forwards with
   /// identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.10.0.',
+    'Use RawActivityBuilder.deviceNode instead. Will be removed in 0.11.0.',
   )
   static GpxExtensionNode gpxDeviceNode(
     ActivityDeviceMetadata metadata, {
@@ -1347,7 +1347,7 @@ class ActivityFiles {
   /// Deprecated name for [RawActivityBuilder.deviceSummaryNode]; forwards
   /// with identical behavior.
   @Deprecated(
-    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.10.0.',
+    'Use RawActivityBuilder.deviceSummaryNode instead. Will be removed in 0.11.0.',
   )
   static GpxExtensionNode gpxDeviceSummaryNode(
     ActivityDeviceMetadata metadata, {

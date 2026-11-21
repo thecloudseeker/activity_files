@@ -9,7 +9,7 @@
 /// `ActivityFiles.exportAsync`.
 @Deprecated(
   'Has no effect; pass normalize: false to skip normalization. '
-  'Will be removed in 0.10.0.',
+  'Will be removed in 0.11.0.',
 )
 enum ParseFidelityMode {
   /// Preserve the source data as faithfully as possible.
@@ -25,7 +25,7 @@ enum ParseFidelityMode {
 /// `strictFitIntegrity: true` and [bestEffort] like `false`.
 @Deprecated(
   'Use strictFitIntegrity instead; it has the same effect. '
-  'Will be removed in 0.10.0.',
+  'Will be removed in 0.11.0.',
 )
 enum FitCorruptionHandling {
   /// Keep best-effort parsing output and surface diagnostics.

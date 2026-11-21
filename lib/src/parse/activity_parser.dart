@@ -21,8 +21,8 @@ abstract class ActivityFormatParser {
 
 /// Reads a payload of a known format. Deprecated in favour of
 /// `ActivityFiles.import`, which also detects the format and reads files and
-/// streams; removed in 0.10.0.
-@Deprecated('Use ActivityFiles.import. Will be removed in 0.10.0.')
+/// streams; removed in 0.11.0.
+@Deprecated('Use ActivityFiles.import. Will be removed in 0.11.0.')
 class ActivityParser {
   const ActivityParser._();
 

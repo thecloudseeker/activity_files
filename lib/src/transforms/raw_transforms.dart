@@ -107,7 +107,7 @@ class RawTransforms {
   @Deprecated(
     'Use ActivityFiles.edit(activity).recomputeDistanceAndSpeed(), then read '
     'the last Channel.distance sample for the total. '
-    'Will be removed in 0.10.0.',
+    'Will be removed in 0.11.0.',
   )
   static ({RawActivity activity, double totalDistance})
   computeCumulativeDistance(RawActivity activity) {

@@ -12,7 +12,7 @@ import '../transforms.dart';
 /// capability of its own: it cannot auto-detect the source format, and it
 /// returns a bare `String` rather than a result carrying diagnostics. Use
 /// [ActivityFiles.convert].
-@Deprecated('Use ActivityFiles.convert. Will be removed in 0.10.0.')
+@Deprecated('Use ActivityFiles.convert. Will be removed in 0.11.0.')
 class ActivityConverter {
   const ActivityConverter._();
 

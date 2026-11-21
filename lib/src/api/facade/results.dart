@@ -124,7 +124,7 @@ mixin _DiagnosticSummaryMixin {
 /// Deprecated name for [ActivityImportResult], kept as an alias so existing
 /// variable declarations and signatures keep compiling. Renamed alongside
 /// `load` -> `import` so the result type matches the verb that returns it.
-@Deprecated('Use ActivityImportResult instead. Will be removed in 0.10.0.')
+@Deprecated('Use ActivityImportResult instead. Will be removed in 0.11.0.')
 typedef ActivityLoadResult = ActivityImportResult;
 
 /// Result of [ActivityFiles.import].

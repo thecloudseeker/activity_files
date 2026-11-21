@@ -29,7 +29,7 @@ const _valueSteps = {
   'resample': 'DURATION',
 };
 
-/// Options kept working as hidden aliases until 0.10.0, with what replaces
+/// Options kept working as hidden aliases until 0.11.0, with what replaces
 /// them; using one prints a warning.
 const _deprecatedOptions = {
   'format': '--from',
@@ -335,7 +335,7 @@ void _warnDeprecatedOptions(ArgResults command) {
     if (command.options.contains(entry.key) && command.wasParsed(entry.key)) {
       final warning =
           '--${entry.key} is deprecated, use ${entry.value}; removed in '
-          '0.10.0';
+          '0.11.0';
       if (command.options.contains('json') && command['json'] == true) {
         _printJson(stderr, {'warning': warning});
       } else {

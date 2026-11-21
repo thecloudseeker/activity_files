@@ -7,7 +7,7 @@
 /// [IntegrityConfig]; the text formats have no checksums to verify.
 @Deprecated(
   'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse damaged '
-  'FIT files. Will be removed in 0.10.0.',
+  'FIT files. Will be removed in 0.11.0.',
 )
 enum IntegrityMode {
   /// Fail-fast mode: throws FormatException on ANY integrity issue.
@@ -27,7 +27,7 @@ enum IntegrityMode {
 /// Integrity validation configuration for parsers.
 @Deprecated(
   'Use ActivityFiles.import; pass strictFitIntegrity: true to refuse damaged '
-  'FIT files. Will be removed in 0.10.0.',
+  'FIT files. Will be removed in 0.11.0.',
 )
 class IntegrityConfig {
   const IntegrityConfig({
@@ -62,7 +62,7 @@ class IntegrityConfig {
 
 /// Statistics about integrity issues encountered during parsing.
 @Deprecated(
-  'Use the fit.header.* and fit.trailer.* diagnostics instead. Will be removed in 0.10.0.',
+  'Use the fit.header.* and fit.trailer.* diagnostics instead. Will be removed in 0.11.0.',
 )
 class IntegrityStats {
   IntegrityStats({
@@ -90,19 +90,19 @@ class IntegrityStats {
   /// Messages/records that couldn't be parsed.
   ///
   /// No parser populates this counter; it is always 0.
-  @Deprecated('Never populated by any parser. Will be removed in 0.10.0.')
+  @Deprecated('Never populated by any parser. Will be removed in 0.11.0.')
   int invalidMessages;
 
   /// Attempted recoveries from errors.
   ///
   /// No parser populates this counter; it is always 0.
-  @Deprecated('Never populated by any parser. Will be removed in 0.10.0.')
+  @Deprecated('Never populated by any parser. Will be removed in 0.11.0.')
   int recoveryAttempts;
 
   /// Format-specific issues (e.g., "fit.developer_fields_skipped").
   ///
   /// No parser populates this map; it is always empty.
-  @Deprecated('Never populated by any parser. Will be removed in 0.10.0.')
+  @Deprecated('Never populated by any parser. Will be removed in 0.11.0.')
   final Map<String, int> formatSpecificIssues;
 
   /// Whether any integrity issues were detected.
