@@ -243,6 +243,17 @@ class CsvParser implements ActivityFormatParser {
     final map = <String, int>{};
     for (int i = 0; i < headers.length; i++) {
       final raw = headers[i].toLowerCase().trim();
+      if (raw.isEmpty) {
+        diagnostics.add(
+          ParseDiagnostic(
+            severity: ParseSeverity.warning,
+            code: 'csv.header.empty',
+            message:
+                'Column ${i + 1} has no header, so its values are not read.',
+          ),
+        );
+        continue;
+      }
       final normalized = _headerSynonyms[raw] ?? raw;
       if (map.containsKey(normalized)) {
         diagnostics.add(
